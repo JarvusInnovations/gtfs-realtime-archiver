@@ -1,0 +1,18 @@
+[project]
+name = "gtfs-rt-archiver"
+version = "0.1.0"
+description = "A lightweight, resilient service for archiving GTFS-Realtime feeds to cloud storage"
+license = "AGPL-3.0-only"
+readme = "README.md"
+authors = [
+    { name = "Chris Alfano", email = "chris@jarv.us" }
+]
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+gtfs-rt-archiver = "gtfs_rt_archiver:main"
+
+[build-system]
+requires = ["uv_build>=0.9.21,<0.10.0"]
+build-backend = "uv_build"
