@@ -92,3 +92,9 @@ variable "github_repo" {
   type        = string
   default     = "gtfs-realtime-archiver"
 }
+
+variable "feeds_secret_id" {
+  description = "Secret Manager secret ID containing feeds.yaml configuration"
+  type        = string
+  default     = "feeds-config"
+}

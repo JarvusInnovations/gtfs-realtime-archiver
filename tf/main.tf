@@ -6,6 +6,19 @@ resource "google_cloud_run_v2_service" "archiver" {
   template {
     service_account = google_service_account.archiver.email
 
+    # Mount feeds config from Secret Manager
+    volumes {
+      name = "feeds-config"
+      secret {
+        secret       = var.feeds_secret_id
+        default_mode = 292  # 0444 in octal
+        items {
+          path    = "feeds.yaml"
+          version = "latest"
+        }
+      }
+    }
+
     containers {
       image = var.container_image
 
@@ -21,7 +34,17 @@ resource "google_cloud_run_v2_service" "archiver" {
         container_port = 8080
       }
 
+      # Mount feeds config as a file
+      volume_mounts {
+        name       = "feeds-config"
+        mount_path = "/config"
+      }
+
       # Core configuration
+      env {
+        name  = "CONFIG_PATH"
+        value = "/config/feeds.yaml"
+      }
       env {
         name  = "GCS_BUCKET"
         value = google_storage_bucket.archive.name
