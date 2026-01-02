@@ -61,11 +61,11 @@ async def create_fetch_job(
         feed_type = feed.feed_type.value
         agency = feed.agency
 
-        # Record attempt
-        record_fetch_attempt(feed.id, feed_type, agency)
-
         # Acquire semaphore to limit concurrent operations
         async with semaphore:
+            # Record attempt inside semaphore for accurate concurrency metrics
+            record_fetch_attempt(feed.id, feed_type, agency)
+
             try:
                 # Fetch the feed
                 result = await fetch_feed(http_client, feed)
