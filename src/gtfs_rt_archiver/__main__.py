@@ -94,7 +94,7 @@ async def create_fetch_job(
                     @retry(
                         stop=stop_after_attempt(3),
                         wait=wait_exponential(multiplier=1.0, max=10.0),
-                        retry=retry_if_exception_type((ClientError, TimeoutError, OSError)),
+                        retry=retry_if_exception_type((ClientError, TimeoutError, ConnectionError)),
                         reraise=True,
                     )
                     async def upload_with_retry() -> str:
