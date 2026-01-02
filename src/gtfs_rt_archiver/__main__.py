@@ -6,6 +6,12 @@ from datetime import UTC, datetime
 from typing import NoReturn
 
 import httpx
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from gtfs_rt_archiver.config import Settings, apply_defaults, load_feeds_file
 from gtfs_rt_archiver.fetcher import (
@@ -32,12 +38,14 @@ from gtfs_rt_archiver.storage import StorageWriter
 async def create_fetch_job(
     http_client: httpx.AsyncClient,
     storage_writer: StorageWriter,
+    semaphore: asyncio.Semaphore,
 ) -> "FetchJobCallable":
     """Create the fetch job function.
 
     Args:
         http_client: HTTP client for fetching feeds.
         storage_writer: Storage writer for uploading to GCS.
+        semaphore: Semaphore to limit concurrent fetch operations.
 
     Returns:
         Async function to fetch and store a feed.
@@ -52,90 +60,102 @@ async def create_fetch_job(
         # Record attempt
         record_fetch_attempt(feed.id, feed_type, agency)
 
-        try:
-            # Fetch the feed
-            result = await fetch_feed(http_client, feed)
-
-            # Record successful fetch
-            record_fetch_success(
-                feed.id,
-                feed_type,
-                agency,
-                result.duration_ms / 1000.0,
-                result.content_length,
-            )
-
-            logger.info(
-                "fetch_success",
-                feed_id=feed.id,
-                feed_type=feed_type,
-                duration_ms=result.duration_ms,
-                content_length=result.content_length,
-            )
-
-            # Upload to storage
-            upload_start = datetime.now(UTC)
+        # Acquire semaphore to limit concurrent operations
+        async with semaphore:
             try:
-                path = await storage_writer.write(feed, result)
-                upload_duration = (datetime.now(UTC) - upload_start).total_seconds()
+                # Fetch the feed
+                result = await fetch_feed(http_client, feed)
 
-                record_upload_success(feed.id, feed_type, agency, upload_duration)
-
-                logger.info(
-                    "upload_success",
-                    feed_id=feed.id,
-                    path=path,
-                    duration_seconds=upload_duration,
+                # Record successful fetch
+                record_fetch_success(
+                    feed.id,
+                    feed_type,
+                    agency,
+                    result.duration_ms / 1000.0,
+                    result.content_length,
                 )
 
-            except Exception as e:
-                record_upload_error(feed.id, feed_type, agency)
+                logger.info(
+                    "fetch_success",
+                    feed_id=feed.id,
+                    feed_type=feed_type,
+                    duration_ms=result.duration_ms,
+                    content_length=result.content_length,
+                )
+
+                # Upload to storage with retry
+                upload_start = datetime.now(UTC)
+                try:
+                    # Retry on any exception (network issues, GCS errors, etc.)
+                    @retry(
+                        stop=stop_after_attempt(3),
+                        wait=wait_exponential(multiplier=1.0, max=10.0),
+                        retry=retry_if_exception_type(Exception),
+                        reraise=True,
+                    )
+                    async def upload_with_retry() -> str:
+                        return await storage_writer.write(feed, result)
+
+                    path = await upload_with_retry()
+                    upload_duration = (datetime.now(UTC) - upload_start).total_seconds()
+
+                    record_upload_success(feed.id, feed_type, agency, upload_duration)
+
+                    logger.info(
+                        "upload_success",
+                        feed_id=feed.id,
+                        path=path,
+                        duration_seconds=upload_duration,
+                    )
+
+                except Exception as e:
+                    record_upload_error(feed.id, feed_type, agency)
+                    logger.error(
+                        "upload_error",
+                        feed_id=feed.id,
+                        error_type=type(e).__name__,
+                        error_message=str(e),
+                    )
+
+            except NonRetryableError as e:
+                error_type = f"http_{e.status_code}"
+                record_fetch_error(feed.id, feed_type, agency, error_type)
+                logger.warning(
+                    "fetch_non_retryable",
+                    feed_id=feed.id,
+                    status_code=e.status_code,
+                )
+
+            except httpx.TimeoutException:
+                record_fetch_error(feed.id, feed_type, agency, "timeout")
+                logger.error("fetch_timeout", feed_id=feed.id)
+
+            except httpx.TransportError as e:
+                record_fetch_error(feed.id, feed_type, agency, "transport")
                 logger.error(
-                    "upload_error",
+                    "fetch_transport_error",
                     feed_id=feed.id,
                     error_type=type(e).__name__,
                     error_message=str(e),
                 )
 
-        except NonRetryableError as e:
-            error_type = f"http_{e.status_code}"
-            record_fetch_error(feed.id, feed_type, agency, error_type)
-            logger.warning(
-                "fetch_non_retryable",
-                feed_id=feed.id,
-                status_code=e.status_code,
-            )
+            except httpx.HTTPStatusError as e:
+                error_type = f"http_{e.response.status_code}"
+                record_fetch_error(feed.id, feed_type, agency, error_type)
+                logger.error(
+                    "fetch_http_error",
+                    feed_id=feed.id,
+                    status_code=e.response.status_code,
+                )
 
-        except httpx.TimeoutException:
-            record_fetch_error(feed.id, feed_type, agency, "timeout")
-            logger.error("fetch_timeout", feed_id=feed.id)
-
-        except httpx.TransportError as e:
-            record_fetch_error(feed.id, feed_type, agency, "transport")
-            logger.error(
-                "fetch_transport_error",
-                feed_id=feed.id,
-                error_type=type(e).__name__,
-                error_message=str(e),
-            )
-
-        except httpx.HTTPStatusError as e:
-            error_type = f"http_{e.response.status_code}"
-            record_fetch_error(feed.id, feed_type, agency, error_type)
-            logger.error(
-                "fetch_http_error",
-                feed_id=feed.id,
-                status_code=e.response.status_code,
-            )
-
-        except Exception as e:
-            record_fetch_error(feed.id, feed_type, agency, "unknown")
-            logger.exception(
-                "fetch_unknown_error",
-                feed_id=feed.id,
-                error_type=type(e).__name__,
-                error_message=str(e),
-            )
+            except Exception as e:
+                record_fetch_error(feed.id, feed_type, agency, "unknown")
+                logger.exception(
+                    "fetch_unknown_error",
+                    feed_id=feed.id,
+                    error_type=type(e).__name__,
+                    error_message=str(e),
+                )
 
     return fetch_job
 
@@ -181,8 +201,11 @@ async def run() -> NoReturn:
         prefix=settings.gcs_prefix,
     )
 
+    # Create semaphore for concurrency limiting
+    semaphore = asyncio.Semaphore(settings.max_concurrent)
+
     # Create fetch job
-    fetch_job = await create_fetch_job(http_client, storage_writer)
+    fetch_job = await create_fetch_job(http_client, storage_writer, semaphore)
 
     # Create scheduler
     scheduler = FeedScheduler(
