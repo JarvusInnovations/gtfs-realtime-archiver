@@ -1,6 +1,7 @@
 """APScheduler-based job scheduler for GTFS-RT feed fetching."""
 
 import hashlib
+import uuid
 from typing import TYPE_CHECKING
 
 from apscheduler import AsyncScheduler, CoalescePolicy
@@ -12,6 +13,28 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     FetchJobFunc = Callable[[FeedConfig], Awaitable[None]]
+
+# Global registry to allow APScheduler to find scheduler instances
+# APScheduler v4 requires serializable function references, so we use
+# a module-level function with a scheduler lookup
+_scheduler_registry: dict[str, "FeedScheduler"] = {}
+
+
+async def _execute_scheduled_fetch(scheduler_id: str, feed_id: str) -> None:
+    """Module-level function for APScheduler to call.
+
+    APScheduler v4 cannot serialize nested/lambda functions, so we use
+    a module-level function that looks up the scheduler instance.
+
+    Args:
+        scheduler_id: Unique ID of the scheduler instance.
+        feed_id: ID of the feed to fetch.
+    """
+    scheduler = _scheduler_registry.get(scheduler_id)
+    if scheduler:
+        feed = scheduler._feeds_by_id.get(feed_id)
+        if feed:
+            await scheduler._fetch_job(feed)
 
 
 def should_handle_feed(feed: FeedConfig, shard_index: int, total_shards: int) -> bool:
@@ -56,6 +79,7 @@ class FeedScheduler:
             total_shards: Total number of shards.
             misfire_grace_time: Seconds after scheduled time to still run job.
         """
+        self._id = str(uuid.uuid4())
         self._feeds = feeds
         self._fetch_job = fetch_job
         self._shard_index = shard_index
@@ -63,6 +87,7 @@ class FeedScheduler:
         self._misfire_grace_time = misfire_grace_time
         self._scheduler: AsyncScheduler | None = None
         self._active_feeds: list[FeedConfig] = []
+        self._feeds_by_id: dict[str, FeedConfig] = {}
 
     @property
     def active_feeds(self) -> list[FeedConfig]:
@@ -83,21 +108,25 @@ class FeedScheduler:
             if should_handle_feed(feed, self._shard_index, self._total_shards)
         ]
 
-        # Create scheduler
-        self._scheduler = AsyncScheduler()
+        # Build lookup table for feeds
+        self._feeds_by_id = {feed.id: feed for feed in self._active_feeds}
 
-        # Register jobs for each feed
+        # Register this scheduler instance in the global registry
+        _scheduler_registry[self._id] = self
+
+        # Create and initialize scheduler (APScheduler v4 requires context manager)
+        self._scheduler = AsyncScheduler()
+        await self._scheduler.__aenter__()
+
+        # Register jobs for each feed using the module-level function
         for feed in self._active_feeds:
             trigger = IntervalTrigger(seconds=feed.interval_seconds)
 
-            # Create a closure to capture the feed
-            async def job_func(f: FeedConfig = feed) -> None:
-                await self._fetch_job(f)
-
             await self._scheduler.add_schedule(
-                job_func,
+                _execute_scheduled_fetch,
                 trigger=trigger,
                 id=f"feed-{feed.id}",
+                kwargs={"scheduler_id": self._id, "feed_id": feed.id},
                 misfire_grace_time=self._misfire_grace_time,
                 coalesce=CoalescePolicy.latest,  # Skip missed, run latest only
             )
@@ -115,7 +144,12 @@ class FeedScheduler:
             await self._scheduler.stop()
             if wait:
                 await self._scheduler.wait_until_stopped()
+            # Exit context manager to clean up resources
+            await self._scheduler.__aexit__(None, None, None)
             self._scheduler = None
+
+        # Unregister from global registry
+        _scheduler_registry.pop(self._id, None)
 
     def get_job_count(self) -> int:
         """Get the number of scheduled jobs."""
