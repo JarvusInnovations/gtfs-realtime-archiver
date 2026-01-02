@@ -3,6 +3,7 @@
 import asyncio
 import signal
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import httpx
 from tenacity import (
@@ -32,6 +33,9 @@ from gtfs_rt_archiver.metrics import (
 from gtfs_rt_archiver.models import FeedConfig
 from gtfs_rt_archiver.scheduler import FeedScheduler
 from gtfs_rt_archiver.storage import StorageWriter
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 
 async def create_fetch_job(
@@ -160,9 +164,7 @@ async def create_fetch_job(
 
 
 # Type alias for the fetch job callable
-type FetchJobCallable = "Callable[[FeedConfig], Awaitable[None]]"
-
-from collections.abc import Awaitable, Callable  # noqa: E402
+type FetchJobCallable = Callable[[FeedConfig], Awaitable[None]]
 
 
 async def run() -> None:
