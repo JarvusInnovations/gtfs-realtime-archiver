@@ -72,10 +72,6 @@ jobs:
       contents: read
       id-token: write
 
-    # Image via Artifact Registry remote repo (proxies to GHCR)
-    env:
-      AR_IMAGE_NAME: us-central1-docker.pkg.dev/gtfs-archiver/ghcr-remote/${{ github.repository }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -100,8 +96,11 @@ jobs:
           VERSION="${{ github.event.release.tag_name }}"
           # Remove 'v' prefix if present
           VERSION="${VERSION#v}"
+          # Lowercase the repository name (GHCR normalizes to lowercase)
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          AR_IMAGE="us-central1-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/ghcr-remote/${REPO_LOWER}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "image=${{ env.AR_IMAGE_NAME }}:$VERSION" >> "$GITHUB_OUTPUT"
+          echo "image=${AR_IMAGE}:${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Initialize Terraform
         working-directory: tf

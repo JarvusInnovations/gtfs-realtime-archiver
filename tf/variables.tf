@@ -12,6 +12,7 @@ variable "region" {
 variable "container_image" {
   description = "Container image URL for the archiver (via Artifact Registry remote repo)"
   type        = string
+  # Note: GHCR normalizes repository names to lowercase
   default     = "us-central1-docker.pkg.dev/gtfs-archiver/ghcr-remote/jarvusinnovations/gtfs-realtime-archiver:latest"
 }
 
