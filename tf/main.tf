@@ -94,3 +94,12 @@ resource "google_cloud_run_v2_service" "archiver" {
     google_storage_bucket_iam_member.archiver_storage,
   ]
 }
+
+# Allow unauthenticated access to the service (for health checks and metrics)
+resource "google_cloud_run_v2_service_iam_member" "public_access" {
+  name     = google_cloud_run_v2_service.archiver.name
+  location = google_cloud_run_v2_service.archiver.location
+  project  = var.project_id
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
