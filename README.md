@@ -100,13 +100,39 @@ uv run ruff format src/ tests/
 # Build container
 docker build -t gtfs-rt-archiver .
 
-# Run container locally
+# Run container locally (requires GCS credentials)
 docker run \
   -v ~/.config/gcloud:/root/.config/gcloud:ro \
   -e GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json \
   -e GCS_BUCKET=my-bucket \
   -p 8080:8080 \
   gtfs-rt-archiver
+```
+
+### Local Development with Docker Compose
+
+For local development without GCS credentials, use Docker Compose with a fake GCS server:
+
+```bash
+# Copy example configuration
+cp feeds.example.yaml feeds.yaml
+cp .env.example .env
+
+# Start services (fake-gcs + archiver)
+docker compose up --build
+
+# In another terminal, verify feeds are being archived
+ls -la data/test-bucket/
+curl -s http://localhost:8080/health | jq
+curl -s http://localhost:4443/storage/v1/b/test-bucket/o | jq '.items | length'
+```
+
+The `data/` directory contains archived feeds in Hive-partitioned structure:
+```
+data/test-bucket/
+├── service_alerts/agency=septa/dt=2026-01-02/hour=03/...
+├── trip_updates/agency=septa/dt=2026-01-02/hour=03/...
+└── vehicle_positions/agency=septa/dt=2026-01-02/hour=03/...
 ```
 
 ## Configuration

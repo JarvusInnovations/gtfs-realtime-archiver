@@ -12,27 +12,45 @@ defaults:
 
 # Feed definitions
 feeds:
-  # Example: SEPTA (Philadelphia) Vehicle Positions
-  - id: septa-vehicle-positions
-    name: SEPTA Vehicle Positions
+  # SEPTA Bus Feeds
+  - id: septa-bus-service-alerts
+    name: SEPTA Bus Service Alerts
+    url: https://www3.septa.org/gtfsrt/septa-pa-us/Service/rtServiceAlerts.pb
+    feed_type: service_alerts
+    agency: septa
+    interval_seconds: 60    # Alerts change less frequently
+
+  - id: septa-bus-trip-updates
+    name: SEPTA Bus Trip Updates
+    url: https://www3.septa.org/gtfsrt/septa-pa-us/Trip/rtTripUpdates.pb
+    feed_type: trip_updates
+    agency: septa
+
+  - id: septa-bus-vehicle-positions
+    name: SEPTA Bus Vehicle Positions
     url: https://www3.septa.org/gtfsrt/septa-pa-us/Vehicle/rtVehiclePosition.pb
     feed_type: vehicle_positions
     agency: septa
 
-  # Example: SEPTA Trip Updates
-  - id: septa-trip-updates
-    name: SEPTA Trip Updates
-    url: https://www3.septa.org/gtfsrt/septa-pa-us/Trip/rtTripUpdate.pb
+  # SEPTA Rail Feeds
+  - id: septa-rail-service-alerts
+    name: SEPTA Rail Service Alerts
+    url: https://www3.septa.org/gtfsrt/septarail-pa-us/Service/rtServiceAlerts.pb
+    feed_type: service_alerts
+    agency: septa
+    interval_seconds: 60
+
+  - id: septa-rail-trip-updates
+    name: SEPTA Rail Trip Updates
+    url: https://www3.septa.org/gtfsrt/septarail-pa-us/Trip/rtTripUpdates.pb
     feed_type: trip_updates
     agency: septa
 
-  # Example: SEPTA Service Alerts
-  - id: septa-service-alerts
-    name: SEPTA Service Alerts
-    url: https://www3.septa.org/gtfsrt/septa-pa-us/Alert/rtServiceAlert.pb
-    feed_type: service_alerts
+  - id: septa-rail-vehicle-positions
+    name: SEPTA Rail Vehicle Positions
+    url: https://www3.septa.org/gtfsrt/septarail-pa-us/Vehicle/rtVehiclePosition.pb
+    feed_type: vehicle_positions
     agency: septa
-    interval_seconds: 60    # Alerts change less frequently
 
   # Example: Feed with API key authentication
   # - id: mta-subway-vehicles
