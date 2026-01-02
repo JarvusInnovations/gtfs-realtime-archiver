@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import httpx
+from aiohttp import ClientError
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -89,11 +90,11 @@ async def create_fetch_job(
                 # Upload to storage with retry
                 upload_start = datetime.now(UTC)
                 try:
-                    # Retry on any exception (network issues, GCS errors, etc.)
+                    # Retry on network/IO errors only (not programming errors)
                     @retry(
                         stop=stop_after_attempt(3),
                         wait=wait_exponential(multiplier=1.0, max=10.0),
-                        retry=retry_if_exception_type(Exception),
+                        retry=retry_if_exception_type((ClientError, TimeoutError, OSError)),
                         reraise=True,
                     )
                     async def upload_with_retry() -> str:
