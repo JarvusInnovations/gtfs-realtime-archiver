@@ -1,0 +1,6 @@
+# Ignore all bucket contents except skeleton
+*
+!.gitignore
+!test-bucket/
+test-bucket/*
+!test-bucket/.gitkeep

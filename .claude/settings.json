@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path' | { read file_path; [[ \"$file_path\" == *.py ]] && uv run ruff format \"$file_path\" || true; }"
+          }
+        ]
+      }
+    ]
+  }
+}

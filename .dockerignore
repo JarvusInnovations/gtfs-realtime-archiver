@@ -1,0 +1,9 @@
+# Ignore everything
+*
+
+# Include only what's needed for the build
+!pyproject.toml
+!uv.lock
+!README.md
+!src/
+!feeds.example.yaml
