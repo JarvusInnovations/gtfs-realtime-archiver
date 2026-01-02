@@ -96,9 +96,12 @@ class HealthServer:
             Prometheus metrics in text format.
         """
         metrics = generate_latest()
+        # Strip charset from content type since aiohttp adds it automatically
+        content_type = CONTENT_TYPE_LATEST.split(";")[0]
         return web.Response(
             body=metrics,
-            content_type=CONTENT_TYPE_LATEST,
+            content_type=content_type,
+            charset="utf-8",
         )
 
     async def start(self) -> None:
