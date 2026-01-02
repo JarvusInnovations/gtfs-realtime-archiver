@@ -1,5 +1,6 @@
 """GCS storage writer with Hive-style partitioning."""
 
+import asyncio
 import json
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -103,12 +104,18 @@ class StorageWriter:
         self.write_metadata = write_metadata
         self._session = session
         self._storage: Storage | None = None
+        self._lock = asyncio.Lock()
 
     async def _get_storage(self) -> Storage:
-        """Get or create the GCS storage client."""
-        if self._storage is None:
-            self._storage = Storage(session=self._session)
-        return self._storage
+        """Get or create the GCS storage client.
+
+        Uses a lock to prevent race conditions when multiple tasks
+        call this method concurrently.
+        """
+        async with self._lock:
+            if self._storage is None:
+                self._storage = Storage(session=self._session)
+            return self._storage
 
     async def write(self, feed: FeedConfig, result: FetchResult) -> str:
         """Write a fetch result to GCS.
