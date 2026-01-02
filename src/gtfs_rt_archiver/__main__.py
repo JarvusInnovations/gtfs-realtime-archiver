@@ -3,7 +3,6 @@
 import asyncio
 import signal
 from datetime import UTC, datetime
-from typing import NoReturn
 
 import httpx
 from tenacity import (
@@ -166,7 +165,7 @@ type FetchJobCallable = "Callable[[FeedConfig], Awaitable[None]]"
 from collections.abc import Awaitable, Callable  # noqa: E402
 
 
-async def run() -> NoReturn:
+async def run() -> None:
     """Run the GTFS-RT Archiver."""
     # Load settings from environment
     settings = Settings()  # type: ignore[call-arg]
@@ -263,9 +262,6 @@ async def run() -> NoReturn:
         await http_client.aclose()
 
         logger.info("shutdown_complete")
-
-    # This should never be reached
-    raise SystemExit(0)
 
 
 def main() -> None:
