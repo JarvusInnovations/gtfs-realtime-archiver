@@ -45,7 +45,7 @@ upload_success = Counter(
 upload_errors = Counter(
     "gtfs_rt_upload_errors_total",
     "Failed GCS uploads",
-    ["feed_id", "feed_type", "agency"],
+    ["feed_id", "feed_type", "agency", "error_type"],
 )
 
 upload_duration = Histogram(
@@ -168,6 +168,7 @@ def record_upload_error(
     feed_id: str,
     feed_type: str,
     agency: str | None,
+    error_type: str,
 ) -> None:
     """Record a failed upload.
 
@@ -175,9 +176,10 @@ def record_upload_error(
         feed_id: Feed identifier.
         feed_type: Type of feed.
         agency: Agency identifier or None.
+        error_type: Type of error (e.g., "TimeoutError", "ConnectionError").
     """
     labels = get_labels(feed_id, feed_type, agency)
-    upload_errors.labels(**labels).inc()
+    upload_errors.labels(**labels, error_type=error_type).inc()
 
 
 def set_active_feeds(count: int) -> None:

@@ -108,7 +108,7 @@ async def create_fetch_job(
                     )
 
                 except Exception as e:
-                    record_upload_error(feed.id, feed_type, agency)
+                    record_upload_error(feed.id, feed_type, agency, type(e).__name__)
                     logger.error(
                         "upload_error",
                         feed_id=feed.id,
