@@ -1,0 +1,22 @@
+services:
+  fake-gcs:
+    image: fsouza/fake-gcs-server:latest
+    user: "${UID:-1000}:${GID:-1000}"
+    command: ["-scheme", "http", "-public-host", "localhost:4443", "-backend", "filesystem", "-filesystem-root", "/data"]
+    ports:
+      - "4443:4443"
+    volumes:
+      - ./data:/data
+
+  archiver:
+    build: .
+    depends_on:
+      - fake-gcs
+    env_file:
+      - .env
+    environment:
+      - STORAGE_EMULATOR_HOST=http://fake-gcs:4443
+    volumes:
+      - ./feeds.yaml:/app/feeds.yaml:ro
+    ports:
+      - "8080:8080"
