@@ -2,6 +2,4 @@
 
 __version__ = "0.1.0"
 
-from gtfs_rt_archiver.__main__ import main
-
-__all__ = ["main", "__version__"]
+__all__ = ["__version__"]
