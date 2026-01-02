@@ -68,3 +68,41 @@ resource "google_storage_bucket_iam_member" "github_actions_state" {
   role   = "roles/storage.objectAdmin"
   member = "serviceAccount:${google_service_account.github_actions.email}"
 }
+
+# Additional permissions for Terraform to manage infrastructure
+# These are required for tofu plan/apply to read and modify resources
+
+# Artifact Registry Admin - manage remote repository
+resource "google_project_iam_member" "github_actions_ar_admin" {
+  project = var.project_id
+  role    = "roles/artifactregistry.admin"
+  member  = "serviceAccount:${google_service_account.github_actions.email}"
+}
+
+# Storage Admin - manage GCS buckets
+resource "google_project_iam_member" "github_actions_storage_admin" {
+  project = var.project_id
+  role    = "roles/storage.admin"
+  member  = "serviceAccount:${google_service_account.github_actions.email}"
+}
+
+# Service Account Admin - manage service accounts
+resource "google_project_iam_member" "github_actions_sa_admin" {
+  project = var.project_id
+  role    = "roles/iam.serviceAccountAdmin"
+  member  = "serviceAccount:${google_service_account.github_actions.email}"
+}
+
+# Workload Identity Pool Admin - manage WIF pools
+resource "google_project_iam_member" "github_actions_wif_admin" {
+  project = var.project_id
+  role    = "roles/iam.workloadIdentityPoolAdmin"
+  member  = "serviceAccount:${google_service_account.github_actions.email}"
+}
+
+# Project IAM Admin - manage IAM bindings
+resource "google_project_iam_member" "github_actions_iam_admin" {
+  project = var.project_id
+  role    = "roles/resourcemanager.projectIamAdmin"
+  member  = "serviceAccount:${google_service_account.github_actions.email}"
+}
