@@ -18,6 +18,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project --no-dev
 
 # Copy source and install the project
+COPY README.md ./
 COPY src/ src/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
@@ -32,8 +33,9 @@ RUN groupadd --gid 1000 archiver && \
 
 WORKDIR /app
 
-# Copy virtual environment from builder
+# Copy virtual environment and source from builder
 COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder /app/src /app/src
 
 # Set environment variables
 ENV PATH="/app/.venv/bin:$PATH" \
