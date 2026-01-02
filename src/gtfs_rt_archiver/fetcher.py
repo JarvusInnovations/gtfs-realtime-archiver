@@ -63,6 +63,7 @@ NON_RETRYABLE_STATUS_CODES = {
 RETRYABLE_EXCEPTIONS = (
     httpx.TransportError,  # Connection errors
     httpx.TimeoutException,  # Timeouts
+    httpx.HTTPStatusError,  # 5xx server errors (after raise_for_status)
 )
 
 
@@ -205,5 +206,4 @@ def create_http_client(max_connections: int = 100) -> httpx.AsyncClient:
     return httpx.AsyncClient(
         limits=limits,
         follow_redirects=True,
-        http2=True,
     )
