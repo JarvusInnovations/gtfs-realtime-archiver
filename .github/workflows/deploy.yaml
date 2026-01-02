@@ -1,0 +1,117 @@
+name: Deploy to Cloud Run
+
+on:
+  release:
+    types: [published]
+
+# Prevent concurrent deployments
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: gtfs-archiver
+  GCP_REGION: us-central1
+  SERVICE_NAME: gtfs-rt-archiver
+  # Image via Artifact Registry remote repo (proxies to GHCR)
+  IMAGE_NAME: us-central1-docker.pkg.dev/gtfs-archiver/ghcr-remote/${{ github.repository }}
+
+jobs:
+  deploy:
+    name: Deploy to Cloud Run
+    runs-on: ubuntu-latest
+    # Only deploy non-prerelease releases
+    if: ${{ !github.event.release.prerelease }}
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ vars.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github-actions/providers/github-provider
+          service_account: github-actions-deploy@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Install asdf & tools
+        uses: asdf-vm/actions/install@v4
+
+      - name: Extract version from release tag
+        id: version
+        run: |
+          # Release tag is like v1.2.3
+          VERSION="${{ github.event.release.tag_name }}"
+          # Remove 'v' prefix if present
+          VERSION="${VERSION#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "image=${{ env.IMAGE_NAME }}:$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Verify image exists in GHCR
+        run: |
+          # Check the source image in GHCR (AR remote repo pulls from here on demand)
+          GHCR_IMAGE="ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}"
+          echo "Verifying image: $GHCR_IMAGE"
+          docker manifest inspect "$GHCR_IMAGE" > /dev/null 2>&1 || {
+            echo "Error: Image $GHCR_IMAGE not found in GHCR"
+            exit 1
+          }
+          echo "Image verified in GHCR, AR remote repo will pull on demand"
+
+      - name: Initialize Terraform
+        working-directory: tf
+        run: tofu init
+
+      - name: Plan deployment
+        working-directory: tf
+        run: |
+          tofu plan -concise \
+            -var="container_image=${{ steps.version.outputs.image }}" \
+            -out=tfplan
+
+      - name: Apply deployment
+        working-directory: tf
+        run: tofu apply -concise -auto-approve tfplan
+
+      - name: Verify deployment health
+        run: |
+          SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
+            --region=${{ env.GCP_REGION }} \
+            --format='value(status.url)')
+
+          echo "Service URL: $SERVICE_URL"
+          echo "Waiting for service to become healthy..."
+
+          for i in {1..30}; do
+            if curl -sf "${SERVICE_URL}/health" > /dev/null 2>&1; then
+              echo "Service is healthy!"
+              exit 0
+            fi
+            echo "Attempt $i/30: Service not ready yet..."
+            sleep 10
+          done
+
+          echo "Error: Service did not become healthy within 5 minutes"
+          exit 1
+
+      - name: Post deployment summary
+        if: success()
+        run: |
+          SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
+            --region=${{ env.GCP_REGION }} \
+            --format='value(status.url)')
+
+          echo "## Deployment Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Version**: ${{ steps.version.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Image**: \`${{ steps.version.outputs.image }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Service URL**: ${SERVICE_URL}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Health Check**: ${SERVICE_URL}/health" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Metrics**: ${SERVICE_URL}/metrics" >> "$GITHUB_STEP_SUMMARY"

@@ -10,9 +10,9 @@ variable "region" {
 }
 
 variable "container_image" {
-  description = "Container image URL for the archiver"
+  description = "Container image URL for the archiver (via Artifact Registry remote repo)"
   type        = string
-  default     = "us-central1-docker.pkg.dev/gtfs-archiver/gtfs-rt-archiver/gtfs-rt-archiver:latest"
+  default     = "us-central1-docker.pkg.dev/gtfs-archiver/ghcr-remote/jarvusinnovations/gtfs-realtime-archiver:latest"
 }
 
 variable "service_name" {
@@ -78,4 +78,16 @@ variable "secret_env_vars" {
   description = "Map of environment variable names to Secret Manager secret IDs"
   type        = map(string)
   default     = {}
+}
+
+variable "github_org" {
+  description = "GitHub organization for Workload Identity Federation"
+  type        = string
+  default     = "JarvusInnovations"
+}
+
+variable "github_repo" {
+  description = "GitHub repository for Workload Identity Federation"
+  type        = string
+  default     = "gtfs-realtime-archiver"
 }
