@@ -3,10 +3,6 @@ name: CI
 on:
   push:
 
-env:
-  PYTHON_VERSION: "3.12"
-  UV_VERSION: "0.5"
-
 jobs:
   lint:
     name: Lint
@@ -14,13 +10,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          version: ${{ env.UV_VERSION }}
-
-      - name: Set up Python
-        run: uv python install ${{ env.PYTHON_VERSION }}
+      - name: Install asdf & tools
+        uses: asdf-vm/actions/install@v4
 
       - name: Install dependencies
         run: uv sync --frozen --dev
@@ -37,13 +28,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          version: ${{ env.UV_VERSION }}
-
-      - name: Set up Python
-        run: uv python install ${{ env.PYTHON_VERSION }}
+      - name: Install asdf & tools
+        uses: asdf-vm/actions/install@v4
 
       - name: Install dependencies
         run: uv sync --frozen --dev
@@ -57,13 +43,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          version: ${{ env.UV_VERSION }}
-
-      - name: Set up Python
-        run: uv python install ${{ env.PYTHON_VERSION }}
+      - name: Install asdf & tools
+        uses: asdf-vm/actions/install@v4
 
       - name: Install dependencies
         run: uv sync --frozen --dev
