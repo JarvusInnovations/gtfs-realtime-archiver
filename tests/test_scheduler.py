@@ -37,9 +37,7 @@ class TestShouldHandleFeed:
     def test_deterministic_hashing(self) -> None:
         """Same feed should always map to same shard."""
         feed = make_feed("consistent-feed")
-        results = [
-            should_handle_feed(feed, shard_index=0, total_shards=3) for _ in range(10)
-        ]
+        results = [should_handle_feed(feed, shard_index=0, total_shards=3) for _ in range(10)]
         # All results should be identical
         assert all(r == results[0] for r in results)
 
@@ -206,9 +204,7 @@ class TestFeedScheduler:
         assert len(calls) == 1
         assert calls[0] == feeds[0]
 
-    async def test_is_running_reflects_scheduler_state(
-        self, feeds: list[FeedConfig]
-    ) -> None:
+    async def test_is_running_reflects_scheduler_state(self, feeds: list[FeedConfig]) -> None:
         """Test is_running property reflects actual scheduler state."""
 
         async def fetch_job(feed: FeedConfig) -> None:

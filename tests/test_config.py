@@ -202,9 +202,7 @@ class TestSettings:
         monkeypatch.setenv("SHARD_INDEX", "2")
         monkeypatch.setenv("TOTAL_SHARDS", "2")
 
-        with pytest.raises(
-            ValidationError, match="shard_index.*must be less than.*total_shards"
-        ):
+        with pytest.raises(ValidationError, match="shard_index.*must be less than.*total_shards"):
             Settings()
 
     def test_valid_shard_config(self, monkeypatch: pytest.MonkeyPatch) -> None:

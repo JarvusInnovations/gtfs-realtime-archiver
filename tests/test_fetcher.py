@@ -175,9 +175,7 @@ class TestFetchFeed:
     @respx.mock
     async def test_non_retryable_410(self, feed_config: FeedConfig) -> None:
         """Test 410 error raises NonRetryableError."""
-        respx.get("https://example.com/feed.pb").mock(
-            return_value=Response(410, content=b"Gone")
-        )
+        respx.get("https://example.com/feed.pb").mock(return_value=Response(410, content=b"Gone"))
 
         async with httpx.AsyncClient() as client:
             with pytest.raises(NonRetryableError) as exc_info:
@@ -248,9 +246,7 @@ class TestFetchFeedSafe:
         assert result.content == b"content"
 
     @respx.mock
-    async def test_returns_none_on_non_retryable_error(
-        self, feed_config: FeedConfig
-    ) -> None:
+    async def test_returns_none_on_non_retryable_error(self, feed_config: FeedConfig) -> None:
         """Test that NonRetryableError returns None."""
         respx.get("https://example.com/feed.pb").mock(
             return_value=Response(404, content=b"Not Found")

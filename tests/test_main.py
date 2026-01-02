@@ -87,18 +87,17 @@ class TestCreateFetchJob:
             return_value=Response(200, content=b"content")
         )
 
-        with patch("gtfs_rt_archiver.__main__.record_fetch_attempt") as mock_attempt, \
-             patch("gtfs_rt_archiver.__main__.record_fetch_success") as mock_success, \
-             patch("gtfs_rt_archiver.__main__.record_upload_success") as mock_upload:
-
+        with (
+            patch("gtfs_rt_archiver.__main__.record_fetch_attempt") as mock_attempt,
+            patch("gtfs_rt_archiver.__main__.record_fetch_success") as mock_success,
+            patch("gtfs_rt_archiver.__main__.record_upload_success") as mock_upload,
+        ):
             async with httpx.AsyncClient() as client:
                 semaphore = asyncio.Semaphore(10)
                 fetch_job = await create_fetch_job(client, mock_storage_writer, semaphore)
                 await fetch_job(feed_config)
 
-            mock_attempt.assert_called_once_with(
-                "test-feed", "vehicle_positions", "test-agency"
-            )
+            mock_attempt.assert_called_once_with("test-feed", "vehicle_positions", "test-agency")
             mock_success.assert_called_once()
             mock_upload.assert_called_once()
 
@@ -135,9 +134,7 @@ class TestCreateFetchJob:
         mock_storage_writer: AsyncMock,
     ) -> None:
         """Test that timeout errors are handled."""
-        respx.get("https://example.com/feed.pb").mock(
-            side_effect=httpx.TimeoutException("Timeout")
-        )
+        respx.get("https://example.com/feed.pb").mock(side_effect=httpx.TimeoutException("Timeout"))
 
         with patch("gtfs_rt_archiver.__main__.record_fetch_error") as mock_error:
             async with httpx.AsyncClient() as client:
@@ -284,9 +281,7 @@ class TestCreateFetchJob:
         mock_storage_writer: AsyncMock,
     ) -> None:
         """Test that unknown errors are caught and logged."""
-        respx.get("https://example.com/feed.pb").mock(
-            side_effect=RuntimeError("Unexpected error")
-        )
+        respx.get("https://example.com/feed.pb").mock(side_effect=RuntimeError("Unexpected error"))
 
         with patch("gtfs_rt_archiver.__main__.record_fetch_error") as mock_error:
             async with httpx.AsyncClient() as client:

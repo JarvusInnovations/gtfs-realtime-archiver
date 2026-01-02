@@ -108,9 +108,7 @@ class TestGenerateStoragePath:
 class TestGenerateMetadata:
     """Tests for generate_metadata function."""
 
-    def test_basic_metadata(
-        self, feed_config: FeedConfig, fetch_result: FetchResult
-    ) -> None:
+    def test_basic_metadata(self, feed_config: FeedConfig, fetch_result: FetchResult) -> None:
         """Test basic metadata generation."""
         metadata = generate_metadata(feed_config, fetch_result)
 
@@ -121,9 +119,7 @@ class TestGenerateMetadata:
         assert metadata["content_length"] == 16
         assert metadata["content_type"] == "application/x-protobuf"
 
-    def test_headers_filtered(
-        self, feed_config: FeedConfig, fetch_result: FetchResult
-    ) -> None:
+    def test_headers_filtered(self, feed_config: FeedConfig, fetch_result: FetchResult) -> None:
         """Test that only allowed headers are included."""
         metadata = generate_metadata(feed_config, fetch_result)
         headers = metadata["headers"]
@@ -135,9 +131,7 @@ class TestGenerateMetadata:
         # Custom headers should be filtered out
         assert "x-custom-header" not in headers
 
-    def test_timestamp_format(
-        self, feed_config: FeedConfig, fetch_result: FetchResult
-    ) -> None:
+    def test_timestamp_format(self, feed_config: FeedConfig, fetch_result: FetchResult) -> None:
         """Test that timestamp is in ISO format."""
         metadata = generate_metadata(feed_config, fetch_result)
 
