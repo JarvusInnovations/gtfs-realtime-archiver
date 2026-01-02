@@ -1,5 +1,7 @@
 """Tests for HTTP fetcher module."""
 
+from datetime import UTC, datetime
+
 import httpx
 import pytest
 import respx
@@ -50,9 +52,7 @@ class TestFetchResult:
             content=b"test",
             headers={"content-type": "application/x-protobuf"},
             status_code=200,
-            fetch_timestamp=pytest.importorskip("datetime").datetime.now(
-                pytest.importorskip("datetime").UTC
-            ),
+            fetch_timestamp=datetime.now(UTC),
             duration_ms=100.0,
             content_length=4,
         )
@@ -64,9 +64,7 @@ class TestFetchResult:
             content=b"test",
             headers={},
             status_code=200,
-            fetch_timestamp=pytest.importorskip("datetime").datetime.now(
-                pytest.importorskip("datetime").UTC
-            ),
+            fetch_timestamp=datetime.now(UTC),
             duration_ms=100.0,
             content_length=4,
         )
@@ -78,9 +76,7 @@ class TestFetchResult:
             content=b"test",
             headers={"etag": '"abc123"'},
             status_code=200,
-            fetch_timestamp=pytest.importorskip("datetime").datetime.now(
-                pytest.importorskip("datetime").UTC
-            ),
+            fetch_timestamp=datetime.now(UTC),
             duration_ms=100.0,
             content_length=4,
         )
