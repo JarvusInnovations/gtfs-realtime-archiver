@@ -106,3 +106,10 @@ resource "google_project_iam_member" "github_actions_iam_admin" {
   role    = "roles/resourcemanager.projectIamAdmin"
   member  = "serviceAccount:${google_service_account.github_actions.email}"
 }
+
+# Secret Manager Admin - manage secrets and their IAM policies
+resource "google_project_iam_member" "github_actions_secret_admin" {
+  project = var.project_id
+  role    = "roles/secretmanager.admin"
+  member  = "serviceAccount:${google_service_account.github_actions.email}"
+}
