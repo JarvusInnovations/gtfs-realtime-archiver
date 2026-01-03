@@ -33,12 +33,6 @@ variable "bucket_location" {
   default     = "us-central1"
 }
 
-variable "gcs_prefix" {
-  description = "Path prefix within the GCS bucket"
-  type        = string
-  default     = ""
-}
-
 variable "max_concurrent" {
   description = "Maximum concurrent feed fetches"
   type        = number

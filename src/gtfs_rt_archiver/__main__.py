@@ -181,7 +181,6 @@ async def run() -> None:
         "starting",
         config_path=str(settings.config_path),
         gcs_bucket=settings.gcs_bucket,
-        gcs_prefix=settings.gcs_prefix,
         shard_index=settings.shard_index,
         total_shards=settings.total_shards,
     )
@@ -200,7 +199,6 @@ async def run() -> None:
     # Create storage writer
     storage_writer = StorageWriter(
         bucket=settings.gcs_bucket,
-        prefix=settings.gcs_prefix,
     )
 
     # Create semaphore for concurrency limiting
