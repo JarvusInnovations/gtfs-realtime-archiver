@@ -121,7 +121,7 @@ Existing GTFS-RT archiver implementations suffer from:
 ### Feed Configuration
 
 ```yaml
-# feeds.yaml
+# agencies.yaml
 defaults:
   interval_seconds: 20
   timeout_seconds: 30
@@ -261,7 +261,7 @@ gs://my-gtfs-archive/
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `CONFIG_PATH` | Path to feeds.yaml | `./feeds.yaml` |
+| `CONFIG_PATH` | Path to agencies.yaml | `./agencies.yaml` |
 | `GCS_BUCKET` | Target GCS bucket | Required |
 | `GCP_PROJECT_ID` | GCP project ID for Secret Manager | Required if auth used |
 | `MAX_CONCURRENT` | Max concurrent fetches | `100` |
@@ -284,6 +284,7 @@ auth:
 ```
 
 The `value` field is optional:
+
 - **When omitted**: The entire secret value is used directly as the authentication value
 - **When provided**: The `${SECRET}` placeholder is replaced with the secret value (e.g., `"Bearer ${SECRET}"`)
 
@@ -624,7 +625,7 @@ gtfs-realtime-archiver/
 │   ├── test_fetcher.py
 │   ├── test_storage.py
 │   └── test_integration.py
-├── feeds.yaml                      # Feed configuration
+├── agencies.yaml                   # Agency configuration
 ├── Dockerfile
 ├── pyproject.toml                  # Project metadata (uv-managed)
 ├── uv.lock                         # Dependency lockfile
@@ -824,7 +825,7 @@ tofu destroy -var-file=prod.tfvars
 
 ### From transit-data-analytics-demo
 
-1. Convert `feeds.yaml` to new format (mostly compatible)
+1. Convert `agencies.yaml` to new format (mostly compatible)
 2. Update `feed_type` enum values if needed
 3. Remove Redis dependency from Kubernetes manifests
 4. Deploy and validate

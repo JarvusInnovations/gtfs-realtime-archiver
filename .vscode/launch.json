@@ -9,7 +9,7 @@
       "cwd": "${workspaceFolder}",
       "env": {
         "STORAGE_EMULATOR_HOST": "http://localhost:4443",
-        "FEEDS_CONFIG": "${workspaceFolder}/feeds.yaml",
+        "CONFIG_PATH": "${workspaceFolder}/agencies.yaml",
         "LOG_FORMAT": "text"
       },
       "envFile": "${workspaceFolder}/.env",

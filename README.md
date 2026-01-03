@@ -5,12 +5,14 @@ A lightweight, resilient service for archiving GTFS-Realtime feeds to Google Clo
 ## Overview
 
 GTFS-RT Archiver is a single-container Python service designed to:
+
 - Fetch hundreds of GTFS-Realtime feeds reliably and efficiently
 - Archive raw protobuf responses to GCS with Hive-style partitioning
 - Handle network failures, feed outages, and transient errors gracefully
 - Provide comprehensive observability via Prometheus metrics and structured logging
 
 **Key Features:**
+
 - Async I/O for high concurrency (500+ feeds with <1GB memory)
 - Per-feed configurable intervals (5-3600 seconds)
 - Exponential backoff retry for transient failures
@@ -72,8 +74,8 @@ asdf install
 uv sync --dev
 
 # Copy example configuration
-cp feeds.example.yaml feeds.yaml
-# Edit feeds.yaml with your feed URLs
+cp agencies.example.yaml agencies.yaml
+# Edit agencies.yaml with your agency/feed URLs
 
 # Set required environment variables
 export GCS_BUCKET=my-test-bucket
@@ -113,7 +115,7 @@ For local development without GCS credentials, use Docker Compose with a fake GC
 
 ```bash
 # Copy example configuration
-cp feeds.example.yaml feeds.yaml
+cp agencies.example.yaml agencies.yaml
 cp .env.example .env
 
 # Start services (fake-gcs + archiver)
@@ -126,6 +128,7 @@ curl -s http://localhost:4443/storage/v1/b/test-bucket/o | jq '.items | length'
 ```
 
 The `data/` directory contains archived feeds in Hive-partitioned structure:
+
 ```
 data/test-bucket/
 ├── service_alerts/agency=septa/dt=2026-01-02/hour=03/...
@@ -141,7 +144,7 @@ data/test-bucket/
 |----------|----------|---------|-------------|
 | `GCS_BUCKET` | Yes | - | Target GCS bucket name |
 | `GCP_PROJECT_ID` | If auth used | - | GCP project ID for Secret Manager |
-| `CONFIG_PATH` | No | `./feeds.yaml` | Path to feeds configuration file |
+| `CONFIG_PATH` | No | `./agencies.yaml` | Path to agencies configuration file |
 | `MAX_CONCURRENT` | No | `100` | Maximum concurrent fetches |
 | `HEALTH_PORT` | No | `8080` | Port for health/metrics server |
 | `LOG_LEVEL` | No | `INFO` | Logging level (DEBUG, INFO, WARNING, ERROR) |
@@ -149,7 +152,7 @@ data/test-bucket/
 | `SHARD_INDEX` | No | `0` | Shard index for multi-instance deployments |
 | `TOTAL_SHARDS` | No | `1` | Total number of shards |
 
-### Feed Configuration (`feeds.yaml`)
+### Agency Configuration (`agencies.yaml`)
 
 ```yaml
 defaults:
@@ -209,6 +212,7 @@ feeds:
 Feeds can authenticate via HTTP headers or query parameters using secrets stored in GCP Secret Manager.
 
 **Configuration:**
+
 - `type`: `header` or `query` - authentication method
 - `secret_name`: name of the secret in GCP Secret Manager
 - `key`: header name or query parameter name
@@ -217,6 +221,7 @@ Feeds can authenticate via HTTP headers or query parameters using secrets stored
   - When provided: replaces `${SECRET}` with the secret value (e.g., `"Bearer ${SECRET}"`)
 
 **Creating secrets:**
+
 ```bash
 # Create the secret
 gcloud secrets create mta-api-key --replication-policy=automatic
@@ -240,6 +245,7 @@ gcloud resource-manager tags bindings create \
 ### Prometheus Metrics
 
 Key metrics exposed on `/metrics`:
+
 - `gtfs_rt_fetch_total` - Total fetch attempts by feed
 - `gtfs_rt_fetch_success_total` - Successful fetches
 - `gtfs_rt_fetch_errors_total{error_type}` - Failed fetches by error type
