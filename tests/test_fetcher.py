@@ -69,6 +69,24 @@ def feed_config_with_query_auth() -> FeedConfig:
     return config
 
 
+@pytest.fixture
+def feed_config_with_query_auth_and_url_params() -> FeedConfig:
+    """Create a feed with query auth AND existing URL parameters."""
+    config = FeedConfig(
+        id="test-feed-query-auth-url-params",
+        name="Test Feed with Query Auth and URL Params",
+        url="https://example.com/feed.pb?format=protobuf&version=2",
+        feed_type="vehicle_positions",
+        auth=AuthConfig(
+            type=AuthType.QUERY,
+            secret_name="test-secret",
+            key="api_key",
+        ),
+    )
+    config.auth.resolved_value = "abc123"
+    return config
+
+
 class TestFetchResult:
     """Tests for FetchResult dataclass."""
 
@@ -162,6 +180,27 @@ class TestFetchFeed:
         assert route.called
         request = route.calls[0].request
         assert "api_key=abc123" in str(request.url)
+
+    @respx.mock
+    async def test_fetch_with_query_auth_preserves_url_params(
+        self, feed_config_with_query_auth_and_url_params: FeedConfig
+    ) -> None:
+        """Test that query auth merges with existing URL parameters."""
+        route = respx.get("https://example.com/feed.pb").mock(
+            return_value=Response(200, content=b"content")
+        )
+
+        async with httpx.AsyncClient() as client:
+            await fetch_feed(client, feed_config_with_query_auth_and_url_params)
+
+        assert route.called
+        request = route.calls[0].request
+        url_str = str(request.url)
+
+        # Verify all parameters are present
+        assert "api_key=abc123" in url_str      # Auth param
+        assert "format=protobuf" in url_str     # Existing param 1
+        assert "version=2" in url_str           # Existing param 2
 
     @respx.mock
     async def test_non_retryable_400(self, feed_config: FeedConfig) -> None:

@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from urllib.parse import parse_qs, urlparse, urlunparse
 
 import httpx
 from tenacity import (
@@ -108,19 +109,39 @@ async def _do_fetch(
     """
     fetch_start = datetime.now(UTC)
 
+    # Parse URL to extract existing query parameters
+    parsed_url = urlparse(str(feed.url))
+    existing_params: dict[str, str] = {}
+
+    # Convert parse_qs result (dict[str, list[str]]) to dict[str, str]
+    if parsed_url.query:
+        qs_dict = parse_qs(parsed_url.query)
+        existing_params = {k: v[0] for k, v in qs_dict.items()}
+
     # Build headers and params from auth config
     headers: dict[str, str] | None = None
-    params: dict[str, str] | None = None
+    params: dict[str, str] = existing_params.copy()  # Start with existing params
 
     if feed.auth is not None and feed.auth.resolved_value is not None:
         if feed.auth.type == AuthType.HEADER:
             headers = {feed.auth.key: feed.auth.resolved_value}
         elif feed.auth.type == AuthType.QUERY:
-            params = {feed.auth.key: feed.auth.resolved_value}
+            # Merge auth param with existing params
+            params[feed.auth.key] = feed.auth.resolved_value
+
+    # Build clean URL without query string (httpx will rebuild it from params)
+    clean_url = urlunparse((
+        parsed_url.scheme,
+        parsed_url.netloc,
+        parsed_url.path,
+        parsed_url.params,
+        '',  # Empty query string - will be rebuilt from params dict
+        parsed_url.fragment,
+    ))
 
     response = await client.get(
-        str(feed.url),
-        params=params,
+        clean_url,
+        params=params if params else None,
         headers=headers,
         timeout=feed.timeout_seconds,
     )
