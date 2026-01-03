@@ -1,0 +1,20 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Archiver",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "gtfs_rt_archiver",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "STORAGE_EMULATOR_HOST": "http://localhost:4443",
+        "FEEDS_CONFIG": "${workspaceFolder}/feeds.yaml",
+        "LOG_FORMAT": "text"
+      },
+      "envFile": "${workspaceFolder}/.env",
+      "preLaunchTask": "Start fake-gcs",
+      "console": "integratedTerminal"
+    }
+  ]
+}
