@@ -150,9 +150,7 @@ class TestFetchFeed:
         assert "content-type" in result.headers
 
     @respx.mock
-    async def test_fetch_with_header_auth(
-        self, feed_config_with_header_auth: FeedConfig
-    ) -> None:
+    async def test_fetch_with_header_auth(self, feed_config_with_header_auth: FeedConfig) -> None:
         """Test fetch includes auth header."""
         route = respx.get("https://example.com/feed.pb").mock(
             return_value=Response(200, content=b"content")
@@ -166,9 +164,7 @@ class TestFetchFeed:
         assert request.headers.get("Authorization") == "Bearer test-token"
 
     @respx.mock
-    async def test_fetch_with_query_auth(
-        self, feed_config_with_query_auth: FeedConfig
-    ) -> None:
+    async def test_fetch_with_query_auth(self, feed_config_with_query_auth: FeedConfig) -> None:
         """Test fetch includes auth query parameter."""
         route = respx.get("https://example.com/feed.pb").mock(
             return_value=Response(200, content=b"content")
@@ -198,9 +194,9 @@ class TestFetchFeed:
         url_str = str(request.url)
 
         # Verify all parameters are present
-        assert "api_key=abc123" in url_str      # Auth param
-        assert "format=protobuf" in url_str     # Existing param 1
-        assert "version=2" in url_str           # Existing param 2
+        assert "api_key=abc123" in url_str  # Auth param
+        assert "format=protobuf" in url_str  # Existing param 1
+        assert "version=2" in url_str  # Existing param 2
 
     @respx.mock
     async def test_non_retryable_400(self, feed_config: FeedConfig) -> None:

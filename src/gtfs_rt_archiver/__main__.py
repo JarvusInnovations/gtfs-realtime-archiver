@@ -202,9 +202,7 @@ async def run() -> None:
     feeds_with_auth = [f for f in feeds if f.auth is not None]
     if feeds_with_auth:
         if not settings.gcp_project_id:
-            raise ValueError(
-                "GCP_PROJECT_ID is required when feeds have auth configured"
-            )
+            raise ValueError("GCP_PROJECT_ID is required when feeds have auth configured")
         logger.info("resolving_secrets", count=len(feeds_with_auth))
         await resolve_feed_secrets(feeds, settings.gcp_project_id)
         logger.info("secrets_resolved")

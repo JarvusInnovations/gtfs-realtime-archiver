@@ -130,14 +130,16 @@ async def _do_fetch(
             params[feed.auth.key] = feed.auth.resolved_value
 
     # Build clean URL without query string (httpx will rebuild it from params)
-    clean_url = urlunparse((
-        parsed_url.scheme,
-        parsed_url.netloc,
-        parsed_url.path,
-        parsed_url.params,
-        '',  # Empty query string - will be rebuilt from params dict
-        parsed_url.fragment,
-    ))
+    clean_url = urlunparse(
+        (
+            parsed_url.scheme,
+            parsed_url.netloc,
+            parsed_url.path,
+            parsed_url.params,
+            "",  # Empty query string - will be rebuilt from params dict
+            parsed_url.fragment,
+        )
+    )
 
     response = await client.get(
         clean_url,
