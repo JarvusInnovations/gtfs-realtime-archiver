@@ -77,7 +77,12 @@ async def resolve_auth_config(
         SecretManagerError: If the secret cannot be fetched.
     """
     secret_value = await get_secret(project_id, auth.secret_name)
-    auth.resolved_value = auth.value.replace("${SECRET}", secret_value)
+    if auth.value is None:
+        # No value specified - use entire secret directly
+        auth.resolved_value = secret_value
+    else:
+        # Value specified - perform template substitution
+        auth.resolved_value = auth.value.replace("${SECRET}", secret_value)
 
 
 def clear_cache() -> None:

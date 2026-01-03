@@ -178,7 +178,7 @@ feeds:
       type: header              # Auth via HTTP header
       secret_name: mta-api-key  # Secret name in GCP Secret Manager
       key: x-api-key            # Header name
-      value: "${SECRET}"        # ${SECRET} replaced with secret value
+      # value field is optional - when omitted, uses entire secret directly
 
   # Feed with query parameter authentication
   - id: bart-trips
@@ -189,13 +189,32 @@ feeds:
     auth:
       type: query               # Auth via query parameter
       secret_name: bart-api-key
-      key: key
-      value: "${SECRET}"
+      key: key                  # Query parameter name
+
+  # Advanced: Feed with templated authentication (e.g., Bearer token)
+  - id: github-feed
+    name: GitHub GTFS Feed
+    url: https://api.github.com/repos/example/gtfs
+    feed_type: vehicle_positions
+    agency: github
+    auth:
+      type: header
+      secret_name: github-token
+      key: Authorization
+      value: "Bearer ${SECRET}"  # Template to prefix secret with "Bearer "
 ```
 
 ### Feed Authentication
 
 Feeds can authenticate via HTTP headers or query parameters using secrets stored in GCP Secret Manager.
+
+**Configuration:**
+- `type`: `header` or `query` - authentication method
+- `secret_name`: name of the secret in GCP Secret Manager
+- `key`: header name or query parameter name
+- `value`: (optional) template string with `${SECRET}` placeholder
+  - When omitted: uses the entire secret value directly
+  - When provided: replaces `${SECRET}` with the secret value (e.g., `"Bearer ${SECRET}"`)
 
 **Creating secrets:**
 ```bash

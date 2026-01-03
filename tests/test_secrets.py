@@ -93,7 +93,24 @@ class TestResolveAuthConfig:
         clear_cache()
 
     @patch("gtfs_rt_archiver.secrets.get_secret")
-    async def test_resolves_bearer_token(self, mock_get_secret: AsyncMock) -> None:
+    async def test_resolves_secret_without_value_field(self, mock_get_secret: AsyncMock) -> None:
+        """Test secret resolution when value field is not provided."""
+        mock_get_secret.return_value = "api-key-123"
+
+        auth = AuthConfig(
+            type=AuthType.HEADER,
+            secret_name="my-secret",
+            key="X-API-Key",
+            # value not specified - should use secret directly
+        )
+
+        await resolve_auth_config(auth, "my-project")
+
+        assert auth.resolved_value == "api-key-123"
+        mock_get_secret.assert_called_once_with("my-project", "my-secret")
+
+    @patch("gtfs_rt_archiver.secrets.get_secret")
+    async def test_resolves_bearer_token_with_template(self, mock_get_secret: AsyncMock) -> None:
         """Test secret value resolution with Bearer template."""
         mock_get_secret.return_value = "api-key-123"
 
@@ -110,8 +127,8 @@ class TestResolveAuthConfig:
         mock_get_secret.assert_called_once_with("my-project", "my-secret")
 
     @patch("gtfs_rt_archiver.secrets.get_secret")
-    async def test_resolves_plain_secret(self, mock_get_secret: AsyncMock) -> None:
-        """Test plain secret without template."""
+    async def test_resolves_plain_secret_template(self, mock_get_secret: AsyncMock) -> None:
+        """Test secret with ${SECRET} template (backward compatibility)."""
         mock_get_secret.return_value = "api-key-123"
 
         auth = AuthConfig(

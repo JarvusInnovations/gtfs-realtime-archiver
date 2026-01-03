@@ -27,7 +27,7 @@ class AuthConfig(BaseModel):
     type: AuthType
     secret_name: Annotated[str, Field(pattern=r"^[a-zA-Z0-9_-]+$")]
     key: str
-    value: str = "${SECRET}"
+    value: str | None = None
 
     # Populated at runtime after secret is fetched (excluded from serialization)
     resolved_value: str | None = Field(default=None, exclude=True)

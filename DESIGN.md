@@ -147,7 +147,7 @@ feeds:
       type: header                # Auth via HTTP header
       secret_name: mta-api-key    # Secret name in GCP Secret Manager
       key: x-api-key              # Header name
-      value: "${SECRET}"          # ${SECRET} replaced with secret value
+      # value field is optional - uses entire secret directly when omitted
 
   - id: bart-trip-updates
     name: BART Trip Updates
@@ -158,8 +158,7 @@ feeds:
     auth:
       type: query                 # Auth via query parameter
       secret_name: bart-api-key
-      key: key
-      value: "${SECRET}"
+      key: key                    # Query parameter name
 ```
 
 ### Pydantic Models
@@ -182,7 +181,7 @@ class AuthConfig(BaseModel):
     type: AuthType
     secret_name: str = Field(..., pattern=r"^[a-zA-Z0-9_-]+$")
     key: str
-    value: str = "${SECRET}"
+    value: str | None = None  # Optional: template with ${SECRET} placeholder
     resolved_value: str | None = Field(default=None, exclude=True)
 
 class RetryConfig(BaseModel):
@@ -280,8 +279,13 @@ auth:
   type: header                # header or query
   secret_name: mta-api-key    # Secret name in GCP Secret Manager
   key: x-api-key              # Header name or query param name
-  value: "${SECRET}"          # ${SECRET} replaced with secret value
+  value: "${SECRET}"          # Optional: template with ${SECRET} placeholder
+                              # When omitted, uses entire secret directly
 ```
+
+The `value` field is optional:
+- **When omitted**: The entire secret value is used directly as the authentication value
+- **When provided**: The `${SECRET}` placeholder is replaced with the secret value (e.g., `"Bearer ${SECRET}"`)
 
 The `GCP_PROJECT_ID` environment variable must be set when feeds have auth configured.
 
