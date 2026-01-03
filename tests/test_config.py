@@ -160,7 +160,6 @@ class TestSettings:
 
         assert settings.config_path == Path("./feeds.yaml")
         assert settings.gcs_bucket == "test-bucket"
-        assert settings.gcs_prefix == ""
         assert settings.max_concurrent == 100
         assert settings.health_port == 8080
         assert settings.log_level == "INFO"
@@ -172,7 +171,6 @@ class TestSettings:
         """Test custom settings from environment."""
         monkeypatch.setenv("CONFIG_PATH", "/etc/feeds.yaml")
         monkeypatch.setenv("GCS_BUCKET", "my-bucket")
-        monkeypatch.setenv("GCS_PREFIX", "archives/")
         monkeypatch.setenv("MAX_CONCURRENT", "50")
         monkeypatch.setenv("HEALTH_PORT", "9000")
         monkeypatch.setenv("LOG_LEVEL", "DEBUG")
@@ -182,7 +180,6 @@ class TestSettings:
 
         assert settings.config_path == Path("/etc/feeds.yaml")
         assert settings.gcs_bucket == "my-bucket"
-        assert settings.gcs_prefix == "archives/"
         assert settings.max_concurrent == 50
         assert settings.health_port == 9000
         assert settings.log_level == "DEBUG"

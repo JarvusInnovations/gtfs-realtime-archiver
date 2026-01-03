@@ -187,7 +187,6 @@ class FeedConfig(BaseModel):
 
 class ArchiverConfig(BaseModel):
     bucket: str
-    prefix: str = ""
     max_concurrent: int = Field(default=100, ge=1, le=500)
     defaults: FeedConfig  # Partial, used for defaults
     feeds: list[FeedConfig]
@@ -196,29 +195,29 @@ class ArchiverConfig(BaseModel):
 ### Storage Path Structure
 
 ```
-gs://{bucket}/{prefix}/
+gs://{bucket}/
 └── {feed_type}/
-    └── agency={agency}/
-        └── dt={YYYY-MM-DD}/
-            └── hour={HH}/
-                └── {feed_id}/
-                    ├── {ISO8601_timestamp}.pb      # Raw protobuf
-                    └── {ISO8601_timestamp}.meta    # Optional metadata JSON
+    └── date={YYYY-MM-DD}/
+        └── hour={YYYY-MM-DDTHH:00:00Z}/
+            └── base64url={encoded-url}/
+                ├── {ISO8601_timestamp}.pb      # Raw protobuf
+                └── {ISO8601_timestamp}.meta    # Optional metadata JSON
 ```
+
+The `base64url` partition contains the URL-safe base64 encoding of the full feed URL (including any query parameters), without padding characters.
 
 Example:
 
 ```
-gs://my-gtfs-archive/raw/
+gs://my-gtfs-archive/
 └── vehicle_positions/
-    └── agency=septa/
-        └── dt=2025-01-15/
-            └── hour=14/
-                └── septa-vehicle-positions/
-                    ├── 2025-01-15T14:20:00.000Z.pb
-                    ├── 2025-01-15T14:20:00.000Z.meta
-                    ├── 2025-01-15T14:20:20.000Z.pb
-                    └── 2025-01-15T14:20:20.000Z.meta
+    └── date=2025-01-15/
+        └── hour=2025-01-15T14:00:00Z/
+            └── base64url=aHR0cHM6Ly93d3czLnNlcHRhLm9yZy9ndGZzcnQvc2VwdGEtcGEtdXMvVmVoaWNsZS9ydFZlaGljbGVQb3NpdGlvbi5wYg/
+                ├── 2025-01-15T14:20:00.000Z.pb
+                ├── 2025-01-15T14:20:00.000Z.meta
+                ├── 2025-01-15T14:20:20.000Z.pb
+                └── 2025-01-15T14:20:20.000Z.meta
 ```
 
 ### Metadata File Format
@@ -249,7 +248,6 @@ gs://my-gtfs-archive/raw/
 |----------|-------------|---------|
 | `CONFIG_PATH` | Path to feeds.yaml | `./feeds.yaml` |
 | `GCS_BUCKET` | Target GCS bucket | Required |
-| `GCS_PREFIX` | Path prefix in bucket | `""` |
 | `MAX_CONCURRENT` | Max concurrent fetches | `100` |
 | `HEALTH_PORT` | Health check server port | `8080` |
 | `METRICS_PORT` | Prometheus metrics port | `9090` |

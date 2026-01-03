@@ -119,11 +119,6 @@ class Settings(BaseSettings):
         validation_alias="GCS_BUCKET",
         description="Target GCS bucket for archived feeds",
     )
-    gcs_prefix: str = Field(
-        default="",
-        validation_alias="GCS_PREFIX",
-        description="Path prefix within the GCS bucket",
-    )
 
     # Runtime settings
     max_concurrent: int = Field(

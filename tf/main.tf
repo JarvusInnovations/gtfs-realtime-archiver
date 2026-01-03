@@ -50,10 +50,6 @@ resource "google_cloud_run_v2_service" "archiver" {
         value = google_storage_bucket.archive.name
       }
       env {
-        name  = "GCS_PREFIX"
-        value = var.gcs_prefix
-      }
-      env {
         name  = "MAX_CONCURRENT"
         value = tostring(var.max_concurrent)
       }

@@ -41,17 +41,16 @@ See [DESIGN.md](DESIGN.md) for detailed architecture and implementation notes.
 ### Storage Layout
 
 ```
-gs://{bucket}/{prefix}/
+gs://{bucket}/
 └── {feed_type}/
-    └── agency={agency}/
-        └── dt={YYYY-MM-DD}/
-            └── hour={HH}/
-                └── {feed_id}/
-                    ├── {timestamp}.pb    # Raw protobuf
-                    └── {timestamp}.meta  # Metadata JSON
+    └── date={YYYY-MM-DD}/
+        └── hour={YYYY-MM-DDTHH:00:00Z}/
+            └── base64url={encoded-url}/
+                ├── {timestamp}.pb    # Raw protobuf
+                └── {timestamp}.meta  # Metadata JSON
 ```
 
-This structure enables efficient queries in BigQuery or Athena by partitioning on feed type, agency, date, and hour.
+This structure enables efficient queries in BigQuery or Athena by partitioning on feed type, date, and hour. The `base64url` partition uniquely identifies each feed by its full URL (including query parameters).
 
 ## Developer Quickstart
 
@@ -78,7 +77,6 @@ cp feeds.example.yaml feeds.yaml
 
 # Set required environment variables
 export GCS_BUCKET=my-test-bucket
-export GCS_PREFIX=gtfs-rt-archives/
 ```
 
 ### Development Commands
@@ -142,7 +140,6 @@ data/test-bucket/
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `GCS_BUCKET` | Yes | - | Target GCS bucket name |
-| `GCS_PREFIX` | No | `""` | Path prefix within bucket |
 | `CONFIG_PATH` | No | `./feeds.yaml` | Path to feeds configuration file |
 | `MAX_CONCURRENT` | No | `100` | Maximum concurrent fetches |
 | `HEALTH_PORT` | No | `8080` | Port for health/metrics server |
