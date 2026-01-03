@@ -25,6 +25,8 @@ def feed_config() -> FeedConfig:
         name="Test Feed",
         url="https://example.com/feed.pb",
         feed_type="vehicle_positions",
+        agency_id="test-agency",
+        agency_name="Test Agency",
         timeout_seconds=5,
         retry=RetryConfig(max_attempts=2, backoff_base=0.1, backoff_max=1.0),
     )
@@ -38,6 +40,8 @@ def feed_config_with_header_auth() -> FeedConfig:
         name="Test Feed with Auth",
         url="https://example.com/feed.pb",
         feed_type="vehicle_positions",
+        agency_id="test-agency",
+        agency_name="Test Agency",
         auth=AuthConfig(
             type=AuthType.HEADER,
             secret_name="test-secret",
@@ -58,6 +62,8 @@ def feed_config_with_query_auth() -> FeedConfig:
         name="Test Feed with Query Auth",
         url="https://example.com/feed.pb",
         feed_type="vehicle_positions",
+        agency_id="test-agency",
+        agency_name="Test Agency",
         auth=AuthConfig(
             type=AuthType.QUERY,
             secret_name="test-secret",
@@ -77,6 +83,8 @@ def feed_config_with_query_auth_and_url_params() -> FeedConfig:
         name="Test Feed with Query Auth and URL Params",
         url="https://example.com/feed.pb?format=protobuf&version=2",
         feed_type="vehicle_positions",
+        agency_id="test-agency",
+        agency_name="Test Agency",
         auth=AuthConfig(
             type=AuthType.QUERY,
             secret_name="test-secret",

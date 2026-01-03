@@ -87,6 +87,11 @@ def generate_metadata(feed: FeedConfig, result: FetchResult) -> dict[str, object
     """
     return {
         "feed_id": feed.id,
+        "agency_id": feed.agency_id,
+        "agency_name": feed.agency_name,
+        "system_id": feed.system_id,
+        "system_name": feed.system_name,
+        "schedule_url": str(feed.schedule_url) if feed.schedule_url else None,
         "url": str(feed.url),
         "fetch_timestamp": result.fetch_timestamp.isoformat(),
         "duration_ms": result.duration_ms,

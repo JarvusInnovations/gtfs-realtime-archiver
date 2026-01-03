@@ -17,6 +17,8 @@ def make_feed(feed_id: str) -> FeedConfig:
         name=f"Feed {feed_id}",
         url=f"https://example.com/{feed_id}.pb",
         feed_type="vehicle_positions",
+        agency_id="test-agency",
+        agency_name="Test Agency",
         interval_seconds=30,
     )
 

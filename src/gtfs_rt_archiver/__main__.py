@@ -16,8 +16,8 @@ from tenacity import (
 
 from gtfs_rt_archiver.config import (
     Settings,
-    apply_defaults,
-    load_feeds_file,
+    flatten_agencies,
+    load_agencies_file,
     resolve_feed_secrets,
 )
 from gtfs_rt_archiver.fetcher import (
@@ -64,7 +64,7 @@ async def create_fetch_job(
     async def fetch_job(feed: FeedConfig) -> None:
         """Fetch a single feed and upload to storage."""
         feed_type = feed.feed_type.value
-        agency = feed.agency
+        agency = feed.agency_id
 
         # Acquire semaphore to limit concurrent operations
         async with semaphore:
@@ -190,13 +190,15 @@ async def run() -> None:
         total_shards=settings.total_shards,
     )
 
-    # Load feed configuration
-    feeds_config = load_feeds_file(settings.config_path)
+    # Load and flatten agency configuration
+    agencies_config = load_agencies_file(settings.config_path)
+    feeds = flatten_agencies(agencies_config)
 
-    # Apply defaults to all feeds
-    feeds = [apply_defaults(feed, feeds_config.defaults) for feed in feeds_config.feeds]
-
-    logger.info("loaded_feeds", count=len(feeds))
+    logger.info(
+        "loaded_agencies",
+        agency_count=len(agencies_config.agencies),
+        feed_count=len(feeds),
+    )
 
     # Resolve authentication secrets (requires GCP_PROJECT_ID)
     feeds_with_auth = [f for f in feeds if f.auth is not None]
