@@ -69,12 +69,6 @@ variable "log_level" {
   default     = "INFO"
 }
 
-variable "secret_env_vars" {
-  description = "Map of environment variable names to Secret Manager secret IDs"
-  type        = map(string)
-  default     = {}
-}
-
 variable "github_org" {
   description = "GitHub organization for Workload Identity Federation"
   type        = string

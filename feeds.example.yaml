@@ -52,14 +52,17 @@ feeds:
     feed_type: vehicle_positions
     agency: septa
 
-  # Example: Feed with API key authentication
+  # Example: Feed with header authentication (via GCP Secret Manager)
+  # The value field is optional - when omitted, the entire secret value is used directly
   # - id: mta-subway-vehicles
   #   name: MTA Subway Vehicle Positions
   #   url: https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs
   #   feed_type: vehicle_positions
   #   agency: mta
-  #   headers:
-  #     x-api-key: "${MTA_API_KEY}"  # Environment variable substitution
+  #   auth:
+  #     type: header                # Auth via HTTP header
+  #     secret_name: mta-api-key    # Secret name in GCP Secret Manager
+  #     key: x-api-key              # Header name
 
   # Example: Feed with query parameter authentication
   # - id: bart-trip-updates
@@ -67,6 +70,21 @@ feeds:
   #   url: https://api.bart.gov/gtfsrt/tripupdate.aspx
   #   feed_type: trip_updates
   #   agency: bart
-  #   query_params:
-  #     key: "${BART_API_KEY}"
-  #   interval_seconds: 15  # Override default interval
+  #   interval_seconds: 15
+  #   auth:
+  #     type: query                 # Auth via query parameter
+  #     secret_name: bart-api-key   # Secret name in GCP Secret Manager
+  #     key: key                    # Query parameter name
+
+  # Example: Feed with templated authentication (advanced)
+  # Use the value field with ${SECRET} placeholder to prefix or wrap the secret
+  # - id: github-gtfs-feed
+  #   name: GitHub GTFS Feed
+  #   url: https://api.github.com/repos/example/gtfs-rt/feed.pb
+  #   feed_type: vehicle_positions
+  #   agency: github
+  #   auth:
+  #     type: header
+  #     secret_name: github-token
+  #     key: Authorization
+  #     value: "Bearer ${SECRET}"   # Prefix secret with "Bearer "

@@ -1,6 +1,5 @@
 """Tests for configuration loading."""
 
-import os
 from pathlib import Path
 
 import pytest
@@ -10,67 +9,15 @@ from gtfs_rt_archiver.config import (
     Settings,
     apply_defaults,
     load_feeds_file,
-    substitute_env_vars,
-    substitute_env_vars_in_dict,
 )
-from gtfs_rt_archiver.models import DefaultsConfig, FeedConfig, RetryConfig
-
-
-class TestSubstituteEnvVars:
-    """Tests for environment variable substitution."""
-
-    def test_single_substitution(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test substituting a single environment variable."""
-        monkeypatch.setenv("TEST_VAR", "test_value")
-        result = substitute_env_vars("Bearer ${TEST_VAR}")
-        assert result == "Bearer test_value"
-
-    def test_multiple_substitutions(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test substituting multiple environment variables."""
-        monkeypatch.setenv("USER", "admin")
-        monkeypatch.setenv("PASS", "secret")
-        result = substitute_env_vars("${USER}:${PASS}")
-        assert result == "admin:secret"
-
-    def test_no_substitution_needed(self) -> None:
-        """Test string without environment variables."""
-        result = substitute_env_vars("plain string")
-        assert result == "plain string"
-
-    def test_missing_env_var_raises(self) -> None:
-        """Test that missing environment variable raises ValueError."""
-        # Ensure the variable doesn't exist
-        if "NONEXISTENT_VAR" in os.environ:
-            del os.environ["NONEXISTENT_VAR"]
-
-        with pytest.raises(ValueError, match="Environment variable 'NONEXISTENT_VAR' is not set"):
-            substitute_env_vars("${NONEXISTENT_VAR}")
-
-
-class TestSubstituteEnvVarsInDict:
-    """Tests for dictionary environment variable substitution."""
-
-    def test_dict_substitution(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test substituting environment variables in dictionary values."""
-        monkeypatch.setenv("API_KEY", "abc123")
-        result = substitute_env_vars_in_dict(
-            {"Authorization": "Bearer ${API_KEY}", "Content-Type": "application/json"}
-        )
-        assert result == {
-            "Authorization": "Bearer abc123",
-            "Content-Type": "application/json",
-        }
+from gtfs_rt_archiver.models import AuthType, DefaultsConfig, FeedConfig, RetryConfig
 
 
 class TestLoadFeedsFile:
     """Tests for loading feeds.yaml files."""
 
-    def test_load_valid_file(
-        self, sample_feeds_file: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_load_valid_file(self, sample_feeds_file: Path) -> None:
         """Test loading a valid feeds.yaml file."""
-        monkeypatch.setenv("TEST_API_KEY", "secret123")
-
         config = load_feeds_file(sample_feeds_file)
 
         assert config.defaults.interval_seconds == 30
@@ -83,25 +30,21 @@ class TestLoadFeedsFile:
         assert septa.id == "septa-vehicles"
         assert septa.feed_type.value == "vehicle_positions"
         assert septa.agency == "septa"
+        assert septa.auth is None
 
         bart = config.feeds[1]
         assert bart.id == "bart-trips"
         assert bart.interval_seconds == 15
-        assert bart.headers == {"Authorization": "Bearer secret123"}
+        assert bart.auth is not None
+        assert bart.auth.type == AuthType.HEADER
+        assert bart.auth.secret_name == "bart-api-key"
+        assert bart.auth.key == "Authorization"
+        assert bart.auth.value == "Bearer ${SECRET}"
 
     def test_file_not_found(self, tmp_path: Path) -> None:
         """Test that FileNotFoundError is raised for missing file."""
         with pytest.raises(FileNotFoundError):
             load_feeds_file(tmp_path / "nonexistent.yaml")
-
-    def test_missing_env_var_in_file(self, sample_feeds_file: Path) -> None:
-        """Test that missing env var in file raises ValueError."""
-        # Don't set TEST_API_KEY
-        if "TEST_API_KEY" in os.environ:
-            del os.environ["TEST_API_KEY"]
-
-        with pytest.raises(ValueError, match="Environment variable 'TEST_API_KEY' is not set"):
-            load_feeds_file(sample_feeds_file)
 
 
 class TestApplyDefaults:

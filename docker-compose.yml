@@ -16,7 +16,9 @@ services:
       - .env
     environment:
       - STORAGE_EMULATOR_HOST=http://fake-gcs:4443
+      - GOOGLE_APPLICATION_CREDENTIALS=/config/gcp-service-account.json
     volumes:
       - ./feeds.yaml:/app/feeds.yaml:ro
+      - ${GOOGLE_APPLICATION_CREDENTIALS}:/config/gcp-service-account.json:ro
     ports:
       - "8080:8080"

@@ -14,6 +14,25 @@ class FeedType(str, Enum):
     SERVICE_ALERTS = "service_alerts"
 
 
+class AuthType(str, Enum):
+    """Type of authentication to apply."""
+
+    HEADER = "header"
+    QUERY = "query"
+
+
+class AuthConfig(BaseModel):
+    """Configuration for feed authentication via Secret Manager."""
+
+    type: AuthType
+    secret_name: Annotated[str, Field(pattern=r"^[a-zA-Z0-9_-]+$")]
+    key: str
+    value: str | None = None
+
+    # Populated at runtime after secret is fetched (excluded from serialization)
+    resolved_value: str | None = Field(default=None, exclude=True)
+
+
 class RetryConfig(BaseModel):
     """Configuration for retry behavior on transient failures."""
 
@@ -33,8 +52,7 @@ class FeedConfig(BaseModel):
     interval_seconds: int = Field(default=20, ge=5, le=3600)
     timeout_seconds: int = Field(default=30, ge=1, le=120)
     retry: RetryConfig = Field(default_factory=RetryConfig)
-    headers: dict[str, str] = Field(default_factory=dict)
-    query_params: dict[str, str] = Field(default_factory=dict)
+    auth: AuthConfig | None = None
 
 
 class DefaultsConfig(BaseModel):

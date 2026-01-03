@@ -14,7 +14,12 @@ from tenacity import (
     wait_exponential,
 )
 
-from gtfs_rt_archiver.config import Settings, apply_defaults, load_feeds_file
+from gtfs_rt_archiver.config import (
+    Settings,
+    apply_defaults,
+    load_feeds_file,
+    resolve_feed_secrets,
+)
 from gtfs_rt_archiver.fetcher import (
     NonRetryableError,
     create_http_client,
@@ -192,6 +197,15 @@ async def run() -> None:
     feeds = [apply_defaults(feed, feeds_config.defaults) for feed in feeds_config.feeds]
 
     logger.info("loaded_feeds", count=len(feeds))
+
+    # Resolve authentication secrets (requires GCP_PROJECT_ID)
+    feeds_with_auth = [f for f in feeds if f.auth is not None]
+    if feeds_with_auth:
+        if not settings.gcp_project_id:
+            raise ValueError("GCP_PROJECT_ID is required when feeds have auth configured")
+        logger.info("resolving_secrets", count=len(feeds_with_auth))
+        await resolve_feed_secrets(feeds, settings.gcp_project_id)
+        logger.info("secrets_resolved")
 
     # Create HTTP client
     http_client = create_http_client(settings.max_concurrent)

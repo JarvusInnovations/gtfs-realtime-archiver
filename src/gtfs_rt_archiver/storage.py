@@ -5,7 +5,6 @@ import base64
 import json
 from datetime import datetime
 from typing import TYPE_CHECKING
-from urllib.parse import urlencode
 
 from gcloud.aio.storage import Storage
 
@@ -16,22 +15,21 @@ if TYPE_CHECKING:
     from aiohttp import ClientSession
 
 
-def encode_url_to_base64url(url: str, query_params: dict[str, str] | None = None) -> str:
-    """Encode a URL (with optional query params) to base64url format.
+def encode_url_to_base64url(url: str) -> str:
+    """Encode a URL to base64url format.
+
+    Note: This only encodes the base URL, not any query parameters.
+    Auth-related query params are intentionally excluded to prevent
+    secret leakage and ensure consistent paths across secret rotations.
 
     Args:
-        url: The base URL.
-        query_params: Optional query parameters to append.
+        url: The base URL (without auth query params).
 
     Returns:
         Base64url-encoded string (URL-safe, no padding).
     """
-    full_url = str(url)
-    if query_params:
-        full_url = f"{full_url}?{urlencode(query_params)}"
-
     # Encode to base64url (URL-safe alphabet, no padding)
-    encoded = base64.urlsafe_b64encode(full_url.encode("utf-8")).decode("ascii")
+    encoded = base64.urlsafe_b64encode(str(url).encode("utf-8")).decode("ascii")
     return encoded.rstrip("=")
 
 
@@ -62,11 +60,8 @@ def generate_storage_path(
     # Hour partition: ISO8601 truncated to hour boundary
     hour_str = timestamp.strftime("%Y-%m-%dT%H:00:00Z")
 
-    # Base64url encode the full URL (including query params)
-    url_encoded = encode_url_to_base64url(
-        str(feed.url),
-        feed.query_params if feed.query_params else None,
-    )
+    # Base64url encode the base URL only (auth params excluded)
+    url_encoded = encode_url_to_base64url(str(feed.url))
 
     # Build path components
     parts = [

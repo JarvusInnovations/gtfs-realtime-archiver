@@ -28,14 +28,13 @@ def feed_config() -> FeedConfig:
 
 
 @pytest.fixture
-def feed_config_with_params() -> FeedConfig:
-    """Create a feed configuration with query parameters."""
+def feed_config_trip_updates() -> FeedConfig:
+    """Create a feed configuration for trip updates."""
     return FeedConfig(
-        id="test-feed-params",
-        name="Test Feed with Params",
+        id="test-feed-trips",
+        name="Test Feed Trip Updates",
         url="https://api.example.com/feed",
         feed_type="trip_updates",
-        query_params={"key": "abc123", "format": "pb"},
     )
 
 
@@ -80,26 +79,22 @@ class TestEncodeUrlToBase64url:
         decoded = _decode_base64url(result)
         assert decoded == url
 
-    def test_url_with_query_params(self) -> None:
-        """Test encoding URL with query parameters."""
-        url = "https://api.example.com/feed"
-        query_params = {"key": "abc123", "format": "pb"}
-        result = encode_url_to_base64url(url, query_params)
+    def test_url_with_special_characters(self) -> None:
+        """Test encoding URL with special characters in path."""
+        url = "https://api.example.com/feed/vehicle%2Fpositions"
+        result = encode_url_to_base64url(url)
 
-        # Verify round-trip includes query params
+        # Verify round-trip preserves the URL
         decoded = _decode_base64url(result)
-        assert "key=abc123" in decoded
-        assert "format=pb" in decoded
+        assert decoded == url
 
-    def test_empty_query_params(self) -> None:
-        """Test that empty query params don't affect URL."""
+    def test_consistent_encoding(self) -> None:
+        """Test that same URL always produces same encoding."""
         url = "https://example.com/feed.pb"
-        result_none = encode_url_to_base64url(url, None)
-        result_empty = encode_url_to_base64url(url, {})
-        result_plain = encode_url_to_base64url(url)
+        result1 = encode_url_to_base64url(url)
+        result2 = encode_url_to_base64url(url)
 
-        assert result_none == result_plain
-        assert result_empty == result_plain
+        assert result1 == result2
 
 
 class TestGenerateStoragePath:
@@ -137,18 +132,6 @@ class TestGenerateStoragePath:
         decoded = _decode_base64url(encoded)
         assert decoded == str(feed_config.url)
 
-    def test_path_with_query_params(self, feed_config_with_params: FeedConfig) -> None:
-        """Test path generation with query parameters."""
-        timestamp = datetime(2025, 1, 15, 14, 20, 30, 123000, tzinfo=UTC)
-        path = generate_storage_path(feed_config_with_params, timestamp)
-
-        # Decode base64url and verify query params included
-        parts = path.split("/")
-        encoded = parts[3][len("base64url=") :]
-        decoded = _decode_base64url(encoded)
-        assert "key=abc123" in decoded
-        assert "format=pb" in decoded
-
     def test_different_extension(self, feed_config: FeedConfig) -> None:
         """Test path generation with different extension."""
         timestamp = datetime(2025, 1, 15, 14, 20, 30, 123000, tzinfo=UTC)
@@ -156,10 +139,10 @@ class TestGenerateStoragePath:
 
         assert path.endswith(".meta")
 
-    def test_feed_type_in_path(self, feed_config_with_params: FeedConfig) -> None:
+    def test_feed_type_in_path(self, feed_config_trip_updates: FeedConfig) -> None:
         """Test that feed_type is correctly included."""
         timestamp = datetime(2025, 1, 15, 14, 20, 30, 123000, tzinfo=UTC)
-        path = generate_storage_path(feed_config_with_params, timestamp)
+        path = generate_storage_path(feed_config_trip_updates, timestamp)
 
         assert path.startswith("trip_updates/")
 

@@ -78,16 +78,21 @@ class TestFeedConfig:
         assert config.interval_seconds == 20
         assert config.timeout_seconds == 30
         assert config.retry == RetryConfig()
-        assert config.headers == {}
-        assert config.query_params == {}
+        assert config.auth is None
 
     def test_custom_values(self, sample_feed_config: dict[str, Any]) -> None:
         """Test creating a feed config with custom values."""
         sample_feed_config["interval_seconds"] = 60
-        sample_feed_config["headers"] = {"Authorization": "Bearer token"}
+        sample_feed_config["auth"] = {
+            "type": "header",
+            "secret_name": "my-api-key",
+            "key": "Authorization",
+            "value": "Bearer ${SECRET}",
+        }
         config = FeedConfig(**sample_feed_config)
         assert config.interval_seconds == 60
-        assert config.headers == {"Authorization": "Bearer token"}
+        assert config.auth is not None
+        assert config.auth.secret_name == "my-api-key"
 
     def test_id_pattern_validation(self, sample_feed_config: dict[str, Any]) -> None:
         """Test that feed ID must match pattern."""

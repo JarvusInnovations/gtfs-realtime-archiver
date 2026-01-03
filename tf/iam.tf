@@ -17,14 +17,18 @@ resource "google_project_iam_member" "archiver_run" {
   member  = "serviceAccount:${google_service_account.archiver.email}"
 }
 
-# Grant access to secrets (if any configured)
-resource "google_secret_manager_secret_iam_member" "archiver_secrets" {
-  for_each = var.secret_env_vars
+# Grant access to secrets with type=feed-key tag
+# Secrets must be tagged with type=feed-key to be accessible
+resource "google_project_iam_member" "archiver_feed_secrets" {
+  project = var.project_id
+  role    = "roles/secretmanager.secretAccessor"
+  member  = "serviceAccount:${google_service_account.archiver.email}"
 
-  project   = var.project_id
-  secret_id = each.value
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.archiver.email}"
+  condition {
+    title       = "feed-key-secrets"
+    description = "Access to secrets tagged type=feed-key"
+    expression  = "resource.matchTag('${var.project_id}/type', 'feed-key')"
+  }
 }
 
 # Grant access to feeds config secret
