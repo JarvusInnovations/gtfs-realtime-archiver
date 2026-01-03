@@ -42,8 +42,8 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-# Copy feeds config (if present, can be overridden via mount)
-COPY --chown=archiver:archiver feeds.example.yaml /app/feeds.yaml
+# Copy agencies config (if present, can be overridden via mount)
+COPY --chown=archiver:archiver agencies.example.yaml /app/agencies.yaml
 
 # Switch to non-root user
 USER archiver
