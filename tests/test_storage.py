@@ -137,9 +137,7 @@ class TestGenerateStoragePath:
         decoded = _decode_base64url(encoded)
         assert decoded == str(feed_config.url)
 
-    def test_path_with_query_params(
-        self, feed_config_with_params: FeedConfig
-    ) -> None:
+    def test_path_with_query_params(self, feed_config_with_params: FeedConfig) -> None:
         """Test path generation with query parameters."""
         timestamp = datetime(2025, 1, 15, 14, 20, 30, 123000, tzinfo=UTC)
         path = generate_storage_path(feed_config_with_params, timestamp)

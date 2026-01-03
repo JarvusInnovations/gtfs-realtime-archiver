@@ -16,9 +16,7 @@ if TYPE_CHECKING:
     from aiohttp import ClientSession
 
 
-def encode_url_to_base64url(
-    url: str, query_params: dict[str, str] | None = None
-) -> str:
+def encode_url_to_base64url(url: str, query_params: dict[str, str] | None = None) -> str:
     """Encode a URL (with optional query params) to base64url format.
 
     Args:
