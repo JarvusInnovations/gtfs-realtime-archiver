@@ -6,7 +6,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_input.file_path' | { read file_path; [[ \"$file_path\" == *.py ]] && uv run ruff format \"$file_path\" || true; }"
+            "command": "bash -c 'file_path=$(cat | jq -r \".tool_input.file_path\"); [[ \"$file_path\" == *.py ]] && uv run ruff format \"$file_path\" || true'"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'file_path=$(cat | jq -r \".tool_input.file_path\"); [[ \"$file_path\" == *.md ]] && npx -y markdownlint-cli2 \"$file_path\" --fix 2>&1 || true'",
+            "timeout": 30
           }
         ]
       }
