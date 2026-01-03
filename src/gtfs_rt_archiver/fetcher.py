@@ -12,7 +12,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from gtfs_rt_archiver.models import FeedConfig
+from gtfs_rt_archiver.models import AuthType, FeedConfig
 
 
 class NonRetryableError(Exception):
@@ -108,10 +108,20 @@ async def _do_fetch(
     """
     fetch_start = datetime.now(UTC)
 
+    # Build headers and params from auth config
+    headers: dict[str, str] | None = None
+    params: dict[str, str] | None = None
+
+    if feed.auth is not None and feed.auth.resolved_value is not None:
+        if feed.auth.type == AuthType.HEADER:
+            headers = {feed.auth.key: feed.auth.resolved_value}
+        elif feed.auth.type == AuthType.QUERY:
+            params = {feed.auth.key: feed.auth.resolved_value}
+
     response = await client.get(
         str(feed.url),
-        params=feed.query_params if feed.query_params else None,
-        headers=feed.headers if feed.headers else None,
+        params=params,
+        headers=headers,
         timeout=feed.timeout_seconds,
     )
 

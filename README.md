@@ -50,7 +50,7 @@ gs://{bucket}/
                 └── {timestamp}.meta  # Metadata JSON
 ```
 
-This structure enables efficient queries in BigQuery or Athena by partitioning on feed type, date, and hour. The `base64url` partition uniquely identifies each feed by its full URL (including query parameters).
+This structure enables efficient queries in BigQuery or Athena by partitioning on feed type, date, and hour. The `base64url` partition uniquely identifies each feed by its base URL.
 
 ## Developer Quickstart
 
@@ -140,6 +140,7 @@ data/test-bucket/
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `GCS_BUCKET` | Yes | - | Target GCS bucket name |
+| `GCP_PROJECT_ID` | If auth used | - | GCP project ID for Secret Manager |
 | `CONFIG_PATH` | No | `./feeds.yaml` | Path to feeds configuration file |
 | `MAX_CONCURRENT` | No | `100` | Maximum concurrent fetches |
 | `HEALTH_PORT` | No | `8080` | Port for health/metrics server |
@@ -167,14 +168,48 @@ feeds:
     agency: septa
     interval_seconds: 15          # Override default
 
-  # Feed with authentication
+  # Feed with header authentication (via GCP Secret Manager)
   - id: mta-vehicles
     name: MTA Vehicles
     url: https://api.mta.info/feeds
     feed_type: vehicle_positions
     agency: mta
-    headers:
-      x-api-key: "${MTA_API_KEY}"  # Environment variable substitution
+    auth:
+      type: header              # Auth via HTTP header
+      secret_name: mta-api-key  # Secret name in GCP Secret Manager
+      key: x-api-key            # Header name
+      value: "${SECRET}"        # ${SECRET} replaced with secret value
+
+  # Feed with query parameter authentication
+  - id: bart-trips
+    name: BART Trip Updates
+    url: https://api.bart.gov/gtfsrt/tripupdate.aspx
+    feed_type: trip_updates
+    agency: bart
+    auth:
+      type: query               # Auth via query parameter
+      secret_name: bart-api-key
+      key: key
+      value: "${SECRET}"
+```
+
+### Feed Authentication
+
+Feeds can authenticate via HTTP headers or query parameters using secrets stored in GCP Secret Manager.
+
+**Creating secrets:**
+```bash
+# Create the secret
+gcloud secrets create mta-api-key --replication-policy=automatic
+
+# Add the secret value
+echo -n "your-api-key" | gcloud secrets versions add mta-api-key --data-file=-
+
+# Tag the secret for IAM access (if using Terraform-managed tags)
+gcloud resource-manager tags bindings create \
+  --tag-value=${PROJECT_ID}/type/feed-key \
+  --parent=//secretmanager.googleapis.com/projects/${PROJECT_ID}/secrets/mta-api-key \
+  --location=global
 ```
 
 ### API Endpoints

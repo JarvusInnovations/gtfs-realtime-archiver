@@ -1,7 +1,6 @@
 """Configuration loading and settings for GTFS-RT Archiver."""
 
-import os
-import re
+import asyncio
 from pathlib import Path
 from typing import Self
 
@@ -17,35 +16,6 @@ from gtfs_rt_archiver.models import (
 )
 
 
-def substitute_env_vars(value: str) -> str:
-    """Substitute ${VAR} patterns with environment variable values.
-
-    Args:
-        value: String potentially containing ${VAR} patterns.
-
-    Returns:
-        String with environment variables substituted.
-
-    Raises:
-        ValueError: If an environment variable is not set.
-    """
-    pattern = re.compile(r"\$\{([^}]+)\}")
-
-    def replacer(match: re.Match[str]) -> str:
-        var_name = match.group(1)
-        env_value = os.environ.get(var_name)
-        if env_value is None:
-            raise ValueError(f"Environment variable '{var_name}' is not set")
-        return env_value
-
-    return pattern.sub(replacer, value)
-
-
-def substitute_env_vars_in_dict(d: dict[str, str]) -> dict[str, str]:
-    """Substitute environment variables in all values of a dictionary."""
-    return {k: substitute_env_vars(v) for k, v in d.items()}
-
-
 def load_feeds_file(path: Path) -> FeedsFileConfig:
     """Load and parse a feeds.yaml configuration file.
 
@@ -53,26 +23,45 @@ def load_feeds_file(path: Path) -> FeedsFileConfig:
         path: Path to the feeds.yaml file.
 
     Returns:
-        Parsed FeedsFileConfig with environment variables substituted.
+        Parsed FeedsFileConfig.
 
     Raises:
         FileNotFoundError: If the file does not exist.
         yaml.YAMLError: If the file is not valid YAML.
-        ValueError: If environment variables are not set.
         pydantic.ValidationError: If the configuration is invalid.
+
+    Note:
+        This only loads and validates the YAML. Secrets must be resolved
+        separately by calling resolve_feed_secrets().
     """
     with path.open() as f:
         raw_config = yaml.safe_load(f)
 
-    # Substitute environment variables in headers and query_params
-    if "feeds" in raw_config:
-        for feed in raw_config["feeds"]:
-            if "headers" in feed:
-                feed["headers"] = substitute_env_vars_in_dict(feed["headers"])
-            if "query_params" in feed:
-                feed["query_params"] = substitute_env_vars_in_dict(feed["query_params"])
-
     return FeedsFileConfig.model_validate(raw_config)
+
+
+async def resolve_feed_secrets(
+    feeds: list[FeedConfig],
+    project_id: str,
+) -> None:
+    """Resolve all authentication secrets for feeds.
+
+    Args:
+        feeds: List of feed configurations.
+        project_id: GCP project ID for Secret Manager.
+
+    Raises:
+        SecretManagerError: If any secret cannot be fetched.
+    """
+    from gtfs_rt_archiver.secrets import resolve_auth_config
+
+    tasks = []
+    for feed in feeds:
+        if feed.auth is not None:
+            tasks.append(resolve_auth_config(feed.auth, project_id))
+
+    if tasks:
+        await asyncio.gather(*tasks)
 
 
 def apply_defaults(feed: FeedConfig, defaults: DefaultsConfig) -> FeedConfig:
@@ -118,6 +107,13 @@ class Settings(BaseSettings):
     gcs_bucket: str = Field(
         validation_alias="GCS_BUCKET",
         description="Target GCS bucket for archived feeds",
+    )
+
+    # GCP settings
+    gcp_project_id: str | None = Field(
+        default=None,
+        validation_alias="GCP_PROJECT_ID",
+        description="GCP project ID for Secret Manager (required when feeds have auth)",
     )
 
     # Runtime settings

@@ -136,24 +136,30 @@ feeds:
     url: https://www3.septa.org/gtfsrt/septa-pa-us/Vehicle/rtVehiclePosition.pb
     feed_type: vehicle_positions
     agency: septa
-    # Uses defaults
+    # Uses defaults, no auth required
+
+  - id: mta-vehicles
+    name: MTA Vehicles
+    url: https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs
+    feed_type: vehicle_positions
+    agency: mta
+    auth:
+      type: header                # Auth via HTTP header
+      secret_name: mta-api-key    # Secret name in GCP Secret Manager
+      key: x-api-key              # Header name
+      value: "${SECRET}"          # ${SECRET} replaced with secret value
 
   - id: bart-trip-updates
     name: BART Trip Updates
     url: https://api.bart.gov/gtfsrt/tripupdate.aspx
     feed_type: trip_updates
     agency: bart
-    interval_seconds: 15  # Override: fetch every 15s
-    headers:
-      Authorization: "Bearer ${BART_API_KEY}"  # Environment variable substitution
-
-  - id: mta-service-alerts
-    name: MTA Service Alerts
-    url: https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/camsys%2Fsubway-alerts
-    feed_type: service_alerts
-    agency: mta
-    query_params:
-      key: "${MTA_API_KEY}"
+    interval_seconds: 15
+    auth:
+      type: query                 # Auth via query parameter
+      secret_name: bart-api-key
+      key: key
+      value: "${SECRET}"
 ```
 
 ### Pydantic Models
@@ -167,6 +173,17 @@ class FeedType(str, Enum):
     VEHICLE_POSITIONS = "vehicle_positions"
     TRIP_UPDATES = "trip_updates"
     SERVICE_ALERTS = "service_alerts"
+
+class AuthType(str, Enum):
+    HEADER = "header"
+    QUERY = "query"
+
+class AuthConfig(BaseModel):
+    type: AuthType
+    secret_name: str = Field(..., pattern=r"^[a-zA-Z0-9_-]+$")
+    key: str
+    value: str = "${SECRET}"
+    resolved_value: str | None = Field(default=None, exclude=True)
 
 class RetryConfig(BaseModel):
     max_attempts: int = 3
@@ -182,8 +199,7 @@ class FeedConfig(BaseModel):
     interval_seconds: int = Field(default=20, ge=5, le=3600)
     timeout_seconds: int = Field(default=30, ge=1, le=120)
     retry: RetryConfig = Field(default_factory=RetryConfig)
-    headers: dict[str, str] = Field(default_factory=dict)
-    query_params: dict[str, str] = Field(default_factory=dict)
+    auth: AuthConfig | None = None
 
 class ArchiverConfig(BaseModel):
     bucket: str
@@ -204,7 +220,7 @@ gs://{bucket}/
                 └── {ISO8601_timestamp}.meta    # Optional metadata JSON
 ```
 
-The `base64url` partition contains the URL-safe base64 encoding of the full feed URL (including any query parameters), without padding characters.
+The `base64url` partition contains the URL-safe base64 encoding of the base feed URL (without auth query parameters), without padding characters. This ensures consistent storage paths across secret rotations and prevents secret leakage in storage paths.
 
 Example:
 
@@ -248,20 +264,29 @@ gs://my-gtfs-archive/
 |----------|-------------|---------|
 | `CONFIG_PATH` | Path to feeds.yaml | `./feeds.yaml` |
 | `GCS_BUCKET` | Target GCS bucket | Required |
+| `GCP_PROJECT_ID` | GCP project ID for Secret Manager | Required if auth used |
 | `MAX_CONCURRENT` | Max concurrent fetches | `100` |
 | `HEALTH_PORT` | Health check server port | `8080` |
 | `METRICS_PORT` | Prometheus metrics port | `9090` |
 | `LOG_LEVEL` | Logging level | `INFO` |
 | `LOG_FORMAT` | `json` or `text` | `json` |
 
-### Secret Substitution
+### Secret Manager Integration
 
-Environment variables in config are substituted at load time:
+Feed authentication secrets are fetched from GCP Secret Manager at startup:
 
 ```yaml
-headers:
-  Authorization: "Bearer ${API_KEY}"  # Reads from $API_KEY env var
+auth:
+  type: header                # header or query
+  secret_name: mta-api-key    # Secret name in GCP Secret Manager
+  key: x-api-key              # Header name or query param name
+  value: "${SECRET}"          # ${SECRET} replaced with secret value
 ```
+
+The `GCP_PROJECT_ID` environment variable must be set when feeds have auth configured.
+
+**IAM Access Control:**
+Secrets must be tagged with `type=feed-key` for the service account to access them. The Terraform configuration creates the tag key/value and sets up IAM conditions.
 
 ---
 

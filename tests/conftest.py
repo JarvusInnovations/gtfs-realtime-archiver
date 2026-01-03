@@ -43,8 +43,11 @@ feeds:
     feed_type: trip_updates
     agency: bart
     interval_seconds: 15
-    headers:
-      Authorization: "Bearer ${TEST_API_KEY}"
+    auth:
+      type: header
+      secret_name: bart-api-key
+      key: Authorization
+      value: "Bearer ${SECRET}"
 """
 
 
