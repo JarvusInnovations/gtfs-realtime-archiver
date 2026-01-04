@@ -4,16 +4,11 @@ resource "google_cloud_run_v2_service" "archiver" {
   project  = var.project_id
 
   template {
-    service_account = google_service_account.archiver.email
-
-    # Managed Prometheus sidecar: collector depends on archiver container
-    annotations = {
-      "run.googleapis.com/container-dependencies" = jsonencode({
-        collector = ["archiver"]
-      })
-    }
+    service_account       = google_service_account.archiver.email
+    execution_environment = "EXECUTION_ENVIRONMENT_GEN2"
 
     # Mount agencies config from Secret Manager
+    # Note: container dependencies are set via depends_on in container blocks
     volumes {
       name = "agencies-config"
       secret {
@@ -101,9 +96,10 @@ resource "google_cloud_run_v2_service" "archiver" {
     }
 
     # Managed Prometheus sidecar - scrapes /metrics on port 8080
+    # Using 1.2.0 per docs (https://cloud.google.com/run/docs/monitoring-managed-prometheus-sidecar)
     containers {
       name       = "collector"
-      image      = "us-docker.pkg.dev/cloud-ops-agents-artifacts/cloud-run-gmp-sidecar/cloud-run-gmp-sidecar:1.3.0"
+      image      = "us-docker.pkg.dev/cloud-ops-agents-artifacts/cloud-run-gmp-sidecar/cloud-run-gmp-sidecar:1.2.0"
       depends_on = ["archiver"]
     }
 
