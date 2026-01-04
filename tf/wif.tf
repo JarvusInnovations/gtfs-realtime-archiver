@@ -113,3 +113,10 @@ resource "google_project_iam_member" "github_actions_secret_admin" {
   role    = "roles/secretmanager.admin"
   member  = "serviceAccount:${google_service_account.github_actions.email}"
 }
+
+# Tag Admin - manage resource tags for IAM conditions
+resource "google_project_iam_member" "github_actions_tag_admin" {
+  project = var.project_id
+  role    = "roles/resourcemanager.tagAdmin"
+  member  = "serviceAccount:${google_service_account.github_actions.email}"
+}
