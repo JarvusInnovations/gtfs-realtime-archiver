@@ -6,6 +6,13 @@ resource "google_cloud_run_v2_service" "archiver" {
   template {
     service_account = google_service_account.archiver.email
 
+    # Managed Prometheus sidecar: collector depends on archiver container
+    annotations = {
+      "run.googleapis.com/container-dependencies" = jsonencode({
+        collector = ["archiver"]
+      })
+    }
+
     # Mount agencies config from Secret Manager
     volumes {
       name = "agencies-config"
@@ -20,6 +27,7 @@ resource "google_cloud_run_v2_service" "archiver" {
     }
 
     containers {
+      name  = "archiver"
       image = var.container_image
 
       resources {
@@ -90,6 +98,13 @@ resource "google_cloud_run_v2_service" "archiver" {
         failure_threshold = 3
         timeout_seconds   = 10
       }
+    }
+
+    # Managed Prometheus sidecar - scrapes /metrics on port 8080
+    containers {
+      name       = "collector"
+      image      = "us-docker.pkg.dev/cloud-ops-agents-artifacts/cloud-run-gmp-sidecar/cloud-run-gmp-sidecar:1.3.0"
+      depends_on = ["archiver"]
     }
 
     scaling {

@@ -52,3 +52,10 @@ resource "google_secret_manager_secret_iam_member" "archiver_agencies_config" {
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.archiver.email}"
 }
+
+# Allow sidecar to write Prometheus metrics to Cloud Monitoring
+resource "google_project_iam_member" "archiver_metrics_writer" {
+  project = var.project_id
+  role    = "roles/monitoring.metricWriter"
+  member  = "serviceAccount:${google_service_account.archiver.email}"
+}
