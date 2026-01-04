@@ -6,10 +6,13 @@ from google.transit import gtfs_realtime_pb2
 
 from dagster_pipeline.defs.assets.compaction import (
     decode_base64url,
+    encode_base64url,
     extract_service_alerts,
     extract_trip_updates,
     extract_vehicle_positions,
     parse_protobuf,
+    strip_url_scheme,
+    stripped_to_base64url,
 )
 
 
@@ -41,6 +44,76 @@ class TestDecodeBase64url:
 
         encoded = "YQ"  # "a" - needs 2 padding chars
         assert decode_base64url(encoded) == "a"
+
+
+class TestEncodeBase64url:
+    """Tests for base64url encoding."""
+
+    def test_encode_simple(self) -> None:
+        """Test encoding a simple URL."""
+        url = "https://example.com"
+        result = encode_base64url(url)
+        assert result == "aHR0cHM6Ly9leGFtcGxlLmNvbQ"
+
+    def test_encode_with_path_and_query(self) -> None:
+        """Test encoding a URL with path and query parameters."""
+        url = "https://example.com/path?query=foo"
+        result = encode_base64url(url)
+        assert result == "aHR0cHM6Ly9leGFtcGxlLmNvbS9wYXRoP3F1ZXJ5PWZvbw"
+
+    def test_roundtrip(self) -> None:
+        """Test that encode/decode round-trips correctly."""
+        original = "https://gtfs.example.com/realtime/vehicle-positions"
+        encoded = encode_base64url(original)
+        decoded = decode_base64url(encoded)
+        assert decoded == original
+
+
+class TestStripUrlScheme:
+    """Tests for stripping URL scheme."""
+
+    def test_strip_https(self) -> None:
+        """Test stripping https:// prefix."""
+        url = "https://example.com/feed"
+        assert strip_url_scheme(url) == "example.com/feed"
+
+    def test_strip_http(self) -> None:
+        """Test stripping http:// prefix."""
+        url = "http://example.com/feed"
+        assert strip_url_scheme(url) == "example.com/feed"
+
+    def test_no_scheme(self) -> None:
+        """Test URL without scheme is unchanged."""
+        url = "example.com/feed"
+        assert strip_url_scheme(url) == "example.com/feed"
+
+    def test_preserves_path_and_query(self) -> None:
+        """Test that path and query are preserved."""
+        url = "https://gtfs.example.com/api/v1/feed?key=abc"
+        assert strip_url_scheme(url) == "gtfs.example.com/api/v1/feed?key=abc"
+
+
+class TestStrippedToBase64url:
+    """Tests for converting stripped URLs to base64url."""
+
+    def test_converts_stripped_url(self) -> None:
+        """Test converting a stripped URL to base64url."""
+        stripped = "example.com/feed"
+        result = stripped_to_base64url(stripped)
+        # Should encode https://example.com/feed
+        expected = encode_base64url("https://example.com/feed")
+        assert result == expected
+
+    def test_roundtrip_from_full_url(self) -> None:
+        """Test that stripped URL can be converted back to original base64url."""
+        original_url = "https://gtfs.example.com/realtime"
+        original_base64 = encode_base64url(original_url)
+
+        # Strip and convert back
+        stripped = strip_url_scheme(original_url)
+        recovered_base64 = stripped_to_base64url(stripped)
+
+        assert recovered_base64 == original_base64
 
 
 class TestParseProtobuf:

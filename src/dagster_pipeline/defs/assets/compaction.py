@@ -18,7 +18,7 @@ from dagster_pipeline.defs.assets.schemas import (
     TRIP_UPDATES_SCHEMA,
     VEHICLE_POSITIONS_SCHEMA,
 )
-from dagster_pipeline.defs.partitions import daily_partitions
+from dagster_pipeline.defs.partitions import compaction_partitions
 from dagster_pipeline.defs.resources import GCSResource
 
 
@@ -26,6 +26,24 @@ def decode_base64url(encoded: str) -> str:
     """Decode base64url string (add padding back for decoding)."""
     padded = encoded + "=" * (4 - len(encoded) % 4) if len(encoded) % 4 else encoded
     return base64.urlsafe_b64decode(padded).decode("utf-8")
+
+
+def encode_base64url(url: str) -> str:
+    """Encode URL to base64url (for GCS path lookup)."""
+    return base64.urlsafe_b64encode(url.encode()).decode().rstrip("=")
+
+
+def strip_url_scheme(url: str) -> str:
+    """Remove http(s):// prefix from URL for use as partition key."""
+    return re.sub(r"^https?://", "", url)
+
+
+def stripped_to_base64url(stripped: str) -> str:
+    """Convert stripped URL partition key to base64url for GCS paths.
+
+    Assumes https:// prefix (most common for GTFS-RT feeds).
+    """
+    return encode_base64url(f"https://{stripped}")
 
 
 def discover_feed_urls(
@@ -367,17 +385,17 @@ def extract_service_alerts(
                 yield record
 
 
-def compact_feed_type(
+def compact_single_feed(
     context: dg.AssetExecutionContext,
     gcs: GCSResource,
     feed_type: str,
     schema: pa.Schema,
     extractor: Any,
 ) -> dg.Output[dict[str, int]]:
-    """Compact all feeds of a given type for a partition date.
+    """Compact a single feed for a single date partition.
 
     Args:
-        context: Dagster asset execution context
+        context: Dagster asset execution context with MultiPartitionKey
         gcs: GCS resource
         feed_type: Feed type (vehicle_positions, trip_updates, service_alerts)
         schema: PyArrow schema for this feed type
@@ -386,99 +404,103 @@ def compact_feed_type(
     Returns:
         Output with metadata about files processed and records written
     """
-    date = context.partition_key
+    # Extract partition dimensions
+    partition_keys = context.partition_key.keys_by_dimension
+    date = partition_keys["date"]
+    feed_stripped = partition_keys["feed"]  # e.g., "gtfs.example.com/feed/rt"
+
+    # Convert stripped URL to base64url for GCS path lookup
+    feed_url_encoded = stripped_to_base64url(feed_stripped)
+    feed_url = f"https://{feed_stripped}"
+
     client = gcs.get_client()
 
-    # Discover all feeds for this date
-    feed_urls = discover_feed_urls(client, gcs.protobuf_bucket, feed_type, date)
-    context.log.info(f"Discovered {len(feed_urls)} feeds for {feed_type} on {date}")
+    context.log.info(f"Processing {feed_type} for feed={feed_stripped} on date={date}")
 
-    if not feed_urls:
+    # List all .pb files for this specific feed and date
+    pb_files = list_pb_files(client, gcs.protobuf_bucket, feed_type, date, feed_url_encoded)
+
+    if not pb_files:
+        context.log.info(f"No data found for feed {feed_stripped} on {date}")
         return dg.Output(
-            {"feeds_processed": 0, "total_records": 0, "total_files": 0},
+            {"files_processed": 0, "records_written": 0},
             metadata={
-                "feeds_processed": 0,
-                "total_records": 0,
-                "total_files": 0,
+                "files_processed": 0,
+                "records_written": 0,
+                "date": date,
+                "feed": feed_stripped,
+                "feed_url": feed_url,
             },
         )
 
-    total_records = 0
-    total_files = 0
-    feeds_processed = 0
+    context.log.info(f"Processing {len(pb_files)} files for feed {feed_stripped}")
+
+    # Stream records to parquet using batched writes to reduce memory usage
     protobuf_bucket = client.bucket(gcs.protobuf_bucket)
     parquet_bucket = client.bucket(gcs.parquet_bucket)
 
-    for feed_url_encoded in feed_urls:
-        feed_url = decode_base64url(feed_url_encoded)
+    output_path = f"{feed_type}/date={date}/base64url={feed_url_encoded}/data.parquet"
+    buffer = io.BytesIO()
+    writer: pq.ParquetWriter | None = None
+    records_count = 0
 
-        # List all .pb files for this feed
-        pb_files = list_pb_files(client, gcs.protobuf_bucket, feed_type, date, feed_url_encoded)
-        context.log.info(f"Processing {len(pb_files)} files for feed {feed_url_encoded}")
+    for pb_file in pb_files:
+        blob = protobuf_bucket.blob(pb_file)
+        content = blob.download_as_bytes()
 
-        if not pb_files:
-            continue
-
-        # Stream records to parquet using batched writes to reduce memory usage
-        output_path = f"{feed_type}/date={date}/base64url={feed_url_encoded}/data.parquet"
-        buffer = io.BytesIO()
-        writer: pq.ParquetWriter | None = None
-        feed_records = 0
-
-        for pb_file in pb_files:
-            blob = protobuf_bucket.blob(pb_file)
-            content = blob.download_as_bytes()
-
-            try:
-                feed = parse_protobuf(content)
-                records = list(extractor(feed, pb_file, feed_url))
-                if not records:
-                    continue
-
-                # Write batch to parquet stream
-                batch = pa.Table.from_pylist(records, schema=schema)
-                if writer is None:
-                    writer = pq.ParquetWriter(buffer, schema, compression="snappy")
-                writer.write_table(batch)
-                feed_records += len(records)
-            except (DecodeError, ValueError) as e:
-                context.log.warning(f"Failed to parse {pb_file}: {e}")
+        try:
+            feed = parse_protobuf(content)
+            records = list(extractor(feed, pb_file, feed_url))
+            if not records:
                 continue
 
-        total_files += len(pb_files)
-
-        if writer is None:
-            context.log.info(f"No records extracted for feed {feed_url_encoded}")
+            # Write batch to parquet stream
+            batch = pa.Table.from_pylist(records, schema=schema)
+            if writer is None:
+                writer = pq.ParquetWriter(buffer, schema, compression="snappy")
+            writer.write_table(batch)
+            records_count += len(records)
+        except (DecodeError, ValueError) as e:
+            context.log.warning(f"Failed to parse {pb_file}: {e}")
             continue
 
-        # Finalize parquet file and upload
-        writer.close()
-        buffer.seek(0)
+    if writer is None:
+        context.log.info(f"No records extracted for feed {feed_stripped}")
+        return dg.Output(
+            {"files_processed": len(pb_files), "records_written": 0},
+            metadata={
+                "files_processed": len(pb_files),
+                "records_written": 0,
+                "date": date,
+                "feed": feed_stripped,
+                "feed_url": feed_url,
+            },
+        )
 
-        output_blob = parquet_bucket.blob(output_path)
-        output_blob.upload_from_file(buffer, content_type="application/octet-stream")
+    # Finalize parquet file and upload
+    writer.close()
+    buffer.seek(0)
 
-        total_records += feed_records
-        feeds_processed += 1
-        context.log.info(f"Wrote {feed_records} records to gs://{gcs.parquet_bucket}/{output_path}")
+    output_blob = parquet_bucket.blob(output_path)
+    output_blob.upload_from_file(buffer, content_type="application/octet-stream")
+
+    context.log.info(f"Wrote {records_count} records to gs://{gcs.parquet_bucket}/{output_path}")
 
     return dg.Output(
-        {
-            "feeds_processed": feeds_processed,
-            "total_records": total_records,
-            "total_files": total_files,
-        },
+        {"files_processed": len(pb_files), "records_written": records_count},
         metadata={
-            "feeds_processed": feeds_processed,
-            "total_records": total_records,
-            "total_files": total_files,
+            "files_processed": len(pb_files),
+            "records_written": records_count,
             "date": date,
+            "feed": feed_stripped,
+            "feed_url": feed_url,
+            "output_path": f"gs://{gcs.parquet_bucket}/{output_path}",
         },
     )
 
 
 @dg.asset(
-    partitions_def=daily_partitions,
+    partitions_def=compaction_partitions,
     compute_kind="pyarrow",
     group_name="compaction",
     description="Compacted vehicle positions data in Parquet format",
@@ -487,8 +509,8 @@ def vehicle_positions_parquet(
     context: dg.AssetExecutionContext,
     gcs: GCSResource,
 ) -> dg.Output[dict[str, int]]:
-    """Compact vehicle positions protobuf files into Parquet for a given date."""
-    return compact_feed_type(
+    """Compact vehicle positions protobuf files into Parquet for a given date and feed."""
+    return compact_single_feed(
         context,
         gcs,
         "vehicle_positions",
@@ -498,7 +520,7 @@ def vehicle_positions_parquet(
 
 
 @dg.asset(
-    partitions_def=daily_partitions,
+    partitions_def=compaction_partitions,
     compute_kind="pyarrow",
     group_name="compaction",
     description="Compacted trip updates data in Parquet format",
@@ -507,8 +529,8 @@ def trip_updates_parquet(
     context: dg.AssetExecutionContext,
     gcs: GCSResource,
 ) -> dg.Output[dict[str, int]]:
-    """Compact trip updates protobuf files into Parquet for a given date."""
-    return compact_feed_type(
+    """Compact trip updates protobuf files into Parquet for a given date and feed."""
+    return compact_single_feed(
         context,
         gcs,
         "trip_updates",
@@ -518,7 +540,7 @@ def trip_updates_parquet(
 
 
 @dg.asset(
-    partitions_def=daily_partitions,
+    partitions_def=compaction_partitions,
     compute_kind="pyarrow",
     group_name="compaction",
     description="Compacted service alerts data in Parquet format",
@@ -527,8 +549,8 @@ def service_alerts_parquet(
     context: dg.AssetExecutionContext,
     gcs: GCSResource,
 ) -> dg.Output[dict[str, int]]:
-    """Compact service alerts protobuf files into Parquet for a given date."""
-    return compact_feed_type(
+    """Compact service alerts protobuf files into Parquet for a given date and feed."""
+    return compact_single_feed(
         context,
         gcs,
         "service_alerts",

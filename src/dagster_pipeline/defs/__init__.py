@@ -11,6 +11,7 @@ from dagster_pipeline.defs.assets import (
 )
 from dagster_pipeline.defs.resources import GCSResource
 from dagster_pipeline.defs.schedules import compaction_schedule
+from dagster_pipeline.defs.sensors import feed_discovery_sensor
 
 defs = dg.Definitions(
     assets=[
@@ -20,6 +21,9 @@ defs = dg.Definitions(
     ],
     schedules=[
         compaction_schedule,
+    ],
+    sensors=[
+        feed_discovery_sensor,
     ],
     resources={
         "gcs": GCSResource(
