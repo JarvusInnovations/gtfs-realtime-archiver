@@ -598,6 +598,8 @@ gtfs-realtime-archiver/
 ├── .github/
 │   └── workflows/
 │       └── build.yaml              # Container build + push
+├── .dagster_home/                  # Dagster configuration
+│   └── dagster.yaml
 ├── .tool-versions                  # asdf version pinning
 ├── tf/
 │   ├── main.tf                     # Cloud Run service
@@ -608,16 +610,20 @@ gtfs-realtime-archiver/
 │   ├── outputs.tf                  # Output values
 │   └── versions.tf                 # Provider versions
 ├── src/
-│   └── archiver/
+│   ├── gtfs_rt_archiver/           # Archiver service
+│   │   ├── __init__.py
+│   │   ├── __main__.py             # Entry point
+│   │   ├── config.py               # Settings and feed loading
+│   │   ├── models.py               # Pydantic models
+│   │   ├── scheduler.py            # APScheduler setup
+│   │   ├── fetcher.py              # HTTP fetch logic
+│   │   ├── storage.py              # GCS upload
+│   │   ├── metrics.py              # Prometheus metrics
+│   │   └── health.py               # Health check server
+│   └── dagster_pipeline/           # Data processing pipeline
 │       ├── __init__.py
-│       ├── __main__.py             # Entry point
-│       ├── config.py               # Settings and feed loading
-│       ├── models.py               # Pydantic models
-│       ├── scheduler.py            # APScheduler setup
-│       ├── fetcher.py              # HTTP fetch logic
-│       ├── storage.py              # GCS upload
-│       ├── metrics.py              # Prometheus metrics
-│       └── health.py               # Health check server
+│       ├── definitions.py          # Dagster definitions entry point
+│       └── defs/                   # Pipeline definitions
 ├── tests/
 │   ├── __init__.py
 │   ├── conftest.py                 # Pytest fixtures
@@ -626,12 +632,27 @@ gtfs-realtime-archiver/
 │   ├── test_storage.py
 │   └── test_integration.py
 ├── agencies.yaml                   # Agency configuration
+├── .env.example                    # Environment variables template
 ├── Dockerfile
 ├── pyproject.toml                  # Project metadata (uv-managed)
 ├── uv.lock                         # Dependency lockfile
 ├── DESIGN.md                       # This document
 └── README.md                       # Usage documentation
 ```
+
+### Dependency Groups
+
+The project uses component-specific dependency groups in `pyproject.toml`:
+
+| Group | Purpose |
+|-------|---------|
+| `archiver` | Runtime deps for gtfs_rt_archiver |
+| `dev-archiver` | Test deps for gtfs_rt_archiver |
+| `dagster` | Runtime deps for dagster_pipeline |
+| `dev-dagster` | Dev tools for dagster_pipeline |
+| `dev` | Aggregate group (all of the above + mypy, ruff) |
+
+Install specific groups with `uv sync --only-group <name>` or all dev deps with `uv sync`.
 
 ---
 

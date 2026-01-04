@@ -39,11 +39,20 @@ dev-archiver = [
     "respx>=0.22.0",
     "types-pyyaml>=6.0.12.20250915",
 ]
+dagster = [
+    "dagster==1.12.8",
+]
+dev-dagster = [
+    "dagster-webserver",
+    "dagster-dg-cli",
+]
 
 # Aggregate groups - includes component groups for local dev
 dev = [
     { include-group = "archiver" },
     { include-group = "dev-archiver" },
+    { include-group = "dagster" },
+    { include-group = "dev-dagster" },
     "mypy>=1.19.1",
     "ruff>=0.14.10",
 ]
@@ -89,4 +98,13 @@ asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 filterwarnings = [
     "ignore::DeprecationWarning",
+]
+
+[tool.dg]
+directory_type = "project"
+
+[tool.dg.project]
+root_module = "dagster_pipeline"
+registry_modules = [
+    "dagster_pipeline.components.*",
 ]
