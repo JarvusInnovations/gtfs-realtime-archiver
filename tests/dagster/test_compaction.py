@@ -11,8 +11,8 @@ from dagster_pipeline.defs.assets.compaction import (
     extract_trip_updates,
     extract_vehicle_positions,
     parse_protobuf,
-    strip_url_scheme,
-    stripped_to_base64url,
+    partition_key_to_url,
+    url_to_partition_key,
 )
 
 
@@ -69,49 +69,69 @@ class TestEncodeBase64url:
         assert decoded == original
 
 
-class TestStripUrlScheme:
-    """Tests for stripping URL scheme."""
+class TestUrlToPartitionKey:
+    """Tests for URL to partition key conversion."""
 
-    def test_strip_https(self) -> None:
-        """Test stripping https:// prefix."""
+    def test_https_no_prefix(self) -> None:
+        """Test HTTPS URLs get no prefix (clean)."""
         url = "https://example.com/feed"
-        assert strip_url_scheme(url) == "example.com/feed"
+        assert url_to_partition_key(url) == "example.com/feed"
 
-    def test_strip_http(self) -> None:
-        """Test stripping http:// prefix."""
+    def test_http_gets_prefix(self) -> None:
+        """Test HTTP URLs get ~ prefix."""
         url = "http://example.com/feed"
-        assert strip_url_scheme(url) == "example.com/feed"
+        assert url_to_partition_key(url) == "~example.com/feed"
 
-    def test_no_scheme(self) -> None:
+    def test_no_scheme_unchanged(self) -> None:
         """Test URL without scheme is unchanged."""
         url = "example.com/feed"
-        assert strip_url_scheme(url) == "example.com/feed"
+        assert url_to_partition_key(url) == "example.com/feed"
 
     def test_preserves_path_and_query(self) -> None:
         """Test that path and query are preserved."""
         url = "https://gtfs.example.com/api/v1/feed?key=abc"
-        assert strip_url_scheme(url) == "gtfs.example.com/api/v1/feed?key=abc"
+        assert url_to_partition_key(url) == "gtfs.example.com/api/v1/feed?key=abc"
+
+        url_http = "http://gtfs.example.com/api/v1/feed?key=abc"
+        assert url_to_partition_key(url_http) == "~gtfs.example.com/api/v1/feed?key=abc"
 
 
-class TestStrippedToBase64url:
-    """Tests for converting stripped URLs to base64url."""
+class TestPartitionKeyToUrl:
+    """Tests for partition key to URL conversion."""
 
-    def test_converts_stripped_url(self) -> None:
-        """Test converting a stripped URL to base64url."""
-        stripped = "example.com/feed"
-        result = stripped_to_base64url(stripped)
-        # Should encode https://example.com/feed
-        expected = encode_base64url("https://example.com/feed")
-        assert result == expected
+    def test_no_prefix_becomes_https(self) -> None:
+        """Test key without prefix becomes HTTPS URL."""
+        key = "example.com/feed"
+        assert partition_key_to_url(key) == "https://example.com/feed"
 
-    def test_roundtrip_from_full_url(self) -> None:
-        """Test that stripped URL can be converted back to original base64url."""
+    def test_tilde_prefix_becomes_http(self) -> None:
+        """Test key with ~ prefix becomes HTTP URL."""
+        key = "~example.com/feed"
+        assert partition_key_to_url(key) == "http://example.com/feed"
+
+    def test_roundtrip_https(self) -> None:
+        """Test HTTPS URL roundtrips correctly."""
+        original = "https://gtfs.example.com/realtime"
+        key = url_to_partition_key(original)
+        recovered = partition_key_to_url(key)
+        assert recovered == original
+
+    def test_roundtrip_http(self) -> None:
+        """Test HTTP URL roundtrips correctly."""
+        original = "http://legacy.example.com/feed"
+        key = url_to_partition_key(original)
+        recovered = partition_key_to_url(key)
+        assert recovered == original
+
+    def test_base64url_roundtrip(self) -> None:
+        """Test full roundtrip through base64url encoding."""
         original_url = "https://gtfs.example.com/realtime"
         original_base64 = encode_base64url(original_url)
 
-        # Strip and convert back
-        stripped = strip_url_scheme(original_url)
-        recovered_base64 = stripped_to_base64url(stripped)
+        # URL -> partition key -> URL -> base64url
+        key = url_to_partition_key(original_url)
+        recovered_url = partition_key_to_url(key)
+        recovered_base64 = encode_base64url(recovered_url)
 
         assert recovered_base64 == original_base64
 

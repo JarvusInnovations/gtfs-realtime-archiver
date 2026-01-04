@@ -33,17 +33,37 @@ def encode_base64url(url: str) -> str:
     return base64.urlsafe_b64encode(url.encode()).decode().rstrip("=")
 
 
-def strip_url_scheme(url: str) -> str:
-    """Remove http(s):// prefix from URL for use as partition key."""
-    return re.sub(r"^https?://", "", url)
+# Prefix for HTTP-only feeds (HTTPS is the default, no prefix needed)
+HTTP_FEED_PREFIX = "~"
 
 
-def stripped_to_base64url(stripped: str) -> str:
-    """Convert stripped URL partition key to base64url for GCS paths.
+def url_to_partition_key(url: str) -> str:
+    """Convert URL to partition key.
 
-    Assumes https:// prefix (most common for GTFS-RT feeds).
+    HTTPS URLs (common): strip scheme, no prefix
+    HTTP URLs (rare): strip scheme, add ~ prefix
+
+    Examples:
+        https://example.com/feed -> example.com/feed
+        http://example.com/feed -> ~example.com/feed
     """
-    return encode_base64url(f"https://{stripped}")
+    if url.startswith("http://"):
+        return HTTP_FEED_PREFIX + url[7:]  # len("http://") = 7
+    elif url.startswith("https://"):
+        return url[8:]  # len("https://") = 8
+    return url  # No scheme, return as-is
+
+
+def partition_key_to_url(key: str) -> str:
+    """Convert partition key back to full URL.
+
+    Examples:
+        example.com/feed -> https://example.com/feed
+        ~example.com/feed -> http://example.com/feed
+    """
+    if key.startswith(HTTP_FEED_PREFIX):
+        return "http://" + key[1:]
+    return "https://" + key
 
 
 def discover_feed_urls(
@@ -407,33 +427,33 @@ def compact_single_feed(
     # Extract partition dimensions
     partition_keys = context.partition_key.keys_by_dimension
     date = partition_keys["date"]
-    feed_stripped = partition_keys["feed"]  # e.g., "gtfs.example.com/feed/rt"
+    feed_key = partition_keys["feed"]  # e.g., "gtfs.example.com/feed" or "~legacy.example.com/feed"
 
-    # Convert stripped URL to base64url for GCS path lookup
-    feed_url_encoded = stripped_to_base64url(feed_stripped)
-    feed_url = f"https://{feed_stripped}"
+    # Convert partition key to URL and base64url for GCS path lookup
+    feed_url = partition_key_to_url(feed_key)
+    feed_url_encoded = encode_base64url(feed_url)
 
     client = gcs.get_client()
 
-    context.log.info(f"Processing {feed_type} for feed={feed_stripped} on date={date}")
+    context.log.info(f"Processing {feed_type} for feed={feed_key} on date={date}")
 
     # List all .pb files for this specific feed and date
     pb_files = list_pb_files(client, gcs.protobuf_bucket, feed_type, date, feed_url_encoded)
 
     if not pb_files:
-        context.log.info(f"No data found for feed {feed_stripped} on {date}")
+        context.log.info(f"No data found for feed {feed_key} on {date}")
         return dg.Output(
             {"files_processed": 0, "records_written": 0},
             metadata={
                 "files_processed": 0,
                 "records_written": 0,
                 "date": date,
-                "feed": feed_stripped,
+                "feed": feed_key,
                 "feed_url": feed_url,
             },
         )
 
-    context.log.info(f"Processing {len(pb_files)} files for feed {feed_stripped}")
+    context.log.info(f"Processing {len(pb_files)} files for feed {feed_key}")
 
     # Stream records to parquet using batched writes to reduce memory usage
     protobuf_bucket = client.bucket(gcs.protobuf_bucket)
@@ -469,14 +489,14 @@ def compact_single_feed(
             writer.close()
 
     if writer is None:
-        context.log.info(f"No records extracted for feed {feed_stripped}")
+        context.log.info(f"No records extracted for feed {feed_key}")
         return dg.Output(
             {"files_processed": len(pb_files), "records_written": 0},
             metadata={
                 "files_processed": len(pb_files),
                 "records_written": 0,
                 "date": date,
-                "feed": feed_stripped,
+                "feed": feed_key,
                 "feed_url": feed_url,
             },
         )
@@ -495,7 +515,7 @@ def compact_single_feed(
             "files_processed": len(pb_files),
             "records_written": records_count,
             "date": date,
-            "feed": feed_stripped,
+            "feed": feed_key,
             "feed_url": feed_url,
             "output_path": f"gs://{gcs.parquet_bucket}/{output_path}",
         },

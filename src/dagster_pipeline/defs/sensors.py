@@ -13,7 +13,7 @@ from dagster_pipeline.defs.assets import (
 from dagster_pipeline.defs.assets.compaction import (
     decode_base64url,
     discover_feed_urls,
-    strip_url_scheme,
+    url_to_partition_key,
 )
 from dagster_pipeline.defs.partitions import feed_partitions
 from dagster_pipeline.defs.resources import GCSResource
@@ -79,16 +79,16 @@ def feed_discovery_sensor(
             dynamic_partitions_requests=[],
         )
 
-    # Convert to stripped URLs for partition keys
-    discovered_stripped = {strip_url_scheme(decode_base64url(b64)) for b64 in discovered_base64}
+    # Convert to partition keys (HTTPS clean, HTTP with ~ prefix)
+    discovered_keys = {url_to_partition_key(decode_base64url(b64)) for b64 in discovered_base64}
 
     # Get currently known feeds
     # Use literal "feed" to match feed_partitions.name for type safety
     known_feeds = set(context.instance.get_dynamic_partitions("feed"))
-    new_feeds = discovered_stripped - known_feeds
+    new_feeds = discovered_keys - known_feeds
 
     context.log.info(
-        f"Discovered {len(discovered_stripped)} feeds for {yesterday}, "
+        f"Discovered {len(discovered_keys)} feeds for {yesterday}, "
         f"{len(new_feeds)} are new, {len(known_feeds)} already known"
     )
 
@@ -100,11 +100,11 @@ def feed_discovery_sensor(
     # Create run requests for all discovered feeds for yesterday
     # This ensures we process any feeds that may have failed previously
     run_requests = []
-    for feed_stripped in discovered_stripped:
-        multi_key = dg.MultiPartitionKey({"date": yesterday, "feed": feed_stripped})
+    for feed_key in discovered_keys:
+        multi_key = dg.MultiPartitionKey({"date": yesterday, "feed": feed_key})
         run_requests.append(
             dg.RunRequest(
-                run_key=f"compaction_{yesterday}_{feed_stripped}",
+                run_key=f"compaction_{yesterday}_{feed_key}",
                 partition_key=multi_key,
             )
         )
