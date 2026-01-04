@@ -1217,6 +1217,7 @@ dev = [
     { name = "ruff" },
     { name = "structlog" },
     { name = "tenacity" },
+    { name = "types-protobuf" },
     { name = "types-pyyaml" },
 ]
 dev-archiver = [
@@ -1277,6 +1278,7 @@ dev = [
     { name = "ruff", specifier = ">=0.14.10" },
     { name = "structlog", specifier = ">=25.5.0" },
     { name = "tenacity", specifier = ">=9.1.2" },
+    { name = "types-protobuf", specifier = ">=6.32.1.20251210" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20250915" },
 ]
 dev-archiver = [
@@ -2647,6 +2649,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/43/78/d90f616bf5f88f8710ad067c1f8705bf7618059836ca084e5bb2a0855d75/typer-0.16.1.tar.gz", hash = "sha256:d358c65a464a7a90f338e3bb7ff0c74ac081449e53884b12ba658cbd72990614", size = 102836, upload-time = "2025-08-18T19:18:22.898Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2d/76/06dbe78f39b2203d2a47d5facc5df5102d0561e2807396471b5f7c5a30a1/typer-0.16.1-py3-none-any.whl", hash = "sha256:90ee01cb02d9b8395ae21ee3368421faf21fa138cb2a541ed369c08cec5237c9", size = 46397, upload-time = "2025-08-18T19:18:21.663Z" },
+]
+
+[[package]]
+name = "types-protobuf"
+version = "6.32.1.20251210"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c2/59/c743a842911887cd96d56aa8936522b0cd5f7a7f228c96e81b59fced45be/types_protobuf-6.32.1.20251210.tar.gz", hash = "sha256:c698bb3f020274b1a2798ae09dc773728ce3f75209a35187bd11916ebfde6763", size = 63900, upload-time = "2025-12-10T03:14:25.451Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/aa/43/58e75bac4219cbafee83179505ff44cae3153ec279be0e30583a73b8f108/types_protobuf-6.32.1.20251210-py3-none-any.whl", hash = "sha256:2641f78f3696822a048cfb8d0ff42ccd85c25f12f871fbebe86da63793692140", size = 77921, upload-time = "2025-12-10T03:14:24.477Z" },
 ]
 
 [[package]]

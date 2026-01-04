@@ -10,6 +10,7 @@ import dagster as dg
 import pyarrow as pa
 import pyarrow.parquet as pq
 from google.cloud import storage
+from google.protobuf.message import DecodeError
 from google.transit import gtfs_realtime_pb2
 
 from dagster_pipeline.defs.assets.schemas import (
@@ -418,8 +419,11 @@ def compact_feed_type(
         if not pb_files:
             continue
 
-        # Process all files and collect records
-        all_records: list[dict[str, Any]] = []
+        # Stream records to parquet using batched writes to reduce memory usage
+        output_path = f"{feed_type}/date={date}/feed_url={feed_url_encoded}/data.parquet"
+        buffer = io.BytesIO()
+        writer: pq.ParquetWriter | None = None
+        feed_records = 0
 
         for pb_file in pb_files:
             blob = protobuf_bucket.blob(pb_file)
@@ -428,34 +432,35 @@ def compact_feed_type(
             try:
                 feed = parse_protobuf(content)
                 records = list(extractor(feed, pb_file, feed_url))
-                all_records.extend(records)
-            except Exception as e:
+                if not records:
+                    continue
+
+                # Write batch to parquet stream
+                batch = pa.Table.from_pylist(records, schema=schema)
+                if writer is None:
+                    writer = pq.ParquetWriter(buffer, schema, compression="snappy")
+                writer.write_table(batch)
+                feed_records += len(records)
+            except (DecodeError, ValueError) as e:
                 context.log.warning(f"Failed to parse {pb_file}: {e}")
                 continue
 
         total_files += len(pb_files)
 
-        if not all_records:
+        if writer is None:
             context.log.info(f"No records extracted for feed {feed_url_encoded}")
             continue
 
-        # Convert to PyArrow Table and write to parquet
-        table = pa.Table.from_pylist(all_records, schema=schema)
-
-        # Write to output bucket
-        output_path = f"{feed_type}/date={date}/feed_url={feed_url_encoded}/data.parquet"
-        buffer = io.BytesIO()
-        pq.write_table(table, buffer, compression="snappy")
+        # Finalize parquet file and upload
+        writer.close()
         buffer.seek(0)
 
         output_blob = parquet_bucket.blob(output_path)
         output_blob.upload_from_file(buffer, content_type="application/octet-stream")
 
-        total_records += len(all_records)
+        total_records += feed_records
         feeds_processed += 1
-        context.log.info(
-            f"Wrote {len(all_records)} records to gs://{gcs.parquet_bucket}/{output_path}"
-        )
+        context.log.info(f"Wrote {feed_records} records to gs://{gcs.parquet_bucket}/{output_path}")
 
     return dg.Output(
         {

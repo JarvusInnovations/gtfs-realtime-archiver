@@ -58,6 +58,7 @@ dev = [
     { include-group = "dev-dagster" },
     "mypy>=1.19.1",
     "ruff>=0.14.10",
+    "types-protobuf>=6.32.1.20251210",
 ]
 
 [tool.ruff]
