@@ -6,12 +6,12 @@ import re
 from collections.abc import Iterator
 from typing import Any
 
+import dagster as dg
 import pyarrow as pa
 import pyarrow.parquet as pq
 from google.cloud import storage
 from google.transit import gtfs_realtime_pb2
 
-import dagster as dg
 from dagster_pipeline.defs.assets.schemas import (
     SERVICE_ALERTS_SCHEMA,
     TRIP_UPDATES_SCHEMA,

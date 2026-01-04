@@ -1,9 +1,8 @@
 """Google Cloud Storage resource for Dagster."""
 
+import dagster as dg
 from google.cloud import storage
 from pydantic import Field
-
-import dagster as dg
 
 
 class GCSResource(dg.ConfigurableResource):  # type: ignore[type-arg]
