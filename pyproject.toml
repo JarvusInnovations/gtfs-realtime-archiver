@@ -92,6 +92,10 @@ disallow_incomplete_defs = true
 module = [
     "gcloud.*",
     "apscheduler.*",
+    "google.cloud.*",
+    "google.transit.*",
+    "pyarrow",
+    "pyarrow.*",
 ]
 ignore_missing_imports = true
 
