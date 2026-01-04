@@ -22,13 +22,20 @@ variable "service_name" {
   default     = "gtfs-rt-archiver"
 }
 
-variable "bucket_name" {
-  description = "Name of the GCS bucket for archived feeds"
+variable "protobuf_bucket_name" {
+  description = "Name of the GCS bucket for raw protobuf archives"
   type        = string
+  default     = "protobuf.gtfsrt.io"
+}
+
+variable "parquet_bucket_name" {
+  description = "Name of the GCS bucket for compacted parquet files"
+  type        = string
+  default     = "parquet.gtfsrt.io"
 }
 
 variable "bucket_location" {
-  description = "Location of the GCS bucket"
+  description = "Location of the GCS buckets"
   type        = string
   default     = "us-central1"
 }

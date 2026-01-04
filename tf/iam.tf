@@ -4,8 +4,22 @@ resource "google_service_account" "archiver" {
   project      = var.project_id
 }
 
-resource "google_storage_bucket_iam_member" "archiver_storage" {
-  bucket = google_storage_bucket.archive.name
+# Archiver writes protobuf snapshots
+resource "google_storage_bucket_iam_member" "archiver_protobuf" {
+  bucket = google_storage_bucket.protobuf.name
+  role   = "roles/storage.objectCreator"
+  member = "serviceAccount:${google_service_account.archiver.email}"
+}
+
+# Dagster reads protobuf and writes parquet (using same service account)
+resource "google_storage_bucket_iam_member" "archiver_parquet_read" {
+  bucket = google_storage_bucket.protobuf.name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.archiver.email}"
+}
+
+resource "google_storage_bucket_iam_member" "archiver_parquet_write" {
+  bucket = google_storage_bucket.parquet.name
   role   = "roles/storage.objectCreator"
   member = "serviceAccount:${google_service_account.archiver.email}"
 }

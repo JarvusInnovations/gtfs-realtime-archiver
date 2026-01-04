@@ -47,7 +47,11 @@ resource "google_cloud_run_v2_service" "archiver" {
       }
       env {
         name  = "GCS_BUCKET_RT_PROTOBUF"
-        value = google_storage_bucket.archive.name
+        value = google_storage_bucket.protobuf.name
+      }
+      env {
+        name  = "GCS_BUCKET_RT_PARQUET"
+        value = google_storage_bucket.parquet.name
       }
       env {
         name  = "MAX_CONCURRENT"
@@ -100,7 +104,9 @@ resource "google_cloud_run_v2_service" "archiver" {
   }
 
   depends_on = [
-    google_storage_bucket_iam_member.archiver_storage,
+    google_storage_bucket_iam_member.archiver_protobuf,
+    google_storage_bucket_iam_member.archiver_parquet_read,
+    google_storage_bucket_iam_member.archiver_parquet_write,
   ]
 }
 
