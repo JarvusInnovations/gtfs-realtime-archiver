@@ -444,25 +444,29 @@ def compact_single_feed(
     writer: pq.ParquetWriter | None = None
     records_count = 0
 
-    for pb_file in pb_files:
-        blob = protobuf_bucket.blob(pb_file)
-        content = blob.download_as_bytes()
+    try:
+        for pb_file in pb_files:
+            blob = protobuf_bucket.blob(pb_file)
+            content = blob.download_as_bytes()
 
-        try:
-            feed = parse_protobuf(content)
-            records = list(extractor(feed, pb_file, feed_url))
-            if not records:
+            try:
+                feed = parse_protobuf(content)
+                records = list(extractor(feed, pb_file, feed_url))
+                if not records:
+                    continue
+
+                # Write batch to parquet stream
+                batch = pa.Table.from_pylist(records, schema=schema)
+                if writer is None:
+                    writer = pq.ParquetWriter(buffer, schema, compression="snappy")
+                writer.write_table(batch)
+                records_count += len(records)
+            except (DecodeError, ValueError) as e:
+                context.log.warning(f"Failed to parse {pb_file}: {e}")
                 continue
-
-            # Write batch to parquet stream
-            batch = pa.Table.from_pylist(records, schema=schema)
-            if writer is None:
-                writer = pq.ParquetWriter(buffer, schema, compression="snappy")
-            writer.write_table(batch)
-            records_count += len(records)
-        except (DecodeError, ValueError) as e:
-            context.log.warning(f"Failed to parse {pb_file}: {e}")
-            continue
+    finally:
+        if writer is not None:
+            writer.close()
 
     if writer is None:
         context.log.info(f"No records extracted for feed {feed_stripped}")
@@ -477,8 +481,7 @@ def compact_single_feed(
             },
         )
 
-    # Finalize parquet file and upload
-    writer.close()
+    # Upload parquet file
     buffer.seek(0)
 
     output_blob = parquet_bucket.blob(output_path)
