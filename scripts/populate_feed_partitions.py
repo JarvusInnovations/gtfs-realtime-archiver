@@ -34,7 +34,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from dagster_pipeline.defs.assets.compaction import (
     decode_base64url,
     discover_feed_urls,
-    strip_url_scheme,
+    url_to_partition_key,
 )
 
 
@@ -64,8 +64,8 @@ def discover_all_feeds(
             base64_feeds = discover_feed_urls(client, bucket_name, feed_type, date)
             for b64 in base64_feeds:
                 try:
-                    stripped = strip_url_scheme(decode_base64url(b64))
-                    date_feeds.add(stripped)
+                    partition_key = url_to_partition_key(decode_base64url(b64))
+                    date_feeds.add(partition_key)
                 except Exception as e:
                     print(f"\n    Warning: Failed to decode {b64}: {e}")
 
