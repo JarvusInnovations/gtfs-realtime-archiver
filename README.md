@@ -117,6 +117,7 @@ For local development without GCS credentials, use Docker Compose with a fake GC
 # Copy example configuration
 cp agencies.example.yaml agencies.yaml
 cp .env.example .env
+sed -i "s|DAGSTER_HOME=/path/to/gtfs-realtime-archiver/.dagster_home|DAGSTER_HOME=$(pwd)/.dagster_home|" .env
 
 # Start services (fake-gcs + archiver)
 docker compose up --build
