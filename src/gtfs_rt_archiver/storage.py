@@ -1,6 +1,7 @@
 """GCS storage writer with Hive-style partitioning."""
 
 import asyncio
+import base64
 import json
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -14,43 +15,62 @@ if TYPE_CHECKING:
     from aiohttp import ClientSession
 
 
+def encode_url_to_base64url(url: str) -> str:
+    """Encode a URL to base64url format.
+
+    Note: This only encodes the base URL, not any query parameters.
+    Auth-related query params are intentionally excluded to prevent
+    secret leakage and ensure consistent paths across secret rotations.
+
+    Args:
+        url: The base URL (without auth query params).
+
+    Returns:
+        Base64url-encoded string (URL-safe, no padding).
+    """
+    # Encode to base64url (URL-safe alphabet, no padding)
+    encoded = base64.urlsafe_b64encode(str(url).encode("utf-8")).decode("ascii")
+    return encoded.rstrip("=")
+
+
 def generate_storage_path(
     feed: FeedConfig,
     timestamp: datetime,
-    prefix: str = "",
     extension: str = "pb",
 ) -> str:
     """Generate a Hive-style partitioned storage path.
 
     Path format:
-    {prefix}/{feed_type}/agency={agency}/dt={YYYY-MM-DD}/hour={HH}/{feed_id}/{timestamp}.{ext}
+    {feed_type}/date={YYYY-MM-DD}/hour={ISO8601}/base64url={encoded-url}/{timestamp}.{ext}
 
     Args:
         feed: Feed configuration.
         timestamp: Fetch timestamp for partitioning.
-        prefix: Optional prefix path in the bucket.
         extension: File extension (default: pb for protobuf).
 
     Returns:
         Full object path within the bucket.
     """
-    # Format timestamp as ISO8601 for filename
+    # Format timestamp as ISO8601 for filename (with milliseconds)
     timestamp_str = timestamp.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+    # Date partition: YYYY-MM-DD
     date_str = timestamp.strftime("%Y-%m-%d")
-    hour_str = timestamp.strftime("%H")
+
+    # Hour partition: ISO8601 truncated to hour boundary
+    hour_str = timestamp.strftime("%Y-%m-%dT%H:00:00Z")
+
+    # Base64url encode the base URL only (auth params excluded)
+    url_encoded = encode_url_to_base64url(str(feed.url))
 
     # Build path components
-    parts = []
-
-    if prefix:
-        parts.append(prefix.strip("/"))
-
-    parts.append(feed.feed_type.value)
-    parts.append(f"agency={feed.agency or 'unknown'}")
-    parts.append(f"dt={date_str}")
-    parts.append(f"hour={hour_str}")
-    parts.append(feed.id)
-    parts.append(f"{timestamp_str}.{extension}")
+    parts = [
+        feed.feed_type.value,
+        f"date={date_str}",
+        f"hour={hour_str}",
+        f"base64url={url_encoded}",
+        f"{timestamp_str}.{extension}",
+    ]
 
     return "/".join(parts)
 
@@ -67,6 +87,11 @@ def generate_metadata(feed: FeedConfig, result: FetchResult) -> dict[str, object
     """
     return {
         "feed_id": feed.id,
+        "agency_id": feed.agency_id,
+        "agency_name": feed.agency_name,
+        "system_id": feed.system_id,
+        "system_name": feed.system_name,
+        "schedule_url": str(feed.schedule_url) if feed.schedule_url else None,
         "url": str(feed.url),
         "fetch_timestamp": result.fetch_timestamp.isoformat(),
         "duration_ms": result.duration_ms,
@@ -87,7 +112,6 @@ class StorageWriter:
     def __init__(
         self,
         bucket: str,
-        prefix: str = "",
         session: "ClientSession | None" = None,
         write_metadata: bool = True,
     ) -> None:
@@ -95,12 +119,10 @@ class StorageWriter:
 
         Args:
             bucket: GCS bucket name.
-            prefix: Optional path prefix within the bucket.
             session: Optional aiohttp ClientSession for connection reuse.
             write_metadata: Whether to write .meta sidecar files.
         """
         self.bucket = bucket
-        self.prefix = prefix
         self.write_metadata = write_metadata
         self._session = session
         self._storage: Storage | None = None
@@ -136,7 +158,6 @@ class StorageWriter:
         content_path = generate_storage_path(
             feed=feed,
             timestamp=result.fetch_timestamp,
-            prefix=self.prefix,
             extension="pb",
         )
 
@@ -153,7 +174,6 @@ class StorageWriter:
             metadata_path = generate_storage_path(
                 feed=feed,
                 timestamp=result.fetch_timestamp,
-                prefix=self.prefix,
                 extension="meta",
             )
 

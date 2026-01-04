@@ -1,5 +1,6 @@
 """Tests for GCS storage writer module."""
 
+import base64
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -9,6 +10,7 @@ from gtfs_rt_archiver.fetcher import FetchResult
 from gtfs_rt_archiver.models import FeedConfig
 from gtfs_rt_archiver.storage import (
     StorageWriter,
+    encode_url_to_base64url,
     generate_metadata,
     generate_storage_path,
 )
@@ -18,22 +20,41 @@ from gtfs_rt_archiver.storage import (
 def feed_config() -> FeedConfig:
     """Create a basic feed configuration for testing."""
     return FeedConfig(
-        id="test-feed",
-        name="Test Feed",
+        id="test-agency-vehicle-positions",
+        name="Test Agency Vehicle Positions",
         url="https://example.com/feed.pb",
         feed_type="vehicle_positions",
-        agency="test-agency",
+        agency_id="test-agency",
+        agency_name="Test Agency",
     )
 
 
 @pytest.fixture
-def feed_config_no_agency() -> FeedConfig:
-    """Create a feed configuration without agency."""
+def feed_config_trip_updates() -> FeedConfig:
+    """Create a feed configuration for trip updates."""
     return FeedConfig(
-        id="orphan-feed",
-        name="Orphan Feed",
-        url="https://example.com/orphan.pb",
+        id="test-agency-trip-updates",
+        name="Test Agency Trip Updates",
+        url="https://api.example.com/feed",
         feed_type="trip_updates",
+        agency_id="test-agency",
+        agency_name="Test Agency",
+    )
+
+
+@pytest.fixture
+def feed_config_with_system() -> FeedConfig:
+    """Create a feed configuration with system context."""
+    return FeedConfig(
+        id="septa-bus-vehicle-positions",
+        name="SEPTA Bus Vehicle Positions",
+        url="https://example.com/feed.pb",
+        feed_type="vehicle_positions",
+        agency_id="septa",
+        agency_name="SEPTA",
+        system_id="bus",
+        system_name="Bus",
+        schedule_url="https://example.com/schedule.zip",
     )
 
 
@@ -55,6 +76,47 @@ def fetch_result() -> FetchResult:
     )
 
 
+def _decode_base64url(encoded: str) -> str:
+    """Decode base64url string (add padding back for decoding)."""
+    padded = encoded + "=" * (4 - len(encoded) % 4) if len(encoded) % 4 else encoded
+    return base64.urlsafe_b64decode(padded).decode("utf-8")
+
+
+class TestEncodeUrlToBase64url:
+    """Tests for encode_url_to_base64url function."""
+
+    def test_simple_url(self) -> None:
+        """Test encoding a simple URL."""
+        url = "https://example.com/feed.pb"
+        result = encode_url_to_base64url(url)
+
+        # Verify it's valid base64url (no +, /, or = characters)
+        assert "+" not in result
+        assert "/" not in result
+        assert "=" not in result
+
+        # Verify round-trip
+        decoded = _decode_base64url(result)
+        assert decoded == url
+
+    def test_url_with_special_characters(self) -> None:
+        """Test encoding URL with special characters in path."""
+        url = "https://api.example.com/feed/vehicle%2Fpositions"
+        result = encode_url_to_base64url(url)
+
+        # Verify round-trip preserves the URL
+        decoded = _decode_base64url(result)
+        assert decoded == url
+
+    def test_consistent_encoding(self) -> None:
+        """Test that same URL always produces same encoding."""
+        url = "https://example.com/feed.pb"
+        result1 = encode_url_to_base64url(url)
+        result2 = encode_url_to_base64url(url)
+
+        assert result1 == result2
+
+
 class TestGenerateStoragePath:
     """Tests for generate_storage_path function."""
 
@@ -63,32 +125,32 @@ class TestGenerateStoragePath:
         timestamp = datetime(2025, 1, 15, 14, 20, 30, 123000, tzinfo=UTC)
         path = generate_storage_path(feed_config, timestamp)
 
-        assert path == (
-            "vehicle_positions/agency=test-agency/dt=2025-01-15/hour=14/"
-            "test-feed/2025-01-15T14:20:30.123Z.pb"
-        )
+        # Check structure
+        parts = path.split("/")
+        assert len(parts) == 5
+        assert parts[0] == "vehicle_positions"
+        assert parts[1] == "date=2025-01-15"
+        assert parts[2] == "hour=2025-01-15T14:00:00Z"
+        assert parts[3].startswith("base64url=")
+        assert parts[4] == "2025-01-15T14:20:30.123Z.pb"
 
-    def test_path_with_prefix(self, feed_config: FeedConfig) -> None:
-        """Test path generation with prefix."""
+    def test_base64url_encoding(self, feed_config: FeedConfig) -> None:
+        """Test that base64url partition is correctly encoded."""
         timestamp = datetime(2025, 1, 15, 14, 20, 30, 123000, tzinfo=UTC)
-        path = generate_storage_path(feed_config, timestamp, prefix="raw/gtfs-rt")
+        path = generate_storage_path(feed_config, timestamp)
 
-        assert path.startswith("raw/gtfs-rt/vehicle_positions/")
+        # Extract base64url value
+        parts = path.split("/")
+        base64url_part = parts[3]
+        assert base64url_part.startswith("base64url=")
+        encoded = base64url_part[len("base64url=") :]
 
-    def test_path_with_prefix_trailing_slash(self, feed_config: FeedConfig) -> None:
-        """Test that trailing slashes are handled."""
-        timestamp = datetime(2025, 1, 15, 14, 20, 30, 123000, tzinfo=UTC)
-        path = generate_storage_path(feed_config, timestamp, prefix="raw/")
+        # Verify no padding characters
+        assert "=" not in encoded
 
-        assert path.startswith("raw/vehicle_positions/")
-        assert "//" not in path
-
-    def test_path_without_agency(self, feed_config_no_agency: FeedConfig) -> None:
-        """Test path generation when agency is None."""
-        timestamp = datetime(2025, 1, 15, 14, 20, 30, 123000, tzinfo=UTC)
-        path = generate_storage_path(feed_config_no_agency, timestamp)
-
-        assert "agency=unknown" in path
+        # Decode and verify it matches the feed URL
+        decoded = _decode_base64url(encoded)
+        assert decoded == str(feed_config.url)
 
     def test_different_extension(self, feed_config: FeedConfig) -> None:
         """Test path generation with different extension."""
@@ -97,12 +159,20 @@ class TestGenerateStoragePath:
 
         assert path.endswith(".meta")
 
-    def test_feed_type_in_path(self, feed_config_no_agency: FeedConfig) -> None:
+    def test_feed_type_in_path(self, feed_config_trip_updates: FeedConfig) -> None:
         """Test that feed_type is correctly included."""
         timestamp = datetime(2025, 1, 15, 14, 20, 30, 123000, tzinfo=UTC)
-        path = generate_storage_path(feed_config_no_agency, timestamp)
+        path = generate_storage_path(feed_config_trip_updates, timestamp)
 
         assert path.startswith("trip_updates/")
+
+    def test_hour_boundary_truncation(self, feed_config: FeedConfig) -> None:
+        """Test that hour is truncated to boundary."""
+        # Timestamp at 14:59:59 should still have hour=14:00:00
+        timestamp = datetime(2025, 1, 15, 14, 59, 59, 999000, tzinfo=UTC)
+        path = generate_storage_path(feed_config, timestamp)
+
+        assert "hour=2025-01-15T14:00:00Z" in path
 
 
 class TestGenerateMetadata:
@@ -112,12 +182,30 @@ class TestGenerateMetadata:
         """Test basic metadata generation."""
         metadata = generate_metadata(feed_config, fetch_result)
 
-        assert metadata["feed_id"] == "test-feed"
+        assert metadata["feed_id"] == "test-agency-vehicle-positions"
+        assert metadata["agency_id"] == "test-agency"
+        assert metadata["agency_name"] == "Test Agency"
+        assert metadata["system_id"] is None
+        assert metadata["system_name"] is None
+        assert metadata["schedule_url"] is None
         assert metadata["url"] == "https://example.com/feed.pb"
         assert metadata["duration_ms"] == 245.5
         assert metadata["response_code"] == 200
         assert metadata["content_length"] == 16
         assert metadata["content_type"] == "application/x-protobuf"
+
+    def test_metadata_with_system(
+        self, feed_config_with_system: FeedConfig, fetch_result: FetchResult
+    ) -> None:
+        """Test metadata generation with system context."""
+        metadata = generate_metadata(feed_config_with_system, fetch_result)
+
+        assert metadata["feed_id"] == "septa-bus-vehicle-positions"
+        assert metadata["agency_id"] == "septa"
+        assert metadata["agency_name"] == "SEPTA"
+        assert metadata["system_id"] == "bus"
+        assert metadata["system_name"] == "Bus"
+        assert metadata["schedule_url"] == "https://example.com/schedule.zip"
 
     def test_headers_filtered(self, feed_config: FeedConfig, fetch_result: FetchResult) -> None:
         """Test that only allowed headers are included."""
@@ -143,10 +231,9 @@ class TestStorageWriter:
 
     def test_initialization(self) -> None:
         """Test basic initialization."""
-        writer = StorageWriter(bucket="test-bucket", prefix="archives/")
+        writer = StorageWriter(bucket="test-bucket")
 
         assert writer.bucket == "test-bucket"
-        assert writer.prefix == "archives/"
         assert writer.write_metadata is True
 
     def test_initialization_no_metadata(self) -> None:

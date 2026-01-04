@@ -1,6 +1,5 @@
 """Tests for configuration loading."""
 
-import os
 from pathlib import Path
 
 import pytest
@@ -8,145 +7,397 @@ from pydantic import ValidationError
 
 from gtfs_rt_archiver.config import (
     Settings,
-    apply_defaults,
-    load_feeds_file,
-    substitute_env_vars,
-    substitute_env_vars_in_dict,
+    flatten_agencies,
+    generate_feed_id,
+    generate_feed_name,
+    load_agencies_file,
 )
-from gtfs_rt_archiver.models import DefaultsConfig, FeedConfig, RetryConfig
+from gtfs_rt_archiver.models import (
+    AgenciesFileConfig,
+    AgencyConfig,
+    AuthType,
+    DefaultsConfig,
+    FeedType,
+    IntervalDefaults,
+    RealtimeFeedConfig,
+    SystemConfig,
+)
 
 
-class TestSubstituteEnvVars:
-    """Tests for environment variable substitution."""
+class TestLoadAgenciesFile:
+    """Tests for loading agencies.yaml files."""
 
-    def test_single_substitution(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test substituting a single environment variable."""
-        monkeypatch.setenv("TEST_VAR", "test_value")
-        result = substitute_env_vars("Bearer ${TEST_VAR}")
-        assert result == "Bearer test_value"
+    def test_load_valid_file(self, sample_agencies_file: Path) -> None:
+        """Test loading a valid agencies.yaml file."""
+        config = load_agencies_file(sample_agencies_file)
 
-    def test_multiple_substitutions(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test substituting multiple environment variables."""
-        monkeypatch.setenv("USER", "admin")
-        monkeypatch.setenv("PASS", "secret")
-        result = substitute_env_vars("${USER}:${PASS}")
-        assert result == "admin:secret"
-
-    def test_no_substitution_needed(self) -> None:
-        """Test string without environment variables."""
-        result = substitute_env_vars("plain string")
-        assert result == "plain string"
-
-    def test_missing_env_var_raises(self) -> None:
-        """Test that missing environment variable raises ValueError."""
-        # Ensure the variable doesn't exist
-        if "NONEXISTENT_VAR" in os.environ:
-            del os.environ["NONEXISTENT_VAR"]
-
-        with pytest.raises(ValueError, match="Environment variable 'NONEXISTENT_VAR' is not set"):
-            substitute_env_vars("${NONEXISTENT_VAR}")
-
-
-class TestSubstituteEnvVarsInDict:
-    """Tests for dictionary environment variable substitution."""
-
-    def test_dict_substitution(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test substituting environment variables in dictionary values."""
-        monkeypatch.setenv("API_KEY", "abc123")
-        result = substitute_env_vars_in_dict(
-            {"Authorization": "Bearer ${API_KEY}", "Content-Type": "application/json"}
-        )
-        assert result == {
-            "Authorization": "Bearer abc123",
-            "Content-Type": "application/json",
-        }
-
-
-class TestLoadFeedsFile:
-    """Tests for loading feeds.yaml files."""
-
-    def test_load_valid_file(
-        self, sample_feeds_file: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Test loading a valid feeds.yaml file."""
-        monkeypatch.setenv("TEST_API_KEY", "secret123")
-
-        config = load_feeds_file(sample_feeds_file)
-
-        assert config.defaults.interval_seconds == 30
         assert config.defaults.timeout_seconds == 45
         assert config.defaults.retry.max_attempts == 5
+        assert config.defaults.intervals.vehicle_positions == 30
+        assert config.defaults.intervals.service_alerts == 90
 
-        assert len(config.feeds) == 2
+        assert len(config.agencies) == 2
 
-        septa = config.feeds[0]
-        assert septa.id == "septa-vehicles"
-        assert septa.feed_type.value == "vehicle_positions"
-        assert septa.agency == "septa"
+        septa = config.agencies[0]
+        assert septa.id == "septa"
+        assert septa.systems is not None
+        assert len(septa.systems) == 1
+        assert septa.systems[0].id == "bus"
 
-        bart = config.feeds[1]
-        assert bart.id == "bart-trips"
-        assert bart.interval_seconds == 15
-        assert bart.headers == {"Authorization": "Bearer secret123"}
+        bart = config.agencies[1]
+        assert bart.id == "bart"
+        assert bart.feeds is not None
+        assert len(bart.feeds) == 1
+        assert bart.auth is not None
+        assert bart.auth.type == AuthType.HEADER
+        assert bart.auth.secret_name == "bart-api-key"
 
     def test_file_not_found(self, tmp_path: Path) -> None:
         """Test that FileNotFoundError is raised for missing file."""
         with pytest.raises(FileNotFoundError):
-            load_feeds_file(tmp_path / "nonexistent.yaml")
-
-    def test_missing_env_var_in_file(self, sample_feeds_file: Path) -> None:
-        """Test that missing env var in file raises ValueError."""
-        # Don't set TEST_API_KEY
-        if "TEST_API_KEY" in os.environ:
-            del os.environ["TEST_API_KEY"]
-
-        with pytest.raises(ValueError, match="Environment variable 'TEST_API_KEY' is not set"):
-            load_feeds_file(sample_feeds_file)
+            load_agencies_file(tmp_path / "nonexistent.yaml")
 
 
-class TestApplyDefaults:
-    """Tests for applying default values to feed configs."""
+class TestGenerateFeedId:
+    """Tests for feed ID generation."""
 
-    def test_applies_interval_default(self) -> None:
-        """Test that interval_seconds default is applied."""
-        feed = FeedConfig(
-            id="test",
-            name="Test",
-            url="https://example.com/feed.pb",
-            feed_type="vehicle_positions",
+    def test_simple_agency(self) -> None:
+        """Test ID generation for simple agency without system."""
+        feed_id = generate_feed_id("bart", None, FeedType.VEHICLE_POSITIONS)
+        assert feed_id == "bart-vehicle-positions"
+
+    def test_agency_with_system(self) -> None:
+        """Test ID generation for agency with system."""
+        feed_id = generate_feed_id("septa", "bus", FeedType.TRIP_UPDATES)
+        assert feed_id == "septa-bus-trip-updates"
+
+    def test_service_alerts(self) -> None:
+        """Test ID generation for service alerts."""
+        feed_id = generate_feed_id("mta", "subway", FeedType.SERVICE_ALERTS)
+        assert feed_id == "mta-subway-service-alerts"
+
+
+class TestGenerateFeedName:
+    """Tests for feed name generation."""
+
+    def test_simple_agency(self) -> None:
+        """Test name generation for simple agency without system."""
+        name = generate_feed_name("BART", None, FeedType.VEHICLE_POSITIONS)
+        assert name == "BART Vehicle Positions"
+
+    def test_agency_with_system(self) -> None:
+        """Test name generation for agency with system."""
+        name = generate_feed_name("SEPTA", "Bus", FeedType.TRIP_UPDATES)
+        assert name == "SEPTA Bus Trip Updates"
+
+
+class TestFlattenAgencies:
+    """Tests for flattening agency hierarchy."""
+
+    def test_flatten_simple_agency(self) -> None:
+        """Test flattening a simple agency with direct feeds."""
+        config = AgenciesFileConfig(
+            defaults=DefaultsConfig(),
+            agencies=[
+                AgencyConfig(
+                    id="bart",
+                    name="BART",
+                    schedule_url="https://example.com/schedule.zip",
+                    feeds=[
+                        RealtimeFeedConfig(
+                            feed_type=FeedType.VEHICLE_POSITIONS,
+                            url="https://example.com/vehicles.pb",
+                        ),
+                        RealtimeFeedConfig(
+                            feed_type=FeedType.TRIP_UPDATES,
+                            url="https://example.com/trips.pb",
+                        ),
+                    ],
+                ),
+            ],
         )
-        defaults = DefaultsConfig(interval_seconds=45)
 
-        result = apply_defaults(feed, defaults)
-        assert result.interval_seconds == 45
+        feeds = flatten_agencies(config)
 
-    def test_explicit_value_not_overridden(self) -> None:
-        """Test that explicitly set values are not overridden."""
-        feed = FeedConfig(
-            id="test",
-            name="Test",
-            url="https://example.com/feed.pb",
-            feed_type="vehicle_positions",
-            interval_seconds=60,
+        assert len(feeds) == 2
+
+        vehicles = feeds[0]
+        assert vehicles.id == "bart-vehicle-positions"
+        assert vehicles.name == "BART Vehicle Positions"
+        assert vehicles.agency_id == "bart"
+        assert vehicles.agency_name == "BART"
+        assert vehicles.system_id is None
+        assert vehicles.system_name is None
+        assert str(vehicles.schedule_url) == "https://example.com/schedule.zip"
+        assert vehicles.interval_seconds == 20  # Default for vehicle_positions
+
+        trips = feeds[1]
+        assert trips.id == "bart-trip-updates"
+        assert trips.interval_seconds == 20  # Default for trip_updates
+
+    def test_flatten_agency_with_systems(self) -> None:
+        """Test flattening an agency with systems."""
+        config = AgenciesFileConfig(
+            defaults=DefaultsConfig(),
+            agencies=[
+                AgencyConfig(
+                    id="septa",
+                    name="SEPTA",
+                    systems=[
+                        SystemConfig(
+                            id="bus",
+                            name="Bus",
+                            schedule_url="https://example.com/bus-schedule.zip",
+                            feeds=[
+                                RealtimeFeedConfig(
+                                    feed_type=FeedType.VEHICLE_POSITIONS,
+                                    url="https://example.com/bus/vehicles.pb",
+                                ),
+                            ],
+                        ),
+                        SystemConfig(
+                            id="rail",
+                            name="Regional Rail",
+                            schedule_url="https://example.com/rail-schedule.zip",
+                            feeds=[
+                                RealtimeFeedConfig(
+                                    feed_type=FeedType.VEHICLE_POSITIONS,
+                                    url="https://example.com/rail/vehicles.pb",
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
         )
-        defaults = DefaultsConfig(interval_seconds=45)
 
-        result = apply_defaults(feed, defaults)
-        assert result.interval_seconds == 60
+        feeds = flatten_agencies(config)
 
-    def test_applies_retry_defaults(self) -> None:
-        """Test that retry defaults are applied."""
-        feed = FeedConfig(
-            id="test",
-            name="Test",
-            url="https://example.com/feed.pb",
-            feed_type="vehicle_positions",
+        assert len(feeds) == 2
+
+        bus = feeds[0]
+        assert bus.id == "septa-bus-vehicle-positions"
+        assert bus.name == "SEPTA Bus Vehicle Positions"
+        assert bus.agency_id == "septa"
+        assert bus.system_id == "bus"
+        assert bus.system_name == "Bus"
+        assert str(bus.schedule_url) == "https://example.com/bus-schedule.zip"
+
+        rail = feeds[1]
+        assert rail.id == "septa-rail-vehicle-positions"
+        assert rail.system_id == "rail"
+        assert rail.system_name == "Regional Rail"
+
+    def test_interval_defaults_by_feed_type(self) -> None:
+        """Test that different feed types get different default intervals."""
+        config = AgenciesFileConfig(
+            defaults=DefaultsConfig(
+                intervals=IntervalDefaults(
+                    vehicle_positions=20,
+                    trip_updates=30,
+                    service_alerts=60,
+                ),
+            ),
+            agencies=[
+                AgencyConfig(
+                    id="test",
+                    name="Test Agency",
+                    feeds=[
+                        RealtimeFeedConfig(
+                            feed_type=FeedType.VEHICLE_POSITIONS,
+                            url="https://example.com/vehicles.pb",
+                        ),
+                        RealtimeFeedConfig(
+                            feed_type=FeedType.TRIP_UPDATES,
+                            url="https://example.com/trips.pb",
+                        ),
+                        RealtimeFeedConfig(
+                            feed_type=FeedType.SERVICE_ALERTS,
+                            url="https://example.com/alerts.pb",
+                        ),
+                    ],
+                ),
+            ],
         )
-        defaults = DefaultsConfig(retry=RetryConfig(max_attempts=5, backoff_base=2.0))
 
-        result = apply_defaults(feed, defaults)
-        assert result.retry.max_attempts == 5
-        assert result.retry.backoff_base == 2.0
+        feeds = flatten_agencies(config)
+
+        assert feeds[0].interval_seconds == 20  # vehicle_positions
+        assert feeds[1].interval_seconds == 30  # trip_updates
+        assert feeds[2].interval_seconds == 60  # service_alerts
+
+    def test_feed_interval_override(self) -> None:
+        """Test that feed-level interval overrides feed-type default."""
+        config = AgenciesFileConfig(
+            defaults=DefaultsConfig(
+                intervals=IntervalDefaults(vehicle_positions=20),
+            ),
+            agencies=[
+                AgencyConfig(
+                    id="test",
+                    name="Test Agency",
+                    feeds=[
+                        RealtimeFeedConfig(
+                            feed_type=FeedType.VEHICLE_POSITIONS,
+                            url="https://example.com/vehicles.pb",
+                            interval_seconds=10,  # Override
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        feeds = flatten_agencies(config)
+        assert feeds[0].interval_seconds == 10
+
+    def test_auth_inheritance_from_agency(self) -> None:
+        """Test that auth is inherited from agency to feeds."""
+        config = AgenciesFileConfig(
+            defaults=DefaultsConfig(),
+            agencies=[
+                AgencyConfig(
+                    id="test",
+                    name="Test Agency",
+                    auth={
+                        "type": "header",
+                        "secret_name": "agency-key",
+                        "key": "x-api-key",
+                    },
+                    feeds=[
+                        RealtimeFeedConfig(
+                            feed_type=FeedType.VEHICLE_POSITIONS,
+                            url="https://example.com/vehicles.pb",
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        feeds = flatten_agencies(config)
+        assert feeds[0].auth is not None
+        assert feeds[0].auth.secret_name == "agency-key"
+
+    def test_auth_inheritance_from_system(self) -> None:
+        """Test that system auth overrides agency auth."""
+        config = AgenciesFileConfig(
+            defaults=DefaultsConfig(),
+            agencies=[
+                AgencyConfig(
+                    id="test",
+                    name="Test Agency",
+                    auth={
+                        "type": "header",
+                        "secret_name": "agency-key",
+                        "key": "x-api-key",
+                    },
+                    systems=[
+                        SystemConfig(
+                            id="system1",
+                            name="System 1",
+                            auth={
+                                "type": "query",
+                                "secret_name": "system-key",
+                                "key": "api_key",
+                            },
+                            feeds=[
+                                RealtimeFeedConfig(
+                                    feed_type=FeedType.VEHICLE_POSITIONS,
+                                    url="https://example.com/vehicles.pb",
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        feeds = flatten_agencies(config)
+        assert feeds[0].auth is not None
+        assert feeds[0].auth.secret_name == "system-key"
+        assert feeds[0].auth.type == AuthType.QUERY
+
+    def test_auth_override_at_feed_level(self) -> None:
+        """Test that feed auth overrides system/agency auth."""
+        config = AgenciesFileConfig(
+            defaults=DefaultsConfig(),
+            agencies=[
+                AgencyConfig(
+                    id="test",
+                    name="Test Agency",
+                    auth={
+                        "type": "header",
+                        "secret_name": "agency-key",
+                        "key": "x-api-key",
+                    },
+                    feeds=[
+                        RealtimeFeedConfig(
+                            feed_type=FeedType.VEHICLE_POSITIONS,
+                            url="https://example.com/vehicles.pb",
+                            auth={
+                                "type": "query",
+                                "secret_name": "feed-key",
+                                "key": "token",
+                            },
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        feeds = flatten_agencies(config)
+        assert feeds[0].auth is not None
+        assert feeds[0].auth.secret_name == "feed-key"
+
+    def test_custom_feed_name(self) -> None:
+        """Test that custom feed name is used when provided."""
+        config = AgenciesFileConfig(
+            defaults=DefaultsConfig(),
+            agencies=[
+                AgencyConfig(
+                    id="test",
+                    name="Test Agency",
+                    feeds=[
+                        RealtimeFeedConfig(
+                            feed_type=FeedType.VEHICLE_POSITIONS,
+                            url="https://example.com/vehicles.pb",
+                            name="Custom Feed Name",
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        feeds = flatten_agencies(config)
+        assert feeds[0].name == "Custom Feed Name"
+
+    def test_schedule_url_from_system_overrides_agency(self) -> None:
+        """Test that system schedule_url overrides agency schedule_url."""
+        config = AgenciesFileConfig(
+            defaults=DefaultsConfig(),
+            agencies=[
+                AgencyConfig(
+                    id="septa",
+                    name="SEPTA",
+                    schedule_url="https://example.com/agency-schedule.zip",
+                    systems=[
+                        SystemConfig(
+                            id="bus",
+                            name="Bus",
+                            schedule_url="https://example.com/bus-schedule.zip",
+                            feeds=[
+                                RealtimeFeedConfig(
+                                    feed_type=FeedType.VEHICLE_POSITIONS,
+                                    url="https://example.com/vehicles.pb",
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        feeds = flatten_agencies(config)
+        assert str(feeds[0].schedule_url) == "https://example.com/bus-schedule.zip"
 
 
 class TestSettings:
@@ -158,9 +409,8 @@ class TestSettings:
 
         settings = Settings()
 
-        assert settings.config_path == Path("./feeds.yaml")
+        assert settings.config_path == Path("./agencies.yaml")
         assert settings.gcs_bucket == "test-bucket"
-        assert settings.gcs_prefix == ""
         assert settings.max_concurrent == 100
         assert settings.health_port == 8080
         assert settings.log_level == "INFO"
@@ -170,9 +420,8 @@ class TestSettings:
 
     def test_custom_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test custom settings from environment."""
-        monkeypatch.setenv("CONFIG_PATH", "/etc/feeds.yaml")
+        monkeypatch.setenv("CONFIG_PATH", "/etc/agencies.yaml")
         monkeypatch.setenv("GCS_BUCKET", "my-bucket")
-        monkeypatch.setenv("GCS_PREFIX", "archives/")
         monkeypatch.setenv("MAX_CONCURRENT", "50")
         monkeypatch.setenv("HEALTH_PORT", "9000")
         monkeypatch.setenv("LOG_LEVEL", "DEBUG")
@@ -180,9 +429,8 @@ class TestSettings:
 
         settings = Settings()
 
-        assert settings.config_path == Path("/etc/feeds.yaml")
+        assert settings.config_path == Path("/etc/agencies.yaml")
         assert settings.gcs_bucket == "my-bucket"
-        assert settings.gcs_prefix == "archives/"
         assert settings.max_concurrent == 50
         assert settings.health_port == 9000
         assert settings.log_level == "DEBUG"

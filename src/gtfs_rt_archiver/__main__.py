@@ -14,7 +14,12 @@ from tenacity import (
     wait_exponential,
 )
 
-from gtfs_rt_archiver.config import Settings, apply_defaults, load_feeds_file
+from gtfs_rt_archiver.config import (
+    Settings,
+    flatten_agencies,
+    load_agencies_file,
+    resolve_feed_secrets,
+)
 from gtfs_rt_archiver.fetcher import (
     NonRetryableError,
     create_http_client,
@@ -59,7 +64,7 @@ async def create_fetch_job(
     async def fetch_job(feed: FeedConfig) -> None:
         """Fetch a single feed and upload to storage."""
         feed_type = feed.feed_type.value
-        agency = feed.agency
+        agency = feed.agency_id
 
         # Acquire semaphore to limit concurrent operations
         async with semaphore:
@@ -181,18 +186,28 @@ async def run() -> None:
         "starting",
         config_path=str(settings.config_path),
         gcs_bucket=settings.gcs_bucket,
-        gcs_prefix=settings.gcs_prefix,
         shard_index=settings.shard_index,
         total_shards=settings.total_shards,
     )
 
-    # Load feed configuration
-    feeds_config = load_feeds_file(settings.config_path)
+    # Load and flatten agency configuration
+    agencies_config = load_agencies_file(settings.config_path)
+    feeds = flatten_agencies(agencies_config)
 
-    # Apply defaults to all feeds
-    feeds = [apply_defaults(feed, feeds_config.defaults) for feed in feeds_config.feeds]
+    logger.info(
+        "loaded_agencies",
+        agency_count=len(agencies_config.agencies),
+        feed_count=len(feeds),
+    )
 
-    logger.info("loaded_feeds", count=len(feeds))
+    # Resolve authentication secrets (requires GCP_PROJECT_ID)
+    feeds_with_auth = [f for f in feeds if f.auth is not None]
+    if feeds_with_auth:
+        if not settings.gcp_project_id:
+            raise ValueError("GCP_PROJECT_ID is required when feeds have auth configured")
+        logger.info("resolving_secrets", count=len(feeds_with_auth))
+        await resolve_feed_secrets(feeds, settings.gcp_project_id)
+        logger.info("secrets_resolved")
 
     # Create HTTP client
     http_client = create_http_client(settings.max_concurrent)
@@ -200,7 +215,6 @@ async def run() -> None:
     # Create storage writer
     storage_writer = StorageWriter(
         bucket=settings.gcs_bucket,
-        prefix=settings.gcs_prefix,
     )
 
     # Create semaphore for concurrency limiting

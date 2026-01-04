@@ -121,7 +121,7 @@ Existing GTFS-RT archiver implementations suffer from:
 ### Feed Configuration
 
 ```yaml
-# feeds.yaml
+# agencies.yaml
 defaults:
   interval_seconds: 20
   timeout_seconds: 30
@@ -136,24 +136,29 @@ feeds:
     url: https://www3.septa.org/gtfsrt/septa-pa-us/Vehicle/rtVehiclePosition.pb
     feed_type: vehicle_positions
     agency: septa
-    # Uses defaults
+    # Uses defaults, no auth required
+
+  - id: mta-vehicles
+    name: MTA Vehicles
+    url: https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs
+    feed_type: vehicle_positions
+    agency: mta
+    auth:
+      type: header                # Auth via HTTP header
+      secret_name: mta-api-key    # Secret name in GCP Secret Manager
+      key: x-api-key              # Header name
+      # value field is optional - uses entire secret directly when omitted
 
   - id: bart-trip-updates
     name: BART Trip Updates
     url: https://api.bart.gov/gtfsrt/tripupdate.aspx
     feed_type: trip_updates
     agency: bart
-    interval_seconds: 15  # Override: fetch every 15s
-    headers:
-      Authorization: "Bearer ${BART_API_KEY}"  # Environment variable substitution
-
-  - id: mta-service-alerts
-    name: MTA Service Alerts
-    url: https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/camsys%2Fsubway-alerts
-    feed_type: service_alerts
-    agency: mta
-    query_params:
-      key: "${MTA_API_KEY}"
+    interval_seconds: 15
+    auth:
+      type: query                 # Auth via query parameter
+      secret_name: bart-api-key
+      key: key                    # Query parameter name
 ```
 
 ### Pydantic Models
@@ -167,6 +172,17 @@ class FeedType(str, Enum):
     VEHICLE_POSITIONS = "vehicle_positions"
     TRIP_UPDATES = "trip_updates"
     SERVICE_ALERTS = "service_alerts"
+
+class AuthType(str, Enum):
+    HEADER = "header"
+    QUERY = "query"
+
+class AuthConfig(BaseModel):
+    type: AuthType
+    secret_name: str = Field(..., pattern=r"^[a-zA-Z0-9_-]+$")
+    key: str
+    value: str | None = None  # Optional: template with ${SECRET} placeholder
+    resolved_value: str | None = Field(default=None, exclude=True)
 
 class RetryConfig(BaseModel):
     max_attempts: int = 3
@@ -182,12 +198,10 @@ class FeedConfig(BaseModel):
     interval_seconds: int = Field(default=20, ge=5, le=3600)
     timeout_seconds: int = Field(default=30, ge=1, le=120)
     retry: RetryConfig = Field(default_factory=RetryConfig)
-    headers: dict[str, str] = Field(default_factory=dict)
-    query_params: dict[str, str] = Field(default_factory=dict)
+    auth: AuthConfig | None = None
 
 class ArchiverConfig(BaseModel):
     bucket: str
-    prefix: str = ""
     max_concurrent: int = Field(default=100, ge=1, le=500)
     defaults: FeedConfig  # Partial, used for defaults
     feeds: list[FeedConfig]
@@ -196,29 +210,29 @@ class ArchiverConfig(BaseModel):
 ### Storage Path Structure
 
 ```
-gs://{bucket}/{prefix}/
+gs://{bucket}/
 └── {feed_type}/
-    └── agency={agency}/
-        └── dt={YYYY-MM-DD}/
-            └── hour={HH}/
-                └── {feed_id}/
-                    ├── {ISO8601_timestamp}.pb      # Raw protobuf
-                    └── {ISO8601_timestamp}.meta    # Optional metadata JSON
+    └── date={YYYY-MM-DD}/
+        └── hour={YYYY-MM-DDTHH:00:00Z}/
+            └── base64url={encoded-url}/
+                ├── {ISO8601_timestamp}.pb      # Raw protobuf
+                └── {ISO8601_timestamp}.meta    # Optional metadata JSON
 ```
+
+The `base64url` partition contains the URL-safe base64 encoding of the base feed URL (without auth query parameters), without padding characters. This ensures consistent storage paths across secret rotations and prevents secret leakage in storage paths.
 
 Example:
 
 ```
-gs://my-gtfs-archive/raw/
+gs://my-gtfs-archive/
 └── vehicle_positions/
-    └── agency=septa/
-        └── dt=2025-01-15/
-            └── hour=14/
-                └── septa-vehicle-positions/
-                    ├── 2025-01-15T14:20:00.000Z.pb
-                    ├── 2025-01-15T14:20:00.000Z.meta
-                    ├── 2025-01-15T14:20:20.000Z.pb
-                    └── 2025-01-15T14:20:20.000Z.meta
+    └── date=2025-01-15/
+        └── hour=2025-01-15T14:00:00Z/
+            └── base64url=aHR0cHM6Ly93d3czLnNlcHRhLm9yZy9ndGZzcnQvc2VwdGEtcGEtdXMvVmVoaWNsZS9ydFZlaGljbGVQb3NpdGlvbi5wYg/
+                ├── 2025-01-15T14:20:00.000Z.pb
+                ├── 2025-01-15T14:20:00.000Z.meta
+                ├── 2025-01-15T14:20:20.000Z.pb
+                └── 2025-01-15T14:20:20.000Z.meta
 ```
 
 ### Metadata File Format
@@ -247,23 +261,37 @@ gs://my-gtfs-archive/raw/
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `CONFIG_PATH` | Path to feeds.yaml | `./feeds.yaml` |
+| `CONFIG_PATH` | Path to agencies.yaml | `./agencies.yaml` |
 | `GCS_BUCKET` | Target GCS bucket | Required |
-| `GCS_PREFIX` | Path prefix in bucket | `""` |
+| `GCP_PROJECT_ID` | GCP project ID for Secret Manager | Required if auth used |
 | `MAX_CONCURRENT` | Max concurrent fetches | `100` |
 | `HEALTH_PORT` | Health check server port | `8080` |
 | `METRICS_PORT` | Prometheus metrics port | `9090` |
 | `LOG_LEVEL` | Logging level | `INFO` |
 | `LOG_FORMAT` | `json` or `text` | `json` |
 
-### Secret Substitution
+### Secret Manager Integration
 
-Environment variables in config are substituted at load time:
+Feed authentication secrets are fetched from GCP Secret Manager at startup:
 
 ```yaml
-headers:
-  Authorization: "Bearer ${API_KEY}"  # Reads from $API_KEY env var
+auth:
+  type: header                # header or query
+  secret_name: mta-api-key    # Secret name in GCP Secret Manager
+  key: x-api-key              # Header name or query param name
+  value: "${SECRET}"          # Optional: template with ${SECRET} placeholder
+                              # When omitted, uses entire secret directly
 ```
+
+The `value` field is optional:
+
+- **When omitted**: The entire secret value is used directly as the authentication value
+- **When provided**: The `${SECRET}` placeholder is replaced with the secret value (e.g., `"Bearer ${SECRET}"`)
+
+The `GCP_PROJECT_ID` environment variable must be set when feeds have auth configured.
+
+**IAM Access Control:**
+Secrets must be tagged with `type=feed-key` for the service account to access them. The Terraform configuration creates the tag key/value and sets up IAM conditions.
 
 ---
 
@@ -597,7 +625,7 @@ gtfs-realtime-archiver/
 │   ├── test_fetcher.py
 │   ├── test_storage.py
 │   └── test_integration.py
-├── feeds.yaml                      # Feed configuration
+├── agencies.yaml                   # Agency configuration
 ├── Dockerfile
 ├── pyproject.toml                  # Project metadata (uv-managed)
 ├── uv.lock                         # Dependency lockfile
@@ -797,7 +825,7 @@ tofu destroy -var-file=prod.tfvars
 
 ### From transit-data-analytics-demo
 
-1. Convert `feeds.yaml` to new format (mostly compatible)
+1. Convert `agencies.yaml` to new format (mostly compatible)
 2. Update `feed_type` enum values if needed
 3. Remove Redis dependency from Kubernetes manifests
 4. Deploy and validate

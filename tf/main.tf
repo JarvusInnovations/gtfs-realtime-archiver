@@ -6,14 +6,14 @@ resource "google_cloud_run_v2_service" "archiver" {
   template {
     service_account = google_service_account.archiver.email
 
-    # Mount feeds config from Secret Manager
+    # Mount agencies config from Secret Manager
     volumes {
-      name = "feeds-config"
+      name = "agencies-config"
       secret {
-        secret       = var.feeds_secret_id
+        secret       = var.agencies_secret_id
         default_mode = 292  # 0444 in octal
         items {
-          path    = "feeds.yaml"
+          path    = "agencies.yaml"
           version = "latest"
         }
       }
@@ -34,24 +34,20 @@ resource "google_cloud_run_v2_service" "archiver" {
         container_port = 8080
       }
 
-      # Mount feeds config as a file
+      # Mount agencies config as a file
       volume_mounts {
-        name       = "feeds-config"
+        name       = "agencies-config"
         mount_path = "/config"
       }
 
       # Core configuration
       env {
         name  = "CONFIG_PATH"
-        value = "/config/feeds.yaml"
+        value = "/config/agencies.yaml"
       }
       env {
         name  = "GCS_BUCKET"
         value = google_storage_bucket.archive.name
-      }
-      env {
-        name  = "GCS_PREFIX"
-        value = var.gcs_prefix
       }
       env {
         name  = "MAX_CONCURRENT"
@@ -65,19 +61,9 @@ resource "google_cloud_run_v2_service" "archiver" {
         name  = "LOG_FORMAT"
         value = "json"
       }
-
-      # Dynamic secret environment variables
-      dynamic "env" {
-        for_each = var.secret_env_vars
-        content {
-          name = env.key
-          value_source {
-            secret_key_ref {
-              secret  = env.value
-              version = "latest"
-            }
-          }
-        }
+      env {
+        name  = "GCP_PROJECT_ID"
+        value = var.project_id
       }
 
       startup_probe {

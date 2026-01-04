@@ -1,7 +1,6 @@
 """Configuration loading and settings for GTFS-RT Archiver."""
 
-import os
-import re
+import asyncio
 from pathlib import Path
 from typing import Self
 
@@ -10,93 +9,240 @@ from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from gtfs_rt_archiver.models import (
+    AgenciesFileConfig,
+    AgencyConfig,
+    AuthConfig,
     DefaultsConfig,
     FeedConfig,
-    FeedsFileConfig,
-    RetryConfig,
+    FeedType,
+    RealtimeFeedConfig,
+    SystemConfig,
 )
 
 
-def substitute_env_vars(value: str) -> str:
-    """Substitute ${VAR} patterns with environment variable values.
+def load_agencies_file(path: Path) -> AgenciesFileConfig:
+    """Load and parse an agencies.yaml configuration file.
 
     Args:
-        value: String potentially containing ${VAR} patterns.
+        path: Path to the agencies.yaml file.
 
     Returns:
-        String with environment variables substituted.
-
-    Raises:
-        ValueError: If an environment variable is not set.
-    """
-    pattern = re.compile(r"\$\{([^}]+)\}")
-
-    def replacer(match: re.Match[str]) -> str:
-        var_name = match.group(1)
-        env_value = os.environ.get(var_name)
-        if env_value is None:
-            raise ValueError(f"Environment variable '{var_name}' is not set")
-        return env_value
-
-    return pattern.sub(replacer, value)
-
-
-def substitute_env_vars_in_dict(d: dict[str, str]) -> dict[str, str]:
-    """Substitute environment variables in all values of a dictionary."""
-    return {k: substitute_env_vars(v) for k, v in d.items()}
-
-
-def load_feeds_file(path: Path) -> FeedsFileConfig:
-    """Load and parse a feeds.yaml configuration file.
-
-    Args:
-        path: Path to the feeds.yaml file.
-
-    Returns:
-        Parsed FeedsFileConfig with environment variables substituted.
+        Parsed AgenciesFileConfig.
 
     Raises:
         FileNotFoundError: If the file does not exist.
         yaml.YAMLError: If the file is not valid YAML.
-        ValueError: If environment variables are not set.
         pydantic.ValidationError: If the configuration is invalid.
+
+    Note:
+        This only loads and validates the YAML. Secrets must be resolved
+        separately by calling resolve_feed_secrets().
     """
     with path.open() as f:
         raw_config = yaml.safe_load(f)
 
-    # Substitute environment variables in headers and query_params
-    if "feeds" in raw_config:
-        for feed in raw_config["feeds"]:
-            if "headers" in feed:
-                feed["headers"] = substitute_env_vars_in_dict(feed["headers"])
-            if "query_params" in feed:
-                feed["query_params"] = substitute_env_vars_in_dict(feed["query_params"])
-
-    return FeedsFileConfig.model_validate(raw_config)
+    return AgenciesFileConfig.model_validate(raw_config)
 
 
-def apply_defaults(feed: FeedConfig, defaults: DefaultsConfig) -> FeedConfig:
-    """Apply default values to a feed configuration.
+def generate_feed_id(
+    agency_id: str,
+    system_id: str | None,
+    feed_type: FeedType,
+) -> str:
+    """Generate a feed ID from agency, system, and feed type.
 
-    Only applies defaults for fields that were not explicitly set in the feed config.
-    This is a simplified approach - we create a new FeedConfig with defaults applied.
+    Args:
+        agency_id: The agency identifier.
+        system_id: The system identifier (optional).
+        feed_type: The feed type.
+
+    Returns:
+        Feed ID in format: {agency_id}[-{system_id}]-{feed_type}
     """
-    # Create feed dict and apply defaults for unset fields
-    feed_dict = feed.model_dump()
+    parts = [agency_id]
+    if system_id:
+        parts.append(system_id)
+    # Convert feed_type value (e.g., "vehicle_positions") to hyphenated form
+    parts.append(feed_type.value.replace("_", "-"))
+    return "-".join(parts)
 
-    # Check if interval_seconds was explicitly set (not the model default)
-    # We use the model's default value to detect if it was explicitly set
-    if feed.interval_seconds == FeedConfig.model_fields["interval_seconds"].default:
-        feed_dict["interval_seconds"] = defaults.interval_seconds
 
-    if feed.timeout_seconds == FeedConfig.model_fields["timeout_seconds"].default:
-        feed_dict["timeout_seconds"] = defaults.timeout_seconds
+def generate_feed_name(
+    agency_name: str,
+    system_name: str | None,
+    feed_type: FeedType,
+) -> str:
+    """Generate a human-readable feed name.
 
-    # For retry, merge the defaults
-    if feed.retry == RetryConfig():
-        feed_dict["retry"] = defaults.retry.model_dump()
+    Args:
+        agency_name: The agency name.
+        system_name: The system name (optional).
+        feed_type: The feed type.
 
-    return FeedConfig.model_validate(feed_dict)
+    Returns:
+        Feed name in format: {Agency Name} [{System Name}] {Feed Type Title}
+    """
+    # Convert feed_type value (e.g., "vehicle_positions") to title case
+    type_name = feed_type.value.replace("_", " ").title()
+    if system_name:
+        return f"{agency_name} {system_name} {type_name}"
+    return f"{agency_name} {type_name}"
+
+
+def _resolve_auth(
+    feed_auth: AuthConfig | None,
+    system_auth: AuthConfig | None,
+    agency_auth: AuthConfig | None,
+) -> AuthConfig | None:
+    """Resolve auth configuration with inheritance: feed > system > agency."""
+    if feed_auth is not None:
+        return feed_auth
+    if system_auth is not None:
+        return system_auth
+    return agency_auth
+
+
+def _flatten_feed(
+    feed: RealtimeFeedConfig,
+    agency: AgencyConfig,
+    system: SystemConfig | None,
+    defaults: DefaultsConfig,
+) -> FeedConfig:
+    """Flatten a single feed with all inheritance applied.
+
+    Args:
+        feed: The realtime feed configuration.
+        agency: The parent agency configuration.
+        system: The parent system configuration (optional).
+        defaults: Global default configuration.
+
+    Returns:
+        A flattened FeedConfig ready for runtime use.
+    """
+    # Generate ID and name
+    feed_id = generate_feed_id(
+        agency.id,
+        system.id if system else None,
+        feed.feed_type,
+    )
+    feed_name = feed.name or generate_feed_name(
+        agency.name,
+        system.name if system else None,
+        feed.feed_type,
+    )
+
+    # Resolve interval (feed > feed-type default)
+    interval = feed.interval_seconds
+    if interval is None:
+        interval = defaults.intervals.get_interval(feed.feed_type)
+
+    # Resolve timeout (feed > global default)
+    timeout = feed.timeout_seconds
+    if timeout is None:
+        timeout = defaults.timeout_seconds
+
+    # Resolve retry (feed > global default)
+    retry = feed.retry or defaults.retry
+
+    # Resolve auth (feed > system > agency)
+    auth = _resolve_auth(
+        feed.auth,
+        system.auth if system else None,
+        agency.auth,
+    )
+
+    # Resolve schedule_url (system > agency)
+    schedule_url = None
+    if system and system.schedule_url:
+        schedule_url = system.schedule_url
+    elif agency.schedule_url:
+        schedule_url = agency.schedule_url
+
+    return FeedConfig(
+        id=feed_id,
+        name=feed_name,
+        url=feed.url,
+        feed_type=feed.feed_type,
+        agency_id=agency.id,
+        agency_name=agency.name,
+        system_id=system.id if system else None,
+        system_name=system.name if system else None,
+        schedule_url=schedule_url,
+        interval_seconds=interval,
+        timeout_seconds=timeout,
+        retry=retry,
+        auth=auth,
+    )
+
+
+def flatten_agencies(config: AgenciesFileConfig) -> list[FeedConfig]:
+    """Flatten agency hierarchy into a list of FeedConfig objects.
+
+    Applies defaults and resolves inheritance:
+    1. Global defaults (intervals.{feed_type}, timeout_seconds, retry)
+    2. Agency-level auth (inherited by systems/feeds)
+    3. System-level auth (inherited by feeds, overrides agency)
+    4. Feed-level settings (override everything)
+
+    Args:
+        config: The parsed agencies configuration.
+
+    Returns:
+        List of flattened FeedConfig objects ready for runtime.
+    """
+    feeds: list[FeedConfig] = []
+    defaults = config.defaults
+
+    for agency in config.agencies:
+        if agency.systems:
+            # Agency with systems
+            for system in agency.systems:
+                for feed in system.feeds:
+                    feeds.append(
+                        _flatten_feed(
+                            feed=feed,
+                            agency=agency,
+                            system=system,
+                            defaults=defaults,
+                        )
+                    )
+        elif agency.feeds:
+            # Simple agency with direct feeds
+            for feed in agency.feeds:
+                feeds.append(
+                    _flatten_feed(
+                        feed=feed,
+                        agency=agency,
+                        system=None,
+                        defaults=defaults,
+                    )
+                )
+
+    return feeds
+
+
+async def resolve_feed_secrets(
+    feeds: list[FeedConfig],
+    project_id: str,
+) -> None:
+    """Resolve all authentication secrets for feeds.
+
+    Args:
+        feeds: List of feed configurations.
+        project_id: GCP project ID for Secret Manager.
+
+    Raises:
+        SecretManagerError: If any secret cannot be fetched.
+    """
+    from gtfs_rt_archiver.secrets import resolve_auth_config
+
+    tasks = []
+    for feed in feeds:
+        if feed.auth is not None:
+            tasks.append(resolve_auth_config(feed.auth, project_id))
+
+    if tasks:
+        await asyncio.gather(*tasks)
 
 
 class Settings(BaseSettings):
@@ -109,9 +255,9 @@ class Settings(BaseSettings):
 
     # Feed configuration
     config_path: Path = Field(
-        default=Path("./feeds.yaml"),
+        default=Path("./agencies.yaml"),
         validation_alias="CONFIG_PATH",
-        description="Path to feeds.yaml configuration file",
+        description="Path to agencies.yaml configuration file",
     )
 
     # GCS settings
@@ -119,10 +265,12 @@ class Settings(BaseSettings):
         validation_alias="GCS_BUCKET",
         description="Target GCS bucket for archived feeds",
     )
-    gcs_prefix: str = Field(
-        default="",
-        validation_alias="GCS_PREFIX",
-        description="Path prefix within the GCS bucket",
+
+    # GCP settings
+    gcp_project_id: str | None = Field(
+        default=None,
+        validation_alias="GCP_PROJECT_ID",
+        description="GCP project ID for Secret Manager (required when feeds have auth)",
     )
 
     # Runtime settings

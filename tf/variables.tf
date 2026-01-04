@@ -33,12 +33,6 @@ variable "bucket_location" {
   default     = "us-central1"
 }
 
-variable "gcs_prefix" {
-  description = "Path prefix within the GCS bucket"
-  type        = string
-  default     = ""
-}
-
 variable "max_concurrent" {
   description = "Maximum concurrent feed fetches"
   type        = number
@@ -75,12 +69,6 @@ variable "log_level" {
   default     = "INFO"
 }
 
-variable "secret_env_vars" {
-  description = "Map of environment variable names to Secret Manager secret IDs"
-  type        = map(string)
-  default     = {}
-}
-
 variable "github_org" {
   description = "GitHub organization for Workload Identity Federation"
   type        = string
@@ -93,8 +81,8 @@ variable "github_repo" {
   default     = "gtfs-realtime-archiver"
 }
 
-variable "feeds_secret_id" {
-  description = "Secret Manager secret ID containing feeds.yaml configuration"
+variable "agencies_secret_id" {
+  description = "Secret Manager secret ID containing agencies.yaml configuration"
   type        = string
-  default     = "feeds-config"
+  default     = "agencies-config"
 }

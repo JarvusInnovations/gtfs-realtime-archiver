@@ -22,7 +22,8 @@ def feed_config() -> FeedConfig:
         name="Test Feed",
         url="https://example.com/feed.pb",
         feed_type="vehicle_positions",
-        agency="test-agency",
+        agency_id="test-agency",
+        agency_name="Test Agency",
     )
 
 
@@ -183,7 +184,8 @@ class TestCreateFetchJob:
             name="Test Feed",
             url="https://example.com/feed.pb",
             feed_type="vehicle_positions",
-            agency="test-agency",
+            agency_id="test-agency",
+            agency_name="Test Agency",
             retry={"max_attempts": 1, "backoff_base": 0.1, "backoff_max": 1.0},
         )
 
@@ -265,6 +267,8 @@ class TestCreateFetchJob:
                     name=f"Feed {i}",
                     url="https://example.com/feed.pb",
                     feed_type="vehicle_positions",
+                    agency_id="test-agency",
+                    agency_name="Test Agency",
                 )
                 for i in range(5)
             ]
