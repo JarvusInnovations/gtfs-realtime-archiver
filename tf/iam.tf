@@ -4,8 +4,22 @@ resource "google_service_account" "archiver" {
   project      = var.project_id
 }
 
-resource "google_storage_bucket_iam_member" "archiver_storage" {
-  bucket = google_storage_bucket.archive.name
+# Archiver writes protobuf snapshots
+resource "google_storage_bucket_iam_member" "archiver_protobuf" {
+  bucket = google_storage_bucket.protobuf.name
+  role   = "roles/storage.objectCreator"
+  member = "serviceAccount:${google_service_account.archiver.email}"
+}
+
+# Dagster reads protobuf and writes parquet (using same service account)
+resource "google_storage_bucket_iam_member" "archiver_parquet_read" {
+  bucket = google_storage_bucket.protobuf.name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.archiver.email}"
+}
+
+resource "google_storage_bucket_iam_member" "archiver_parquet_write" {
+  bucket = google_storage_bucket.parquet.name
   role   = "roles/storage.objectCreator"
   member = "serviceAccount:${google_service_account.archiver.email}"
 }
@@ -37,4 +51,11 @@ resource "google_secret_manager_secret_iam_member" "archiver_agencies_config" {
   secret_id = var.agencies_secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.archiver.email}"
+}
+
+# Allow sidecar to write Prometheus metrics to Cloud Monitoring
+resource "google_project_iam_member" "archiver_metrics_writer" {
+  project = var.project_id
+  role    = "roles/monitoring.metricWriter"
+  member  = "serviceAccount:${google_service_account.archiver.email}"
 }

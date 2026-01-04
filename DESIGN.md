@@ -40,43 +40,56 @@ Existing GTFS-RT archiver implementations suffer from:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                     GTFS-RT Archiver Container                       │
+│                     GTFS-RT Archiver Container                      │
 ├─────────────────────────────────────────────────────────────────────┤
-│                                                                      │
 │  ┌────────────────────────────────────────────────────────────────┐ │
-│  │                      Python Async Runtime                       │ │
-│  │                                                                 │ │
+│  │                      Python Async Runtime                      │ │
+│  │                                                                │ │
 │  │  ┌─────────────────┐     ┌───────────────────────────────────┐ │ │
 │  │  │   APScheduler   │     │         Fetch Worker Pool         │ │ │
-│  │  │                 │     │                                   │ │ │
 │  │  │ • Per-feed jobs │────▶│ • httpx.AsyncClient               │ │ │
 │  │  │ • Cron triggers │     │ • Semaphore(max_concurrent)       │ │ │
 │  │  │ • Misfire grace │     │ • Retry with exponential backoff  │ │ │
 │  │  └─────────────────┘     └───────────────────────────────────┘ │ │
-│  │                                         │                       │ │
-│  │                                         ▼                       │ │
+│  │                                         │                      │ │
+│  │                                         ▼                      │ │
 │  │                          ┌───────────────────────────────────┐ │ │
 │  │                          │       Storage Writer              │ │ │
-│  │                          │                                   │ │ │
 │  │                          │ • gcloud-aio-storage (async)      │ │ │
 │  │                          │ • Hive-partitioned paths          │ │ │
-│  │                          │ • Configurable bucket/prefix      │ │ │
 │  │                          └───────────────────────────────────┘ │ │
-│  │                                                                 │ │
+│  │                                                                │ │
 │  │  ┌─────────────────┐     ┌───────────────────────────────────┐ │ │
 │  │  │  Health Server  │     │       Metrics Server              │ │ │
 │  │  │  (port 8080)    │     │       (port 9090)                 │ │ │
 │  │  └─────────────────┘     └───────────────────────────────────┘ │ │
-│  │                                                                 │ │
 │  └────────────────────────────────────────────────────────────────┘ │
-│                                                                      │
 └─────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
-                         ┌────────────────────┐
-                         │   Google Cloud     │
-                         │   Storage (GCS)    │
-                         └────────────────────┘
+                      ┌──────────────────────────┐
+                      │  GCS: protobuf.gtfsrt.io │
+                      │  (raw protobuf archives) │
+                      └──────────────────────────┘
+                                    │
+                                    ▼
+┌────────────────────────────────────────────────────────────────────┐
+│                     Dagster Pipeline                               │
+├────────────────────────────────────────────────────────────────────┤
+│  Daily Compaction (2am UTC)                                        │
+│  ┌─────────────────┐     ┌───────────────────────────────────────┐ │
+│  │  Feed Discovery │────▶│  Streaming Parquet Writer             │ │
+│  │  (scan GCS)     │     │  • Parse protobuf → PyArrow tables    │ │
+│  └─────────────────┘     │  • Batch writes (memory efficient)    │ │
+│                          │  • Snappy compression                 │ │
+│                          └───────────────────────────────────────┘ │
+└────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+                      ┌──────────────────────────┐
+                      │  GCS: parquet.gtfsrt.io  │
+                      │  (compacted parquet)     │
+                      └──────────────────────────┘
 ```
 
 ### Component Responsibilities
@@ -209,8 +222,10 @@ class ArchiverConfig(BaseModel):
 
 ### Storage Path Structure
 
+**Protobuf Archives** (raw snapshots from archiver):
+
 ```
-gs://{bucket}/
+gs://protobuf.gtfsrt.io/
 └── {feed_type}/
     └── date={YYYY-MM-DD}/
         └── hour={YYYY-MM-DDTHH:00:00Z}/
@@ -219,12 +234,22 @@ gs://{bucket}/
                 └── {ISO8601_timestamp}.meta    # Optional metadata JSON
 ```
 
-The `base64url` partition contains the URL-safe base64 encoding of the base feed URL (without auth query parameters), without padding characters. This ensures consistent storage paths across secret rotations and prevents secret leakage in storage paths.
-
-Example:
+**Parquet Files** (compacted daily by Dagster):
 
 ```
-gs://my-gtfs-archive/
+gs://parquet.gtfsrt.io/
+└── {feed_type}/
+    └── date={YYYY-MM-DD}/
+        └── base64url={encoded-url}/
+            └── data.parquet                    # All records for the day
+```
+
+The `base64url` partition contains the URL-safe base64 encoding of the base feed URL (without auth query parameters), without padding characters. This ensures consistent storage paths across secret rotations and prevents secret leakage in storage paths.
+
+Example (protobuf):
+
+```
+gs://protobuf.gtfsrt.io/
 └── vehicle_positions/
     └── date=2025-01-15/
         └── hour=2025-01-15T14:00:00Z/
@@ -233,6 +258,16 @@ gs://my-gtfs-archive/
                 ├── 2025-01-15T14:20:00.000Z.meta
                 ├── 2025-01-15T14:20:20.000Z.pb
                 └── 2025-01-15T14:20:20.000Z.meta
+```
+
+Example (parquet):
+
+```
+gs://parquet.gtfsrt.io/
+└── vehicle_positions/
+    └── date=2025-01-15/
+        └── base64url=aHR0cHM6Ly93d3czLnNlcHRhLm9yZy9ndGZzcnQvc2VwdGEtcGEtdXMvVmVoaWNsZS9ydFZlaGljbGVQb3NpdGlvbi5wYg/
+            └── data.parquet
 ```
 
 ### Metadata File Format
@@ -262,13 +297,16 @@ gs://my-gtfs-archive/
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `CONFIG_PATH` | Path to agencies.yaml | `./agencies.yaml` |
-| `GCS_BUCKET` | Target GCS bucket | Required |
+| `GCS_BUCKET_RT_PROTOBUF` | Target GCS bucket for protobuf archives | Required |
+| `GCS_BUCKET_RT_PARQUET` | Target GCS bucket for compacted parquet files | Required (Dagster) |
 | `GCP_PROJECT_ID` | GCP project ID for Secret Manager | Required if auth used |
 | `MAX_CONCURRENT` | Max concurrent fetches | `100` |
 | `HEALTH_PORT` | Health check server port | `8080` |
 | `METRICS_PORT` | Prometheus metrics port | `9090` |
 | `LOG_LEVEL` | Logging level | `INFO` |
 | `LOG_FORMAT` | `json` or `text` | `json` |
+| `DAGSTER_HOME` | Dagster home directory (absolute path) | Required (Dagster) |
+| `STORAGE_EMULATOR_HOST` | Fake GCS server URL for local dev | - |
 
 ### Secret Manager Integration
 
@@ -515,8 +553,12 @@ resource "google_cloud_run_v2_service" "archiver" {
       }
 
       env {
-        name  = "GCS_BUCKET"
-        value = google_storage_bucket.archive.name
+        name  = "GCS_BUCKET_RT_PROTOBUF"
+        value = google_storage_bucket.protobuf.name
+      }
+      env {
+        name  = "GCS_BUCKET_RT_PARQUET"
+        value = google_storage_bucket.parquet.name
       }
       env {
         name  = "LOG_FORMAT"
@@ -591,47 +633,159 @@ active_feeds = [f for f in all_feeds if should_handle_feed(f)]
 
 ---
 
+## Dagster Compaction Pipeline
+
+The Dagster pipeline compacts raw protobuf archives into daily Parquet files for efficient analytics queries.
+
+### Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| **Daily partitions** | Medium feed count (~100s) makes daily batches practical without excessive memory usage |
+| **Runtime feed discovery** | Scan GCS for `base64url=` directories instead of maintaining a feed registry |
+| **Streaming parquet writer** | Process feeds in batches to limit memory usage (vs. accumulating all records) |
+| **Denormalization** | Flatten nested GTFS-RT structures for SQL-friendly analytics |
+
+### Assets
+
+| Asset | Description | Denormalization |
+|-------|-------------|-----------------|
+| `vehicle_positions_parquet` | Vehicle positions for a day | One row per vehicle position update |
+| `trip_updates_parquet` | Trip updates for a day | One row per stop_time_update (or base record if none) |
+| `service_alerts_parquet` | Service alerts for a day | One row per informed_entity (or base record if none) |
+
+### Data Flow
+
+```
+1. Discover feeds: List base64url= directories in GCS for the partition date
+2. For each feed:
+   a. List all .pb files in hour=* subdirectories
+   b. Parse protobuf → extract records
+   c. Write batch to streaming ParquetWriter
+3. Upload final parquet to output bucket
+```
+
+### PyArrow Schemas
+
+Each feed type has a defined schema for consistent output:
+
+**Vehicle Positions:**
+
+- `source_file`, `feed_url`, `feed_timestamp`, `entity_id`
+- `trip_id`, `route_id`, `direction_id`, `start_date`, `start_time`, `schedule_relationship`
+- `vehicle_id`, `vehicle_label`, `license_plate`
+- `latitude`, `longitude`, `bearing`, `odometer`, `speed`
+- `current_stop_sequence`, `stop_id`, `current_status`, `timestamp`, `congestion_level`, `occupancy_status`
+
+**Trip Updates:**
+
+- Base: `source_file`, `feed_url`, `feed_timestamp`, `entity_id`
+- Trip: `trip_id`, `route_id`, `direction_id`, `start_date`, `start_time`, `schedule_relationship`
+- Vehicle: `vehicle_id`, `vehicle_label`
+- Update: `trip_delay`, `trip_timestamp`
+- Stop time: `stop_sequence`, `stop_id`, `arrival_delay`, `arrival_time`, `arrival_uncertainty`, `departure_delay`, `departure_time`, `departure_uncertainty`, `schedule_relationship`
+
+**Service Alerts:**
+
+- Base: `source_file`, `feed_url`, `feed_timestamp`, `entity_id`
+- Alert: `cause`, `effect`, `url`, `header_text`, `description_text`
+- Active period: `active_period_start`, `active_period_end`
+- Informed entity: `agency_id`, `route_id`, `route_type`, `stop_id`, `trip_id`, `direction_id`
+
+### Schedule
+
+Assets are materialized daily at 2am UTC via `daily_compaction_schedule`, processing the previous day's data.
+
+### Commands
+
+```bash
+# Start Dagster UI for development
+uv run dg dev
+
+# List all definitions
+uv run dg list defs
+
+# Validate definitions load correctly
+uv run dg check defs
+
+# Manually materialize an asset for a specific date
+uv run dg launch --assets vehicle_positions_parquet --partition 2026-01-01
+```
+
+---
+
 ## Project Structure
 
 ```
 gtfs-realtime-archiver/
 ├── .github/
 │   └── workflows/
-│       └── build.yaml              # Container build + push
+│       ├── ci.yaml                 # Lint, test, typecheck, Dagster validation
+│       └── deploy.yaml             # Container build + push
+├── .dagster_home/                  # Dagster configuration
+│   └── dagster.yaml
 ├── .tool-versions                  # asdf version pinning
 ├── tf/
 │   ├── main.tf                     # Cloud Run service
-│   ├── storage.tf                  # GCS bucket
+│   ├── storage.tf                  # GCS buckets (protobuf + parquet)
+│   ├── dns.tf                      # DNS records for custom bucket domains
 │   ├── iam.tf                      # Service account
 │   ├── secrets.tf                  # Secret Manager
 │   ├── variables.tf                # Input variables
 │   ├── outputs.tf                  # Output values
 │   └── versions.tf                 # Provider versions
 ├── src/
-│   └── archiver/
+│   ├── gtfs_rt_archiver/           # Archiver service
+│   │   ├── __init__.py
+│   │   ├── __main__.py             # Entry point
+│   │   ├── config.py               # Settings and feed loading
+│   │   ├── models.py               # Pydantic models
+│   │   ├── scheduler.py            # APScheduler setup
+│   │   ├── fetcher.py              # HTTP fetch logic
+│   │   ├── storage.py              # GCS upload
+│   │   ├── metrics.py              # Prometheus metrics
+│   │   └── health.py               # Health check server
+│   └── dagster_pipeline/           # Data processing pipeline
 │       ├── __init__.py
-│       ├── __main__.py             # Entry point
-│       ├── config.py               # Settings and feed loading
-│       ├── models.py               # Pydantic models
-│       ├── scheduler.py            # APScheduler setup
-│       ├── fetcher.py              # HTTP fetch logic
-│       ├── storage.py              # GCS upload
-│       ├── metrics.py              # Prometheus metrics
-│       └── health.py               # Health check server
+│       ├── definitions.py          # Dagster definitions entry point
+│       └── defs/
+│           ├── __init__.py
+│           └── assets/
+│               ├── __init__.py
+│               └── compaction.py   # Protobuf → Parquet compaction assets
 ├── tests/
 │   ├── __init__.py
-│   ├── conftest.py                 # Pytest fixtures
+│   ├── conftest.py                 # Pytest fixtures (archiver)
 │   ├── test_config.py
 │   ├── test_fetcher.py
 │   ├── test_storage.py
-│   └── test_integration.py
+│   ├── test_integration.py
+│   └── dagster/                    # Dagster pipeline tests
+│       ├── __init__.py
+│       ├── conftest.py             # Dagster test fixtures
+│       └── test_compaction.py      # Tests for extraction functions
 ├── agencies.yaml                   # Agency configuration
+├── .env.example                    # Environment variables template
 ├── Dockerfile
 ├── pyproject.toml                  # Project metadata (uv-managed)
 ├── uv.lock                         # Dependency lockfile
 ├── DESIGN.md                       # This document
 └── README.md                       # Usage documentation
 ```
+
+### Dependency Groups
+
+The project uses component-specific dependency groups in `pyproject.toml`:
+
+| Group | Purpose |
+|-------|---------|
+| `archiver` | Runtime deps for gtfs_rt_archiver |
+| `dev-archiver` | Test deps for gtfs_rt_archiver |
+| `dagster` | Runtime deps for dagster_pipeline |
+| `dev-dagster` | Dev tools for dagster_pipeline |
+| `dev` | Aggregate group (all of the above + mypy, ruff) |
+
+Install specific groups with `uv sync --only-group <name>` or all dev deps with `uv sync`.
 
 ---
 
@@ -774,7 +928,7 @@ docker build -t gtfs-rt-archiver .
 docker run \
   -v ~/.config/gcloud:/root/.config/gcloud:ro \
   -e GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json \
-  -e GCS_BUCKET=my-test-bucket \
+  -e GCS_BUCKET_RT_PROTOBUF=my-test-bucket \
   -p 8080:8080 \
   -p 9090:9090 \
   gtfs-rt-archiver

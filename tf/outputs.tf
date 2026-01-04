@@ -8,14 +8,24 @@ output "service_name" {
   value       = google_cloud_run_v2_service.archiver.name
 }
 
-output "bucket_name" {
-  description = "Name of the GCS archive bucket"
-  value       = google_storage_bucket.archive.name
+output "protobuf_bucket_name" {
+  description = "Name of the GCS protobuf bucket"
+  value       = google_storage_bucket.protobuf.name
 }
 
-output "bucket_url" {
-  description = "URL of the GCS archive bucket"
-  value       = google_storage_bucket.archive.url
+output "protobuf_bucket_url" {
+  description = "URL of the GCS protobuf bucket"
+  value       = google_storage_bucket.protobuf.url
+}
+
+output "parquet_bucket_name" {
+  description = "Name of the GCS parquet bucket"
+  value       = google_storage_bucket.parquet.name
+}
+
+output "parquet_bucket_url" {
+  description = "URL of the GCS parquet bucket"
+  value       = google_storage_bucket.parquet.url
 }
 
 output "service_account_email" {

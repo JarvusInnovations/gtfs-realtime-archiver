@@ -6,6 +6,13 @@ resource "google_cloud_run_v2_service" "archiver" {
   template {
     service_account = google_service_account.archiver.email
 
+    # Managed Prometheus sidecar: collector depends on archiver container
+    annotations = {
+      "run.googleapis.com/container-dependencies" = jsonencode({
+        collector = ["archiver"]
+      })
+    }
+
     # Mount agencies config from Secret Manager
     volumes {
       name = "agencies-config"
@@ -20,6 +27,7 @@ resource "google_cloud_run_v2_service" "archiver" {
     }
 
     containers {
+      name  = "archiver"
       image = var.container_image
 
       resources {
@@ -46,8 +54,12 @@ resource "google_cloud_run_v2_service" "archiver" {
         value = "/config/agencies.yaml"
       }
       env {
-        name  = "GCS_BUCKET"
-        value = google_storage_bucket.archive.name
+        name  = "GCS_BUCKET_RT_PROTOBUF"
+        value = google_storage_bucket.protobuf.name
+      }
+      env {
+        name  = "GCS_BUCKET_RT_PARQUET"
+        value = google_storage_bucket.parquet.name
       }
       env {
         name  = "MAX_CONCURRENT"
@@ -88,6 +100,13 @@ resource "google_cloud_run_v2_service" "archiver" {
       }
     }
 
+    # Managed Prometheus sidecar - scrapes /metrics on port 8080
+    containers {
+      name       = "collector"
+      image      = "us-docker.pkg.dev/cloud-ops-agents-artifacts/cloud-run-gmp-sidecar/cloud-run-gmp-sidecar:1.3.0"
+      depends_on = ["archiver"]
+    }
+
     scaling {
       min_instance_count = var.min_instances
       max_instance_count = var.max_instances
@@ -100,7 +119,9 @@ resource "google_cloud_run_v2_service" "archiver" {
   }
 
   depends_on = [
-    google_storage_bucket_iam_member.archiver_storage,
+    google_storage_bucket_iam_member.archiver_protobuf,
+    google_storage_bucket_iam_member.archiver_parquet_read,
+    google_storage_bucket_iam_member.archiver_parquet_write,
   ]
 }
 

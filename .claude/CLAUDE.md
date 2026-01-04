@@ -37,17 +37,22 @@ See [DESIGN.md](../DESIGN.md) for detailed technical specifications.
 gtfs-realtime-archiver/
 ├── .github/workflows/      # CI/CD (lint, test, build, push)
 ├── .claude/                # AI assistant guidelines (this directory)
-├── src/gtfs_rt_archiver/   # Python source code
-│   ├── __main__.py         # Application entry point and orchestration
-│   ├── config.py           # Settings and YAML configuration loading
-│   ├── models.py           # Pydantic data models
-│   ├── fetcher.py          # HTTP client with retry logic
-│   ├── storage.py          # GCS writer with Hive partitioning
-│   ├── scheduler.py        # APScheduler job scheduling
-│   ├── metrics.py          # Prometheus metrics definitions
-│   ├── logging.py          # Structlog configuration
-│   └── health.py           # Health/metrics HTTP server
-├── tests/                  # pytest test suite (68 tests)
+├── .dagster_home/          # Dagster configuration
+├── src/
+│   ├── gtfs_rt_archiver/   # Archiver service
+│   │   ├── __main__.py     # Application entry point and orchestration
+│   │   ├── config.py       # Settings and YAML configuration loading
+│   │   ├── models.py       # Pydantic data models
+│   │   ├── fetcher.py      # HTTP client with retry logic
+│   │   ├── storage.py      # GCS writer with Hive partitioning
+│   │   ├── scheduler.py    # APScheduler job scheduling
+│   │   ├── metrics.py      # Prometheus metrics definitions
+│   │   ├── logging.py      # Structlog configuration
+│   │   └── health.py       # Health/metrics HTTP server
+│   └── dagster_pipeline/   # Data processing pipeline
+│       ├── definitions.py  # Dagster definitions entry point
+│       └── defs/           # Pipeline definitions
+├── tests/                  # pytest test suite
 │   ├── conftest.py         # Shared fixtures
 │   ├── test_*.py           # Module-specific tests
 │   └── __init__.py
@@ -60,10 +65,29 @@ gtfs-realtime-archiver/
 │   └── versions.tf         # Provider versions
 ├── pyproject.toml          # Project config, dependencies, tool settings
 ├── uv.lock                 # Dependency lockfile
-├── Dockerfile              # Multi-stage container build
+├── Dockerfile              # Multi-stage container build (archiver)
 ├── agencies.example.yaml   # Example agency configuration
+├── .env.example            # Environment variables template
 └── .tool-versions          # asdf version pins
 ```
+
+**Dependency Groups** (in pyproject.toml):
+
+- `archiver` / `dev-archiver` - deps for gtfs_rt_archiver
+- `dagster` / `dev-dagster` - deps for dagster_pipeline
+- `dev` - aggregate group (all of the above + mypy, ruff)
+
+**Managing Dependencies**:
+
+**CRITICAL**: ALWAYS use `uv add --group <group> <package>`. NEVER edit pyproject.toml directly.
+
+Why: `uv add` resolves the latest compatible version and updates uv.lock atomically. Manual edits may install outdated versions or create lock inconsistencies.
+
+**Examples**:
+
+- `uv add --group archiver httpx`
+- `uv add --group dev-archiver pytest-asyncio`
+- `uv add --group dagster dagster-gcp`
 
 **Key Patterns**:
 
@@ -86,7 +110,8 @@ This project uses **Conventional Commits** with components:
 
 **Components** (optional scope):
 
-- `archiver` - Core application code
+- `archiver` - Archiver service code
+- `dagster` - Dagster pipeline code
 - `tf` - Infrastructure/Terraform
 - `ci` - GitHub Actions workflows
 - `docker` - Dockerfile and container
@@ -181,3 +206,37 @@ tofu apply -concise -target=google_storage_bucket.archive
 ```
 
 **State**: Stored in `gs://gtfs-archiver-tf-state`
+
+## Dagster (Pipeline)
+
+**Directory**: `src/dagster_pipeline/`
+
+**Commands**:
+
+```bash
+# Start Dagster UI (dev server)
+uv run dg dev
+
+# List all definitions (assets, schedules, resources)
+uv run dg list defs
+
+# Validate definitions load correctly
+uv run dg check defs
+
+# Launch a run for specific assets with partition
+uv run dg launch --assets vehicle_positions_parquet --partition 2026-01-01
+
+# Launch all assets for a partition
+uv run dg launch --partition 2026-01-01
+```
+
+**Environment Setup**:
+
+- Set `DAGSTER_HOME` to an absolute path (required)
+- Required env vars: `GCS_BUCKET_RT_PROTOBUF`, `GCS_BUCKET_RT_PARQUET`, `GCP_PROJECT_ID`
+
+**Local Development**:
+
+- UI available at `http://localhost:3000` when running `dg dev`
+- Logs stored in `.dagster_home/storage/*/compute_logs/`
+- Run history in `.dagster_home/history/`
