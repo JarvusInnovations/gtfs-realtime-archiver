@@ -93,3 +93,9 @@ variable "agencies_secret_id" {
   type        = string
   default     = "agencies-config"
 }
+
+variable "dns_zone_name" {
+  description = "Name of the externally-managed Cloud DNS zone for gtfsrt.io"
+  type        = string
+  default     = "gtfsrt-io"
+}
