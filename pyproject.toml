@@ -41,6 +41,9 @@ dev-archiver = [
 ]
 dagster = [
     "dagster==1.12.8",
+    "google-cloud-storage>=3.7.0",
+    "gtfs-realtime-bindings>=2.0.0",
+    "pyarrow>=22.0.0",
 ]
 dev-dagster = [
     "dagster-webserver",
@@ -55,6 +58,7 @@ dev = [
     { include-group = "dev-dagster" },
     "mypy>=1.19.1",
     "ruff>=0.14.10",
+    "types-protobuf>=6.32.1.20251210",
 ]
 
 [tool.ruff]
@@ -77,6 +81,9 @@ ignore = [
     "E501",   # line too long (handled by formatter)
 ]
 
+[tool.ruff.lint.isort]
+known-first-party = ["gtfs_rt_archiver", "dagster_pipeline"]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true
@@ -89,6 +96,10 @@ disallow_incomplete_defs = true
 module = [
     "gcloud.*",
     "apscheduler.*",
+    "google.cloud.*",
+    "google.transit.*",
+    "pyarrow",
+    "pyarrow.*",
 ]
 ignore_missing_imports = true
 

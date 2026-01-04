@@ -34,16 +34,31 @@ GTFS-RT Archiver is a single-container Python service designed to:
 │  Prometheus metrics + Health endpoints  │
 └─────────────────────────────────────────┘
            ↓
-    Google Cloud Storage
-    (Hive-partitioned archives)
+    GCS: protobuf.gtfsrt.io
+    (Hive-partitioned protobuf archives)
+           ↓
+┌─────────────────────────────────────────┐
+│    Dagster Pipeline                     │
+├─────────────────────────────────────────┤
+│  Daily compaction (2am UTC)             │
+│        ↓                                │
+│  Parse protobuf → PyArrow tables        │
+│        ↓                                │
+│  Write Parquet (Snappy compression)     │
+└─────────────────────────────────────────┘
+           ↓
+    GCS: parquet.gtfsrt.io
+    (Hive-partitioned parquet files)
 ```
 
 See [DESIGN.md](DESIGN.md) for detailed architecture and implementation notes.
 
 ### Storage Layout
 
+**Protobuf Archives** (raw snapshots):
+
 ```
-gs://{bucket}/
+gs://protobuf.gtfsrt.io/
 └── {feed_type}/
     └── date={YYYY-MM-DD}/
         └── hour={YYYY-MM-DDTHH:00:00Z}/
@@ -52,7 +67,17 @@ gs://{bucket}/
                 └── {timestamp}.meta  # Metadata JSON
 ```
 
-This structure enables efficient queries in BigQuery or Athena by partitioning on feed type, date, and hour. The `base64url` partition uniquely identifies each feed by its base URL.
+**Parquet Files** (compacted daily):
+
+```
+gs://parquet.gtfsrt.io/
+└── {feed_type}/
+    └── date={YYYY-MM-DD}/
+        └── base64url={encoded-url}/
+            └── data.parquet         # All records for the day
+```
+
+The `base64url` partition uniquely identifies each feed by its URL. Parquet files are compacted daily for efficient analytics queries.
 
 ## Developer Quickstart
 
@@ -78,7 +103,7 @@ cp agencies.example.yaml agencies.yaml
 # Edit agencies.yaml with your agency/feed URLs
 
 # Set required environment variables
-export GCS_BUCKET=my-test-bucket
+export GCS_BUCKET_RT_PROTOBUF=my-test-bucket
 ```
 
 ### Development Commands
@@ -104,7 +129,7 @@ docker build -t gtfs-rt-archiver .
 docker run \
   -v ~/.config/gcloud:/root/.config/gcloud:ro \
   -e GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json \
-  -e GCS_BUCKET=my-bucket \
+  -e GCS_BUCKET_RT_PROTOBUF=my-bucket \
   -p 8080:8080 \
   gtfs-rt-archiver
 ```
@@ -123,18 +148,28 @@ sed -i "s|DAGSTER_HOME=/path/to/gtfs-realtime-archiver/.dagster_home|DAGSTER_HOM
 docker compose up --build
 
 # In another terminal, verify feeds are being archived
-ls -la data/test-bucket/
+ls -la data/rt-protobuf/
 curl -s http://localhost:8080/health | jq
-curl -s http://localhost:4443/storage/v1/b/test-bucket/o | jq '.items | length'
+
+# Start Dagster UI for pipeline development
+uv run dg dev
+# Open http://localhost:3000
 ```
 
-The `data/` directory contains archived feeds in Hive-partitioned structure:
+The `data/` directory maps to fake GCS buckets:
 
 ```
-data/test-bucket/
-├── service_alerts/agency=septa/dt=2026-01-02/hour=03/...
-├── trip_updates/agency=septa/dt=2026-01-02/hour=03/...
-└── vehicle_positions/agency=septa/dt=2026-01-02/hour=03/...
+data/
+├── rt-protobuf/                    # Raw protobuf archives
+│   └── vehicle_positions/
+│       └── date=2026-01-02/
+│           └── hour=2026-01-02T03:00:00Z/
+│               └── base64url=.../
+└── rt-parquet/                     # Compacted parquet (after Dagster run)
+    └── vehicle_positions/
+        └── date=2026-01-02/
+            └── base64url=.../
+                └── data.parquet
 ```
 
 ## Configuration
@@ -143,7 +178,8 @@ data/test-bucket/
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `GCS_BUCKET` | Yes | - | Target GCS bucket name |
+| `GCS_BUCKET_RT_PROTOBUF` | Yes | - | GCS bucket for raw protobuf archives |
+| `GCS_BUCKET_RT_PARQUET` | Dagster | - | GCS bucket for compacted parquet files |
 | `GCP_PROJECT_ID` | If auth used | - | GCP project ID for Secret Manager |
 | `CONFIG_PATH` | No | `./agencies.yaml` | Path to agencies configuration file |
 | `MAX_CONCURRENT` | No | `100` | Maximum concurrent fetches |
@@ -152,6 +188,8 @@ data/test-bucket/
 | `LOG_FORMAT` | No | `json` | Log format (json or text) |
 | `SHARD_INDEX` | No | `0` | Shard index for multi-instance deployments |
 | `TOTAL_SHARDS` | No | `1` | Total number of shards |
+| `DAGSTER_HOME` | Dagster | - | Dagster home directory (absolute path) |
+| `STORAGE_EMULATOR_HOST` | Local dev | - | Fake GCS server URL for local development |
 
 ### Agency Configuration (`agencies.yaml`)
 
@@ -255,6 +293,46 @@ Key metrics exposed on `/metrics`:
 - `gtfs_rt_active_feeds` - Number of feeds being processed
 
 All metrics include `feed_id`, `feed_type`, and `agency` labels.
+
+## Dagster Pipeline
+
+The Dagster pipeline compacts raw protobuf archives into daily Parquet files for efficient analytics.
+
+### Assets
+
+| Asset | Description |
+|-------|-------------|
+| `vehicle_positions_parquet` | Vehicle position records for a day |
+| `trip_updates_parquet` | Trip update records (denormalized by stop_time_update) |
+| `service_alerts_parquet` | Service alert records (denormalized by informed_entity) |
+
+### Schedule
+
+Assets are materialized daily at 2am UTC, processing the previous day's data.
+
+### Commands
+
+```bash
+# Start Dagster UI
+uv run dg dev
+
+# List all definitions
+uv run dg list defs
+
+# Validate definitions load correctly
+uv run dg check defs
+
+# Manually materialize an asset for a specific date
+uv run dg launch --assets vehicle_positions_parquet --partition 2026-01-01
+```
+
+### Environment
+
+Required for Dagster:
+
+- `DAGSTER_HOME`: Absolute path to Dagster home directory
+- `GCS_BUCKET_RT_PROTOBUF`: Source bucket with protobuf archives
+- `GCS_BUCKET_RT_PARQUET`: Target bucket for parquet output
 
 ## License
 

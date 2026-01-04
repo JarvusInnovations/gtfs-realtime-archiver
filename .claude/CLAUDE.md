@@ -77,6 +77,18 @@ gtfs-realtime-archiver/
 - `dagster` / `dev-dagster` - deps for dagster_pipeline
 - `dev` - aggregate group (all of the above + mypy, ruff)
 
+**Managing Dependencies**:
+
+**CRITICAL**: ALWAYS use `uv add --group <group> <package>`. NEVER edit pyproject.toml directly.
+
+Why: `uv add` resolves the latest compatible version and updates uv.lock atomically. Manual edits may install outdated versions or create lock inconsistencies.
+
+**Examples**:
+
+- `uv add --group archiver httpx`
+- `uv add --group dev-archiver pytest-asyncio`
+- `uv add --group dagster dagster-gcp`
+
 **Key Patterns**:
 
 - All code uses async/await (httpx, gcloud-aio-storage, aiohttp)
@@ -194,3 +206,37 @@ tofu apply -concise -target=google_storage_bucket.archive
 ```
 
 **State**: Stored in `gs://gtfs-archiver-tf-state`
+
+## Dagster (Pipeline)
+
+**Directory**: `src/dagster_pipeline/`
+
+**Commands**:
+
+```bash
+# Start Dagster UI (dev server)
+uv run dg dev
+
+# List all definitions (assets, schedules, resources)
+uv run dg list defs
+
+# Validate definitions load correctly
+uv run dg check defs
+
+# Launch a run for specific assets with partition
+uv run dg launch --assets vehicle_positions_parquet --partition 2026-01-01
+
+# Launch all assets for a partition
+uv run dg launch --partition 2026-01-01
+```
+
+**Environment Setup**:
+
+- Set `DAGSTER_HOME` to an absolute path (required)
+- Required env vars: `GCS_BUCKET_RT_PROTOBUF`, `GCS_BUCKET_RT_PARQUET`, `GCP_PROJECT_ID`
+
+**Local Development**:
+
+- UI available at `http://localhost:3000` when running `dg dev`
+- Logs stored in `.dagster_home/storage/*/compute_logs/`
+- Run history in `.dagster_home/history/`
