@@ -17,6 +17,7 @@ services:
     environment:
       - STORAGE_EMULATOR_HOST=http://fake-gcs:4443
       - GOOGLE_APPLICATION_CREDENTIALS=/config/gcp-service-account.json
+      - CONFIG_PATH=/app/agencies.yaml
     volumes:
       - ./agencies.yaml:/app/agencies.yaml:ro
       - ${GOOGLE_APPLICATION_CREDENTIALS}:/config/gcp-service-account.json:ro
