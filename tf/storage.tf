@@ -77,3 +77,10 @@ resource "google_storage_bucket" "parquet" {
     enabled = false
   }
 }
+
+# Public read access for parquet bucket
+resource "google_storage_bucket_iam_member" "parquet_public_read" {
+  bucket = google_storage_bucket.parquet.name
+  role   = "roles/storage.objectViewer"
+  member = "allUsers"
+}
