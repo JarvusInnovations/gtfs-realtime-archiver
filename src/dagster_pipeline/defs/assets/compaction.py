@@ -18,7 +18,11 @@ from dagster_pipeline.defs.assets.schemas import (
     TRIP_UPDATES_SCHEMA,
     VEHICLE_POSITIONS_SCHEMA,
 )
-from dagster_pipeline.defs.partitions import compaction_partitions
+from dagster_pipeline.defs.partitions import (
+    service_alerts_partitions,
+    trip_updates_partitions,
+    vehicle_positions_partitions,
+)
 from dagster_pipeline.defs.resources import GCSResource
 
 
@@ -523,7 +527,7 @@ def compact_single_feed(
 
 
 @dg.asset(
-    partitions_def=compaction_partitions,
+    partitions_def=vehicle_positions_partitions,
     compute_kind="pyarrow",
     group_name="compaction",
     description="Compacted vehicle positions data in Parquet format",
@@ -543,7 +547,7 @@ def vehicle_positions_parquet(
 
 
 @dg.asset(
-    partitions_def=compaction_partitions,
+    partitions_def=trip_updates_partitions,
     compute_kind="pyarrow",
     group_name="compaction",
     description="Compacted trip updates data in Parquet format",
@@ -563,7 +567,7 @@ def trip_updates_parquet(
 
 
 @dg.asset(
-    partitions_def=compaction_partitions,
+    partitions_def=service_alerts_partitions,
     compute_kind="pyarrow",
     group_name="compaction",
     description="Compacted service alerts data in Parquet format",

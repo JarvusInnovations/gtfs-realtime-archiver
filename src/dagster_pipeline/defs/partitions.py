@@ -11,19 +11,37 @@ daily_partitions = dg.DailyPartitionsDefinition(
     timezone="UTC",
 )
 
-# Dynamic partitions for feeds.
-# Partition keys are stripped URLs (e.g., "gtfs.example.com/feed/rt").
-# Feeds are discovered and added at runtime by the feed_discovery_sensor.
-feed_partitions = dg.DynamicPartitionsDefinition(name="feed")
+# Per-type dynamic partitions for feeds.
+# Each feed type has its own partition definition so feeds only appear
+# on assets that have data for that type.
+# Partition keys are stripped URLs (e.g., "gtfs.example.com/feed/rt" for HTTPS,
+# "~legacy.example.com/feed" for HTTP).
+vehicle_positions_feeds = dg.DynamicPartitionsDefinition(name="vehicle_positions_feeds")
+trip_updates_feeds = dg.DynamicPartitionsDefinition(name="trip_updates_feeds")
+service_alerts_feeds = dg.DynamicPartitionsDefinition(name="service_alerts_feeds")
 
-# Multi-dimensional partition combining date and feed.
+# Per-type multi-dimensional partitions combining date and feed.
 # Each date|feed combination is a separate partition, enabling:
 # - Per-feed failure isolation
 # - Targeted backfills for specific feeds/dates
 # - Feed-level monitoring in the Dagster UI
-compaction_partitions = dg.MultiPartitionsDefinition(
+vehicle_positions_partitions = dg.MultiPartitionsDefinition(
     {
         "date": daily_partitions,
-        "feed": feed_partitions,
+        "feed": vehicle_positions_feeds,
+    }
+)
+
+trip_updates_partitions = dg.MultiPartitionsDefinition(
+    {
+        "date": daily_partitions,
+        "feed": trip_updates_feeds,
+    }
+)
+
+service_alerts_partitions = dg.MultiPartitionsDefinition(
+    {
+        "date": daily_partitions,
+        "feed": service_alerts_feeds,
     }
 )

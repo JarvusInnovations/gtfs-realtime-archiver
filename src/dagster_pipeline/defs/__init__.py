@@ -10,7 +10,14 @@ from dagster_pipeline.defs.assets import (
     vehicle_positions_parquet,
 )
 from dagster_pipeline.defs.resources import GCSResource
-from dagster_pipeline.defs.schedules import compaction_schedule
+from dagster_pipeline.defs.schedules import (
+    service_alerts_compaction_job,
+    service_alerts_schedule,
+    trip_updates_compaction_job,
+    trip_updates_schedule,
+    vehicle_positions_compaction_job,
+    vehicle_positions_schedule,
+)
 from dagster_pipeline.defs.sensors import feed_discovery_sensor
 
 defs = dg.Definitions(
@@ -19,8 +26,15 @@ defs = dg.Definitions(
         trip_updates_parquet,
         service_alerts_parquet,
     ],
+    jobs=[
+        vehicle_positions_compaction_job,
+        trip_updates_compaction_job,
+        service_alerts_compaction_job,
+    ],
     schedules=[
-        compaction_schedule,
+        vehicle_positions_schedule,
+        trip_updates_schedule,
+        service_alerts_schedule,
     ],
     sensors=[
         feed_discovery_sensor,

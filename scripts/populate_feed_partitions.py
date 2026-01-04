@@ -2,7 +2,7 @@
 """One-time migration script to populate feed partitions from existing GCS data.
 
 This script scans the protobuf bucket for existing feeds and adds them
-to Dagster's dynamic partitions store.
+to Dagster's per-type dynamic partitions store.
 
 Usage:
     # Scan last 7 days (default)
@@ -37,13 +37,20 @@ from dagster_pipeline.defs.assets.compaction import (
     url_to_partition_key,
 )
 
+# Feed types and their partition names
+FEED_TYPES = [
+    ("vehicle_positions", "vehicle_positions_feeds"),
+    ("trip_updates", "trip_updates_feeds"),
+    ("service_alerts", "service_alerts_feeds"),
+]
 
-def discover_all_feeds(
+
+def discover_feeds_by_type(
     client: storage.Client,
     bucket_name: str,
     days: int,
-) -> dict[str, set[str]]:
-    """Discover all unique feeds from GCS across multiple days.
+) -> dict[str, dict[str, set[str]]]:
+    """Discover feeds from GCS, organized by feed type.
 
     Args:
         client: GCS client
@@ -51,32 +58,30 @@ def discover_all_feeds(
         days: Number of days to scan
 
     Returns:
-        Dict mapping stripped URL to set of dates where it was found
+        Dict mapping feed_type to (dict mapping partition_key to set of dates)
     """
-    feeds_by_date: dict[str, set[str]] = {}
+    feeds_by_type: dict[str, dict[str, set[str]]] = {feed_type: {} for feed_type, _ in FEED_TYPES}
 
     for days_ago in range(days):
         date = (datetime.now(UTC) - timedelta(days=days_ago)).strftime("%Y-%m-%d")
         print(f"  Scanning {date}...", end=" ", flush=True)
 
-        date_feeds: set[str] = set()
-        for feed_type in ["vehicle_positions", "trip_updates", "service_alerts"]:
+        day_total = 0
+        for feed_type, _ in FEED_TYPES:
             base64_feeds = discover_feed_urls(client, bucket_name, feed_type, date)
             for b64 in base64_feeds:
                 try:
                     partition_key = url_to_partition_key(decode_base64url(b64))
-                    date_feeds.add(partition_key)
+                    if partition_key not in feeds_by_type[feed_type]:
+                        feeds_by_type[feed_type][partition_key] = set()
+                    feeds_by_type[feed_type][partition_key].add(date)
+                    day_total += 1
                 except Exception as e:
                     print(f"\n    Warning: Failed to decode {b64}: {e}")
 
-        print(f"found {len(date_feeds)} feeds")
+        print(f"found {day_total} feed instances")
 
-        for feed in date_feeds:
-            if feed not in feeds_by_date:
-                feeds_by_date[feed] = set()
-            feeds_by_date[feed].add(date)
-
-    return feeds_by_date
+    return feeds_by_type
 
 
 def main() -> None:
@@ -119,15 +124,19 @@ def main() -> None:
 
     # Discover feeds from GCS
     print("Discovering feeds from GCS:")
-    feeds_by_date = discover_all_feeds(client, bucket_name, args.days)
+    feeds_by_type = discover_feeds_by_type(client, bucket_name, args.days)
 
-    if not feeds_by_date:
+    total_feeds = sum(len(feeds) for feeds in feeds_by_type.values())
+    if total_feeds == 0:
         print("\nNo feeds found in GCS data.")
         sys.exit(0)
 
-    print(f"\nDiscovered {len(feeds_by_date)} unique feeds:")
-    for feed, dates in sorted(feeds_by_date.items()):
-        print(f"  - {feed} (seen on {len(dates)} days)")
+    print(f"\nDiscovered feeds by type:")
+    for feed_type, partition_name in FEED_TYPES:
+        feeds = feeds_by_type[feed_type]
+        print(f"\n  {feed_type} ({len(feeds)} feeds):")
+        for feed, dates in sorted(feeds.items()):
+            print(f"    - {feed} (seen on {len(dates)} days)")
 
     if args.dry_run:
         print("\n[DRY RUN] Would add the above feeds to Dagster dynamic partitions.")
@@ -139,28 +148,36 @@ def main() -> None:
 
     instance = DagsterInstance.get()
 
-    # Get existing partitions
-    existing = set(instance.get_dynamic_partitions("feed"))
-    new_feeds = set(feeds_by_date.keys()) - existing
+    total_added = 0
+    for feed_type, partition_name in FEED_TYPES:
+        feeds = feeds_by_type[feed_type]
+        if not feeds:
+            print(f"  {feed_type}: no feeds to add")
+            continue
 
-    if not new_feeds:
-        print("All feeds already registered. Nothing to add.")
-        sys.exit(0)
+        # Get existing partitions for this type
+        existing = set(instance.get_dynamic_partitions(partition_name))
+        new_feeds = set(feeds.keys()) - existing
 
-    print(f"  {len(existing)} feeds already registered")
-    print(f"  {len(new_feeds)} new feeds to add")
+        if not new_feeds:
+            print(f"  {feed_type}: all {len(existing)} feeds already registered")
+            continue
 
-    # Add new partitions
-    instance.add_dynamic_partitions(
-        partitions_def_name="feed",
-        partition_keys=list(new_feeds),
-    )
+        print(f"  {feed_type}: {len(existing)} existing, adding {len(new_feeds)} new")
 
-    print(f"\nSuccessfully added {len(new_feeds)} feed partitions!")
+        # Add new partitions
+        instance.add_dynamic_partitions(
+            partitions_def_name=partition_name,
+            partition_keys=list(new_feeds),
+        )
+        total_added += len(new_feeds)
+
+    print(f"\nSuccessfully added {total_added} feed partitions!")
     print("\nNext steps:")
     print("  1. Enable the feed_discovery_sensor in Dagster UI")
     print(
-        "  2. Or run: uv run dg launch --assets vehicle_positions_parquet --partition '2026-01-03|example.com/feed'"
+        "  2. Or run: uv run dg launch --assets vehicle_positions_parquet "
+        "--partition '2026-01-03|example.com/feed'"
     )
 
 

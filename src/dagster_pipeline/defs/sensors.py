@@ -1,9 +1,9 @@
 """Sensors for the compaction pipeline."""
 
 from datetime import UTC, datetime, timedelta
+from typing import NamedTuple
 
 import dagster as dg
-from google.cloud import storage
 
 from dagster_pipeline.defs.assets import (
     service_alerts_parquet,
@@ -15,30 +15,44 @@ from dagster_pipeline.defs.assets.compaction import (
     discover_feed_urls,
     url_to_partition_key,
 )
-from dagster_pipeline.defs.partitions import feed_partitions
+from dagster_pipeline.defs.partitions import (
+    service_alerts_feeds,
+    trip_updates_feeds,
+    vehicle_positions_feeds,
+)
 from dagster_pipeline.defs.resources import GCSResource
 
 
-def discover_all_feeds_for_date(
-    client: storage.Client,
-    bucket_name: str,
-    date: str,
-) -> set[str]:
-    """Discover all unique feeds across all feed types for a date.
+class FeedTypeConfig(NamedTuple):
+    """Configuration for a feed type."""
 
-    Args:
-        client: GCS client
-        bucket_name: Source bucket name
-        date: Date string in YYYY-MM-DD format
+    feed_type: str  # GCS path component
+    partition_name: str  # Name of the dynamic partition definition
+    partition_def: dg.DynamicPartitionsDefinition  # For building add requests
+    asset: dg.AssetsDefinition
 
-    Returns:
-        Set of base64url-encoded feed URLs found for this date
-    """
-    all_feeds: set[str] = set()
-    for feed_type in ["vehicle_positions", "trip_updates", "service_alerts"]:
-        feeds = discover_feed_urls(client, bucket_name, feed_type, date)
-        all_feeds.update(feeds)
-    return all_feeds
+
+# Configuration mapping feed types to their partitions and assets
+FEED_TYPE_CONFIGS = [
+    FeedTypeConfig(
+        "vehicle_positions",
+        "vehicle_positions_feeds",
+        vehicle_positions_feeds,
+        vehicle_positions_parquet,
+    ),
+    FeedTypeConfig(
+        "trip_updates",
+        "trip_updates_feeds",
+        trip_updates_feeds,
+        trip_updates_parquet,
+    ),
+    FeedTypeConfig(
+        "service_alerts",
+        "service_alerts_feeds",
+        service_alerts_feeds,
+        service_alerts_parquet,
+    ),
+]
 
 
 @dg.sensor(
@@ -57,8 +71,8 @@ def feed_discovery_sensor(
     """Discover new feeds from GCS and add to dynamic partitions.
 
     This sensor:
-    1. Scans GCS for feeds in yesterday's data
-    2. Adds any new feeds to the dynamic partition
+    1. Scans GCS for feeds in yesterday's data, per feed type
+    2. Adds any new feeds to the type-specific dynamic partition
     3. Triggers runs for discovered feed+date combinations
 
     Note: Starts in STOPPED status for safe rollout. Enable after populating
@@ -69,45 +83,51 @@ def feed_discovery_sensor(
     # Process yesterday's data (same logic as schedule)
     yesterday = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%d")
 
-    # Discover feeds in GCS (returns base64url-encoded)
-    discovered_base64 = discover_all_feeds_for_date(client, gcs.protobuf_bucket, yesterday)
+    run_requests: list[dg.RunRequest] = []
+    dynamic_partitions_requests: list[dg.AddDynamicPartitionsRequest] = []
 
-    if not discovered_base64:
-        context.log.info(f"No feeds found for {yesterday}")
-        return dg.SensorResult(
-            run_requests=[],
-            dynamic_partitions_requests=[],
+    # Process each feed type separately
+    for config in FEED_TYPE_CONFIGS:
+        # Discover feeds for this type (returns base64url-encoded)
+        discovered_base64 = discover_feed_urls(
+            client, gcs.protobuf_bucket, config.feed_type, yesterday
         )
 
-    # Convert to partition keys (HTTPS clean, HTTP with ~ prefix)
-    discovered_keys = {url_to_partition_key(decode_base64url(b64)) for b64 in discovered_base64}
+        if not discovered_base64:
+            context.log.info(f"No {config.feed_type} feeds found for {yesterday}")
+            continue
 
-    # Get currently known feeds
-    # Use literal "feed" to match feed_partitions.name for type safety
-    known_feeds = set(context.instance.get_dynamic_partitions("feed"))
-    new_feeds = discovered_keys - known_feeds
+        # Convert to partition keys (HTTPS clean, HTTP with ~ prefix)
+        discovered_keys = {url_to_partition_key(decode_base64url(b64)) for b64 in discovered_base64}
 
-    context.log.info(
-        f"Discovered {len(discovered_keys)} feeds for {yesterday}, "
-        f"{len(new_feeds)} are new, {len(known_feeds)} already known"
-    )
+        # Get currently known feeds for this type
+        known_feeds = set(context.instance.get_dynamic_partitions(config.partition_name))
+        new_feeds = discovered_keys - known_feeds
 
-    # Build dynamic partition add request for new feeds
-    dynamic_partitions_requests = []
-    if new_feeds:
-        dynamic_partitions_requests.append(feed_partitions.build_add_request(list(new_feeds)))
+        context.log.info(
+            f"Discovered {len(discovered_keys)} {config.feed_type} feeds for {yesterday}, "
+            f"{len(new_feeds)} are new, {len(known_feeds)} already known"
+        )
 
-    # Create run requests for all discovered feeds for yesterday
-    # This ensures we process any feeds that may have failed previously
-    run_requests = []
-    for feed_key in discovered_keys:
-        multi_key = dg.MultiPartitionKey({"date": yesterday, "feed": feed_key})
-        run_requests.append(
-            dg.RunRequest(
-                run_key=f"compaction_{yesterday}_{feed_key}",
-                partition_key=multi_key,
+        # Add new feeds to this type's partition
+        if new_feeds:
+            dynamic_partitions_requests.append(
+                config.partition_def.build_add_request(list(new_feeds))
             )
-        )
+
+        # Create run requests for this type's asset
+        for feed_key in discovered_keys:
+            multi_key = dg.MultiPartitionKey({"date": yesterday, "feed": feed_key})
+            run_requests.append(
+                dg.RunRequest(
+                    run_key=f"{config.feed_type}_{yesterday}_{feed_key}",
+                    asset_selection=[config.asset.key],
+                    partition_key=multi_key,
+                )
+            )
+
+    if not run_requests:
+        context.log.info(f"No feeds found for {yesterday}")
 
     return dg.SensorResult(
         run_requests=run_requests,
