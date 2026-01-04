@@ -420,7 +420,7 @@ def compact_feed_type(
             continue
 
         # Stream records to parquet using batched writes to reduce memory usage
-        output_path = f"{feed_type}/date={date}/feed_url={feed_url_encoded}/data.parquet"
+        output_path = f"{feed_type}/date={date}/base64url={feed_url_encoded}/data.parquet"
         buffer = io.BytesIO()
         writer: pq.ParquetWriter | None = None
         feed_records = 0
