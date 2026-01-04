@@ -41,6 +41,9 @@ dev-archiver = [
 ]
 dagster = [
     "dagster==1.12.8",
+    "google-cloud-storage>=3.7.0",
+    "gtfs-realtime-bindings>=2.0.0",
+    "pyarrow>=22.0.0",
 ]
 dev-dagster = [
     "dagster-webserver",
