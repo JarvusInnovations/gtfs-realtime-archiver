@@ -1,0 +1,142 @@
+# GTFS-RT Archiver Agency Configuration
+# Copy this file to agencies.yaml and customize for your deployment.
+
+# Default settings applied to all feeds unless overridden
+defaults:
+  timeout_seconds: 30
+  retry:
+    max_attempts: 3         # Number of retry attempts
+    backoff_base: 1.0       # Initial backoff in seconds
+    backoff_max: 10.0       # Maximum backoff in seconds
+  # Per-feed-type interval defaults (in seconds)
+  intervals:
+    vehicle_positions: 20   # Real-time vehicle locations
+    trip_updates: 20        # Predicted arrivals/departures
+    service_alerts: 60      # Service disruption notices (change less frequently)
+
+# Agency definitions
+agencies:
+  # Simple agency without systems
+  - id: actransit
+    name: AC Transit
+    schedule_url: https://api.actransit.org/transit/gtfs/download
+    feeds:
+      - feed_type: vehicle_positions
+        url: https://api.actransit.org/transit/gtfsrt/vehicles
+      - feed_type: trip_updates
+        url: https://api.actransit.org/transit/gtfsrt/tripupdates
+      - feed_type: service_alerts
+        url: https://api.actransit.org/transit/gtfsrt/alerts
+
+  # Agency with multiple systems (bus vs rail)
+  - id: septa
+    name: SEPTA
+    systems:
+      - id: bus
+        name: Bus
+        schedule_url: https://www3.septa.org/developer/google_bus.zip
+        feeds:
+          - feed_type: vehicle_positions
+            url: https://www3.septa.org/gtfsrt/septa-pa-us/Vehicle/rtVehiclePosition.pb
+          - feed_type: trip_updates
+            url: https://www3.septa.org/gtfsrt/septa-pa-us/Trip/rtTripUpdates.pb
+          - feed_type: service_alerts
+            url: https://www3.septa.org/gtfsrt/septa-pa-us/Service/rtServiceAlerts.pb
+
+      - id: rail
+        name: Regional Rail
+        schedule_url: https://www3.septa.org/developer/google_rail.zip
+        feeds:
+          - feed_type: vehicle_positions
+            url: https://www3.septa.org/gtfsrt/septarail-pa-us/Vehicle/rtVehiclePosition.pb
+          - feed_type: trip_updates
+            url: https://www3.septa.org/gtfsrt/septarail-pa-us/Trip/rtTripUpdates.pb
+          - feed_type: service_alerts
+            url: https://www3.septa.org/gtfsrt/septarail-pa-us/Service/rtServiceAlerts.pb
+
+  # Simple agency
+  - id: metrolink
+    name: Metrolink
+    schedule_url: https://metrolinktrains.com/gtfs
+    feeds:
+      - feed_type: vehicle_positions
+        url: https://metrolink-gtfsrt.gbsdigital.us/feed/gtfsrt-vp/1
+      - feed_type: trip_updates
+        url: https://metrolink-gtfsrt.gbsdigital.us/feed/gtfsrt-tu/1
+      - feed_type: service_alerts
+        url: https://metrolink-gtfsrt.gbsdigital.us/feed/gtfsrt-sa/1
+
+  # Example: Agency with query parameter authentication (via GCP Secret Manager)
+  # The secret value will be fetched from Secret Manager and added as a query param
+  # - id: vta
+  #   name: Santa Clara VTA
+  #   schedule_url: https://data.vta.org/gtfs/google_transit.zip
+  #   auth:
+  #     type: query                   # Auth via query parameter
+  #     secret_name: vta-511-api-key  # Secret name in GCP Secret Manager
+  #     key: api_key                  # Query parameter name
+  #   feeds:
+  #     - feed_type: vehicle_positions
+  #       url: https://api.511.org/transit/VehiclePositions?agency=SC
+  #     - feed_type: trip_updates
+  #       url: https://api.511.org/transit/TripUpdates?agency=SC
+  #     - feed_type: service_alerts
+  #       url: https://api.511.org/transit/servicealerts?agency=SC
+
+  # Example: Agency with header authentication
+  # Auth configured at agency level is inherited by all feeds
+  # - id: mta
+  #   name: MTA New York
+  #   auth:
+  #     type: header                  # Auth via HTTP header
+  #     secret_name: mta-api-key      # Secret name in GCP Secret Manager
+  #     key: x-api-key                # Header name
+  #   feeds:
+  #     - feed_type: vehicle_positions
+  #       url: https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs
+  #     - feed_type: trip_updates
+  #       url: https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-ace
+
+  # Example: Agency with templated authentication (e.g., Bearer token)
+  # Use ${SECRET} placeholder to embed the secret within a value
+  # - id: example-bearer
+  #   name: Example Bearer Auth Agency
+  #   auth:
+  #     type: header
+  #     secret_name: example-token
+  #     key: Authorization
+  #     value: "Bearer ${SECRET}"     # ${SECRET} is replaced with the resolved secret
+  #   feeds:
+  #     - feed_type: vehicle_positions
+  #       url: https://api.example.com/gtfs-rt/vehicles
+
+  # Example: Per-feed authentication override
+  # Feed-level auth overrides agency-level auth
+  # - id: mixed-auth
+  #   name: Mixed Auth Agency
+  #   auth:
+  #     type: header
+  #     secret_name: agency-default-key
+  #     key: x-api-key
+  #   feeds:
+  #     - feed_type: vehicle_positions
+  #       url: https://api.example.com/vehicles
+  #       # Uses agency auth (header: x-api-key)
+  #     - feed_type: trip_updates
+  #       url: https://api.example.com/trips
+  #       auth:
+  #         type: query
+  #         secret_name: special-trips-key
+  #         key: token
+  #       # Overrides with feed-specific query auth
+
+  # Example: Per-feed interval override
+  # - id: custom-intervals
+  #   name: Custom Intervals Agency
+  #   feeds:
+  #     - feed_type: vehicle_positions
+  #       url: https://api.example.com/vehicles
+  #       interval_seconds: 10        # Override default (20s) with faster polling
+  #     - feed_type: service_alerts
+  #       url: https://api.example.com/alerts
+  #       interval_seconds: 300       # Override default (60s) with slower polling

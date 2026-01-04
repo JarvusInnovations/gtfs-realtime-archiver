@@ -3,6 +3,7 @@
 ## Project Overview
 
 See [README.md](../README.md) for complete project documentation including:
+
 - Architecture and design philosophy
 - Developer quickstart and setup
 - Configuration reference
@@ -60,11 +61,12 @@ gtfs-realtime-archiver/
 ├── pyproject.toml          # Project config, dependencies, tool settings
 ├── uv.lock                 # Dependency lockfile
 ├── Dockerfile              # Multi-stage container build
-├── feeds.example.yaml      # Example feed configuration
+├── agencies.example.yaml   # Example agency configuration
 └── .tool-versions          # asdf version pins
 ```
 
 **Key Patterns**:
+
 - All code uses async/await (httpx, gcloud-aio-storage, aiohttp)
 - Type hints enforced via mypy strict mode
 - Pydantic for all configuration and data validation
@@ -75,6 +77,7 @@ gtfs-realtime-archiver/
 This project uses **Conventional Commits** with components:
 
 **Commit Types** (only use these 5):
+
 - `feat` - New features
 - `fix` - Bug fixes
 - `chore` - Maintenance (dependencies, config, tooling)
@@ -82,6 +85,7 @@ This project uses **Conventional Commits** with components:
 - `docs` - Documentation updates
 
 **Components** (optional scope):
+
 - `archiver` - Core application code
 - `tf` - Infrastructure/Terraform
 - `ci` - GitHub Actions workflows
@@ -91,6 +95,7 @@ This project uses **Conventional Commits** with components:
 **Format**: `type(component): description`
 
 **Examples**:
+
 - `feat(archiver): add HTTP fetcher with retry logic`
 - `fix(archiver): add async lock to prevent race condition`
 - `chore(deps): add core dependencies`
@@ -102,12 +107,15 @@ This project uses **Conventional Commits** with components:
 ### Commit Guidelines
 
 **Planning**:
+
 - Group related changes into logical, incremental commits
 - Each commit should be a coherent unit of work
 - Prefer multiple small commits over one large commit
 
 **Workflow**:
+
 1. When commands modify the worktree (e.g., `uv add`, `npm install`), commit those changes immediately:
+
    ```
    chore: add tenacity dependency
 
@@ -115,16 +123,19 @@ This project uses **Conventional Commits** with components:
 
    Ran: uv add tenacity
    ```
+
 2. Make manual code changes for the next logical unit
 3. Run tests before committing: `uv run pytest tests/`
 4. Commit with descriptive message
 
 **Quality Checks** (must pass before commit):
+
 - `uv run ruff check src/ tests/` - Linting
 - `uv run mypy src/` - Type checking
 - `uv run pytest tests/` - All tests
 
 **Commit Message Format**:
+
 ```
 type(component): brief description (50 chars or less)
 
@@ -137,6 +148,7 @@ Co-Authored-By: Claude Sonnet 4.5 (1M context) <noreply@anthropic.com>
 ```
 
 **Notes**:
+
 - Component is optional but recommended for clarity
 - Omit component for cross-cutting changes (e.g., `chore: update dependencies`)
 - Use present tense ("add" not "added")
@@ -153,6 +165,7 @@ View commit history: `git log --oneline`
 **Project**: `gtfs-archiver` (GCP)
 
 **Commands** (always use `-concise`):
+
 ```bash
 cd tf/
 tofu init                    # First time / after provider changes
@@ -162,6 +175,7 @@ tofu apply -concise -auto-approve  # Apply without prompt
 ```
 
 **Targeting specific resources**:
+
 ```bash
 tofu apply -concise -target=google_storage_bucket.archive
 ```

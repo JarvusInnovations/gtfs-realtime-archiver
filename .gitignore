@@ -62,8 +62,8 @@ service-account*.json
 logs/
 
 # Local configuration
-feeds.yaml
-!feeds.example.yaml
+agencies.yaml
+!agencies.example.yaml
 
 # OpenTofu / Terraform
 tf/.terraform/

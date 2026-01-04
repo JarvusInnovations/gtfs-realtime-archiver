@@ -31,10 +31,10 @@ resource "google_project_iam_member" "archiver_feed_secrets" {
   }
 }
 
-# Grant access to feeds config secret
-resource "google_secret_manager_secret_iam_member" "archiver_feeds_config" {
+# Grant access to agencies config secret
+resource "google_secret_manager_secret_iam_member" "archiver_agencies_config" {
   project   = var.project_id
-  secret_id = var.feeds_secret_id
+  secret_id = var.agencies_secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.archiver.email}"
 }

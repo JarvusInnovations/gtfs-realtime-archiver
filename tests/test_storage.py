@@ -20,10 +20,12 @@ from gtfs_rt_archiver.storage import (
 def feed_config() -> FeedConfig:
     """Create a basic feed configuration for testing."""
     return FeedConfig(
-        id="test-feed",
-        name="Test Feed",
+        id="test-agency-vehicle-positions",
+        name="Test Agency Vehicle Positions",
         url="https://example.com/feed.pb",
         feed_type="vehicle_positions",
+        agency_id="test-agency",
+        agency_name="Test Agency",
     )
 
 
@@ -31,10 +33,28 @@ def feed_config() -> FeedConfig:
 def feed_config_trip_updates() -> FeedConfig:
     """Create a feed configuration for trip updates."""
     return FeedConfig(
-        id="test-feed-trips",
-        name="Test Feed Trip Updates",
+        id="test-agency-trip-updates",
+        name="Test Agency Trip Updates",
         url="https://api.example.com/feed",
         feed_type="trip_updates",
+        agency_id="test-agency",
+        agency_name="Test Agency",
+    )
+
+
+@pytest.fixture
+def feed_config_with_system() -> FeedConfig:
+    """Create a feed configuration with system context."""
+    return FeedConfig(
+        id="septa-bus-vehicle-positions",
+        name="SEPTA Bus Vehicle Positions",
+        url="https://example.com/feed.pb",
+        feed_type="vehicle_positions",
+        agency_id="septa",
+        agency_name="SEPTA",
+        system_id="bus",
+        system_name="Bus",
+        schedule_url="https://example.com/schedule.zip",
     )
 
 
@@ -162,12 +182,30 @@ class TestGenerateMetadata:
         """Test basic metadata generation."""
         metadata = generate_metadata(feed_config, fetch_result)
 
-        assert metadata["feed_id"] == "test-feed"
+        assert metadata["feed_id"] == "test-agency-vehicle-positions"
+        assert metadata["agency_id"] == "test-agency"
+        assert metadata["agency_name"] == "Test Agency"
+        assert metadata["system_id"] is None
+        assert metadata["system_name"] is None
+        assert metadata["schedule_url"] is None
         assert metadata["url"] == "https://example.com/feed.pb"
         assert metadata["duration_ms"] == 245.5
         assert metadata["response_code"] == 200
         assert metadata["content_length"] == 16
         assert metadata["content_type"] == "application/x-protobuf"
+
+    def test_metadata_with_system(
+        self, feed_config_with_system: FeedConfig, fetch_result: FetchResult
+    ) -> None:
+        """Test metadata generation with system context."""
+        metadata = generate_metadata(feed_config_with_system, fetch_result)
+
+        assert metadata["feed_id"] == "septa-bus-vehicle-positions"
+        assert metadata["agency_id"] == "septa"
+        assert metadata["agency_name"] == "SEPTA"
+        assert metadata["system_id"] == "bus"
+        assert metadata["system_name"] == "Bus"
+        assert metadata["schedule_url"] == "https://example.com/schedule.zip"
 
     def test_headers_filtered(self, feed_config: FeedConfig, fetch_result: FetchResult) -> None:
         """Test that only allowed headers are included."""
