@@ -14,7 +14,7 @@ env:
   IMAGE_NAME: ${{ github.repository }}
   GCP_PROJECT_ID: gtfs-archiver
   GCP_REGION: us-central1
-  GCS_BUCKET: gtfs-archiver-data
+  GCS_BUCKET_RT_PROTOBUF: gtfs-archiver-data
   SERVICE_NAME: gtfs-rt-archiver
 
 jobs:
@@ -130,7 +130,7 @@ jobs:
         run: |
           tofu plan -concise \
             -var="project_id=${{ env.GCP_PROJECT_ID }}" \
-            -var="bucket_name=${{ env.GCS_BUCKET }}" \
+            -var="bucket_name=${{ env.GCS_BUCKET_RT_PROTOBUF }}" \
             -var="container_image=${{ steps.version.outputs.image }}" \
             -out=tfplan
 

@@ -46,7 +46,7 @@ resource "google_cloud_run_v2_service" "archiver" {
         value = "/config/agencies.yaml"
       }
       env {
-        name  = "GCS_BUCKET"
+        name  = "GCS_BUCKET_RT_PROTOBUF"
         value = google_storage_bucket.archive.name
       }
       env {

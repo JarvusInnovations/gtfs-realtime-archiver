@@ -14,8 +14,8 @@ class GCSResource(dg.ConfigurableResource):  # type: ignore[type-arg]
     """
 
     project_id: str | None = None
-    source_bucket: str = Field(description="Bucket containing raw protobuf archives")
-    output_bucket: str = Field(description="Bucket for compacted parquet output")
+    protobuf_bucket: str = Field(description="Bucket containing raw GTFS-RT protobuf archives")
+    parquet_bucket: str = Field(description="Bucket for compacted GTFS-RT parquet files")
 
     def get_client(self) -> storage.Client:
         """Get a GCS client instance."""

@@ -78,7 +78,7 @@ cp agencies.example.yaml agencies.yaml
 # Edit agencies.yaml with your agency/feed URLs
 
 # Set required environment variables
-export GCS_BUCKET=my-test-bucket
+export GCS_BUCKET_RT_PROTOBUF=my-test-bucket
 ```
 
 ### Development Commands
@@ -104,7 +104,7 @@ docker build -t gtfs-rt-archiver .
 docker run \
   -v ~/.config/gcloud:/root/.config/gcloud:ro \
   -e GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json \
-  -e GCS_BUCKET=my-bucket \
+  -e GCS_BUCKET_RT_PROTOBUF=my-bucket \
   -p 8080:8080 \
   gtfs-rt-archiver
 ```
@@ -143,7 +143,7 @@ data/test-bucket/
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `GCS_BUCKET` | Yes | - | Target GCS bucket name |
+| `GCS_BUCKET_RT_PROTOBUF` | Yes | - | Target GCS bucket for protobuf archives |
 | `GCP_PROJECT_ID` | If auth used | - | GCP project ID for Secret Manager |
 | `CONFIG_PATH` | No | `./agencies.yaml` | Path to agencies configuration file |
 | `MAX_CONCURRENT` | No | `100` | Maximum concurrent fetches |

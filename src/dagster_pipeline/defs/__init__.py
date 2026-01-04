@@ -23,8 +23,8 @@ defs = dg.Definitions(
     resources={
         "gcs": GCSResource(
             project_id=os.environ.get("GCP_PROJECT_ID"),
-            source_bucket=os.environ.get("GCS_SOURCE_BUCKET", ""),
-            output_bucket=os.environ.get("GCS_OUTPUT_BUCKET", ""),
+            protobuf_bucket=os.environ.get("GCS_BUCKET_RT_PROTOBUF", ""),
+            parquet_bucket=os.environ.get("GCS_BUCKET_RT_PARQUET", ""),
         ),
     },
 )

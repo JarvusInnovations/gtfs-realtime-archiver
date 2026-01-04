@@ -405,7 +405,7 @@ class TestSettings:
 
     def test_default_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test default settings values."""
-        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("GCS_BUCKET_RT_PROTOBUF", "test-bucket")
 
         settings = Settings()
 
@@ -421,7 +421,7 @@ class TestSettings:
     def test_custom_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test custom settings from environment."""
         monkeypatch.setenv("CONFIG_PATH", "/etc/agencies.yaml")
-        monkeypatch.setenv("GCS_BUCKET", "my-bucket")
+        monkeypatch.setenv("GCS_BUCKET_RT_PROTOBUF", "my-bucket")
         monkeypatch.setenv("MAX_CONCURRENT", "50")
         monkeypatch.setenv("HEALTH_PORT", "9000")
         monkeypatch.setenv("LOG_LEVEL", "DEBUG")
@@ -437,16 +437,16 @@ class TestSettings:
         assert settings.log_format == "text"
 
     def test_missing_required_bucket(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test that missing GCS_BUCKET raises error."""
+        """Test that missing GCS_BUCKET_RT_PROTOBUF raises error."""
         # Clear the environment variable
-        monkeypatch.delenv("GCS_BUCKET", raising=False)
+        monkeypatch.delenv("GCS_BUCKET_RT_PROTOBUF", raising=False)
 
         with pytest.raises(ValidationError):
             Settings()
 
     def test_shard_validation(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test shard configuration validation."""
-        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("GCS_BUCKET_RT_PROTOBUF", "test-bucket")
         monkeypatch.setenv("SHARD_INDEX", "2")
         monkeypatch.setenv("TOTAL_SHARDS", "2")
 
@@ -455,7 +455,7 @@ class TestSettings:
 
     def test_valid_shard_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test valid shard configuration."""
-        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("GCS_BUCKET_RT_PROTOBUF", "test-bucket")
         monkeypatch.setenv("SHARD_INDEX", "1")
         monkeypatch.setenv("TOTAL_SHARDS", "3")
 

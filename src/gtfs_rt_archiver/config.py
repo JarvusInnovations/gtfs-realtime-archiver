@@ -262,7 +262,7 @@ class Settings(BaseSettings):
 
     # GCS settings
     gcs_bucket: str = Field(
-        validation_alias="GCS_BUCKET",
+        validation_alias="GCS_BUCKET_RT_PROTOBUF",
         description="Target GCS bucket for archived feeds",
     )
 

@@ -389,7 +389,7 @@ def compact_feed_type(
     client = gcs.get_client()
 
     # Discover all feeds for this date
-    feed_urls = discover_feed_urls(client, gcs.source_bucket, feed_type, date)
+    feed_urls = discover_feed_urls(client, gcs.protobuf_bucket, feed_type, date)
     context.log.info(f"Discovered {len(feed_urls)} feeds for {feed_type} on {date}")
 
     if not feed_urls:
@@ -405,14 +405,14 @@ def compact_feed_type(
     total_records = 0
     total_files = 0
     feeds_processed = 0
-    source_bucket = client.bucket(gcs.source_bucket)
-    output_bucket = client.bucket(gcs.output_bucket)
+    protobuf_bucket = client.bucket(gcs.protobuf_bucket)
+    parquet_bucket = client.bucket(gcs.parquet_bucket)
 
     for feed_url_encoded in feed_urls:
         feed_url = decode_base64url(feed_url_encoded)
 
         # List all .pb files for this feed
-        pb_files = list_pb_files(client, gcs.source_bucket, feed_type, date, feed_url_encoded)
+        pb_files = list_pb_files(client, gcs.protobuf_bucket, feed_type, date, feed_url_encoded)
         context.log.info(f"Processing {len(pb_files)} files for feed {feed_url_encoded}")
 
         if not pb_files:
@@ -422,7 +422,7 @@ def compact_feed_type(
         all_records: list[dict[str, Any]] = []
 
         for pb_file in pb_files:
-            blob = source_bucket.blob(pb_file)
+            blob = protobuf_bucket.blob(pb_file)
             content = blob.download_as_bytes()
 
             try:
@@ -448,13 +448,13 @@ def compact_feed_type(
         pq.write_table(table, buffer, compression="snappy")
         buffer.seek(0)
 
-        output_blob = output_bucket.blob(output_path)
+        output_blob = parquet_bucket.blob(output_path)
         output_blob.upload_from_file(buffer, content_type="application/octet-stream")
 
         total_records += len(all_records)
         feeds_processed += 1
         context.log.info(
-            f"Wrote {len(all_records)} records to gs://{gcs.output_bucket}/{output_path}"
+            f"Wrote {len(all_records)} records to gs://{gcs.parquet_bucket}/{output_path}"
         )
 
     return dg.Output(

@@ -262,7 +262,7 @@ gs://my-gtfs-archive/
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `CONFIG_PATH` | Path to agencies.yaml | `./agencies.yaml` |
-| `GCS_BUCKET` | Target GCS bucket | Required |
+| `GCS_BUCKET_RT_PROTOBUF` | Target GCS bucket for protobuf archives | Required |
 | `GCP_PROJECT_ID` | GCP project ID for Secret Manager | Required if auth used |
 | `MAX_CONCURRENT` | Max concurrent fetches | `100` |
 | `HEALTH_PORT` | Health check server port | `8080` |
@@ -515,7 +515,7 @@ resource "google_cloud_run_v2_service" "archiver" {
       }
 
       env {
-        name  = "GCS_BUCKET"
+        name  = "GCS_BUCKET_RT_PROTOBUF"
         value = google_storage_bucket.archive.name
       }
       env {
@@ -795,7 +795,7 @@ docker build -t gtfs-rt-archiver .
 docker run \
   -v ~/.config/gcloud:/root/.config/gcloud:ro \
   -e GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json \
-  -e GCS_BUCKET=my-test-bucket \
+  -e GCS_BUCKET_RT_PROTOBUF=my-test-bucket \
   -p 8080:8080 \
   -p 9090:9090 \
   gtfs-rt-archiver
