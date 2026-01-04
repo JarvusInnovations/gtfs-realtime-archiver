@@ -15,13 +15,14 @@ WORKDIR /app
 # Install dependencies first (for better caching)
 COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-install-project --no-dev
+    uv sync --frozen --no-install-project --only-group archiver
 
 # Copy source and install the project
 COPY README.md ./
 COPY src/ src/
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev
+    uv sync --frozen --only-group archiver && \
+    uv pip install --no-deps -e .
 
 
 # Runtime stage - minimal image

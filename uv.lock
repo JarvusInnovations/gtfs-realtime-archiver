@@ -721,7 +721,9 @@ wheels = [
 name = "gtfs-rt-archiver"
 version = "0.1.0"
 source = { editable = "." }
-dependencies = [
+
+[package.dev-dependencies]
+archiver = [
     { name = "aiohttp" },
     { name = "apscheduler" },
     { name = "gcloud-aio-storage" },
@@ -734,20 +736,38 @@ dependencies = [
     { name = "structlog" },
     { name = "tenacity" },
 ]
-
-[package.dev-dependencies]
 dev = [
+    { name = "aiohttp" },
+    { name = "apscheduler" },
+    { name = "gcloud-aio-storage" },
+    { name = "google-cloud-secret-manager" },
+    { name = "httpx" },
     { name = "mypy" },
+    { name = "prometheus-client" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "pyyaml" },
+    { name = "respx" },
+    { name = "ruff" },
+    { name = "structlog" },
+    { name = "tenacity" },
+    { name = "types-pyyaml" },
+]
+dev-archiver = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
     { name = "respx" },
-    { name = "ruff" },
     { name = "types-pyyaml" },
 ]
 
 [package.metadata]
-requires-dist = [
+
+[package.metadata.requires-dev]
+archiver = [
     { name = "aiohttp", specifier = ">=3.13.2" },
     { name = "apscheduler", specifier = ">=4.0.0a6" },
     { name = "gcloud-aio-storage", specifier = ">=9.6.1" },
@@ -760,15 +780,31 @@ requires-dist = [
     { name = "structlog", specifier = ">=25.5.0" },
     { name = "tenacity", specifier = ">=9.1.2" },
 ]
-
-[package.metadata.requires-dev]
 dev = [
+    { name = "aiohttp", specifier = ">=3.13.2" },
+    { name = "apscheduler", specifier = ">=4.0.0a6" },
+    { name = "gcloud-aio-storage", specifier = ">=9.6.1" },
+    { name = "google-cloud-secret-manager", specifier = ">=2.26.0" },
+    { name = "httpx", specifier = ">=0.28.0,<1.0" },
     { name = "mypy", specifier = ">=1.19.1" },
+    { name = "prometheus-client", specifier = ">=0.23.1" },
+    { name = "pydantic", specifier = ">=2.12.5" },
+    { name = "pydantic-settings", specifier = ">=2.12.0" },
+    { name = "pytest", specifier = ">=9.0.2" },
+    { name = "pytest-asyncio", specifier = ">=1.3.0" },
+    { name = "pytest-cov", specifier = ">=7.0.0" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
+    { name = "respx", specifier = ">=0.22.0" },
+    { name = "ruff", specifier = ">=0.14.10" },
+    { name = "structlog", specifier = ">=25.5.0" },
+    { name = "tenacity", specifier = ">=9.1.2" },
+    { name = "types-pyyaml", specifier = ">=6.0.12.20250915" },
+]
+dev-archiver = [
     { name = "pytest", specifier = ">=9.0.2" },
     { name = "pytest-asyncio", specifier = ">=1.3.0" },
     { name = "pytest-cov", specifier = ">=7.0.0" },
     { name = "respx", specifier = ">=0.22.0" },
-    { name = "ruff", specifier = ">=0.14.10" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20250915" },
 ]
 
