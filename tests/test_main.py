@@ -69,8 +69,9 @@ class TestCreateFetchJob:
         async with httpx.AsyncClient() as client:
             semaphore = asyncio.Semaphore(10)
             fetch_job = await create_fetch_job(client, mock_storage_writer, semaphore)
+            scheduled_time = datetime.now(UTC)
 
-            await fetch_job(feed_config)
+            await fetch_job(feed_config, scheduled_time)
 
         # Verify storage was called
         mock_storage_writer.write.assert_called_once()
@@ -96,7 +97,8 @@ class TestCreateFetchJob:
             async with httpx.AsyncClient() as client:
                 semaphore = asyncio.Semaphore(10)
                 fetch_job = await create_fetch_job(client, mock_storage_writer, semaphore)
-                await fetch_job(feed_config)
+                scheduled_time = datetime.now(UTC)
+                await fetch_job(feed_config, scheduled_time)
 
             mock_attempt.assert_called_once_with("test-feed", "vehicle_positions", "test-agency")
             mock_success.assert_called_once()
@@ -117,9 +119,10 @@ class TestCreateFetchJob:
             async with httpx.AsyncClient() as client:
                 semaphore = asyncio.Semaphore(10)
                 fetch_job = await create_fetch_job(client, mock_storage_writer, semaphore)
+                scheduled_time = datetime.now(UTC)
 
                 # Should not raise
-                await fetch_job(feed_config)
+                await fetch_job(feed_config, scheduled_time)
 
             mock_error.assert_called_once()
             args = mock_error.call_args[0]
@@ -141,9 +144,10 @@ class TestCreateFetchJob:
             async with httpx.AsyncClient() as client:
                 semaphore = asyncio.Semaphore(10)
                 fetch_job = await create_fetch_job(client, mock_storage_writer, semaphore)
+                scheduled_time = datetime.now(UTC)
 
                 # Should not raise
-                await fetch_job(feed_config)
+                await fetch_job(feed_config, scheduled_time)
 
             mock_error.assert_called_once()
             args = mock_error.call_args[0]
@@ -164,9 +168,10 @@ class TestCreateFetchJob:
             async with httpx.AsyncClient() as client:
                 semaphore = asyncio.Semaphore(10)
                 fetch_job = await create_fetch_job(client, mock_storage_writer, semaphore)
+                scheduled_time = datetime.now(UTC)
 
                 # Should not raise
-                await fetch_job(feed_config)
+                await fetch_job(feed_config, scheduled_time)
 
             mock_error.assert_called_once()
             args = mock_error.call_args[0]
@@ -197,9 +202,10 @@ class TestCreateFetchJob:
             async with httpx.AsyncClient() as client:
                 semaphore = asyncio.Semaphore(10)
                 fetch_job = await create_fetch_job(client, mock_storage_writer, semaphore)
+                scheduled_time = datetime.now(UTC)
 
                 # Should not raise
-                await fetch_job(feed)
+                await fetch_job(feed, scheduled_time)
 
             mock_error.assert_called_once()
             args = mock_error.call_args[0]
@@ -222,9 +228,10 @@ class TestCreateFetchJob:
             async with httpx.AsyncClient() as client:
                 semaphore = asyncio.Semaphore(10)
                 fetch_job = await create_fetch_job(client, mock_storage, semaphore)
+                scheduled_time = datetime.now(UTC)
 
                 # Should not raise
-                await fetch_job(feed_config)
+                await fetch_job(feed_config, scheduled_time)
 
             mock_error.assert_called_once()
             args = mock_error.call_args[0]
@@ -245,6 +252,7 @@ class TestCreateFetchJob:
             # Semaphore with limit of 2
             semaphore = asyncio.Semaphore(2)
             fetch_job = await create_fetch_job(client, mock_storage_writer, semaphore)
+            scheduled_time = datetime.now(UTC)
 
             # Track concurrent executions
             max_concurrent = 0
@@ -273,7 +281,7 @@ class TestCreateFetchJob:
                 for i in range(5)
             ]
 
-            await asyncio.gather(*[fetch_job(f) for f in feeds])
+            await asyncio.gather(*[fetch_job(f, scheduled_time) for f in feeds])
 
             # Max concurrent should not exceed semaphore limit
             assert max_concurrent <= 2
@@ -291,9 +299,10 @@ class TestCreateFetchJob:
             async with httpx.AsyncClient() as client:
                 semaphore = asyncio.Semaphore(10)
                 fetch_job = await create_fetch_job(client, mock_storage_writer, semaphore)
+                scheduled_time = datetime.now(UTC)
 
                 # Should not raise
-                await fetch_job(feed_config)
+                await fetch_job(feed_config, scheduled_time)
 
             mock_error.assert_called_once()
             args = mock_error.call_args[0]

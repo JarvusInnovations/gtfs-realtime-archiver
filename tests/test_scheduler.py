@@ -1,5 +1,7 @@
 """Tests for scheduler module."""
 
+from datetime import datetime
+
 import pytest
 
 from gtfs_rt_archiver.models import FeedConfig
@@ -103,7 +105,7 @@ class TestFeedScheduler:
         """Create a mock fetch job that tracks calls."""
         calls: list[FeedConfig] = []
 
-        async def fetch_job(feed: FeedConfig) -> None:
+        async def fetch_job(feed: FeedConfig, _scheduled_time: datetime) -> None:
             calls.append(feed)
 
         # Return the calls list but attach the function
@@ -113,7 +115,7 @@ class TestFeedScheduler:
     def test_initialization(self, feeds: list[FeedConfig]) -> None:
         """Test scheduler initialization."""
 
-        async def dummy_job(feed: FeedConfig) -> None:
+        async def dummy_job(_feed: FeedConfig, _scheduled_time: datetime) -> None:
             pass
 
         scheduler = FeedScheduler(
@@ -131,7 +133,7 @@ class TestFeedScheduler:
         """Test scheduler start and stop lifecycle."""
         calls: list[FeedConfig] = []
 
-        async def fetch_job(feed: FeedConfig) -> None:
+        async def fetch_job(feed: FeedConfig, _scheduled_time: datetime) -> None:
             calls.append(feed)
 
         scheduler = FeedScheduler(
@@ -156,7 +158,7 @@ class TestFeedScheduler:
     async def test_start_filters_feeds_by_shard(self, feeds: list[FeedConfig]) -> None:
         """Test that start() filters feeds based on shard assignment."""
 
-        async def fetch_job(feed: FeedConfig) -> None:
+        async def fetch_job(_feed: FeedConfig, _scheduled_time: datetime) -> None:
             pass
 
         # Create scheduler for shard 0 of 2
@@ -177,7 +179,7 @@ class TestFeedScheduler:
     async def test_stop_without_start(self) -> None:
         """Test that stop() is safe to call without start()."""
 
-        async def fetch_job(feed: FeedConfig) -> None:
+        async def fetch_job(_feed: FeedConfig, _scheduled_time: datetime) -> None:
             pass
 
         scheduler = FeedScheduler(
@@ -192,7 +194,7 @@ class TestFeedScheduler:
         """Test run_once executes the fetch job for a feed."""
         calls: list[FeedConfig] = []
 
-        async def fetch_job(feed: FeedConfig) -> None:
+        async def fetch_job(feed: FeedConfig, _scheduled_time: datetime) -> None:
             calls.append(feed)
 
         scheduler = FeedScheduler(
@@ -209,7 +211,7 @@ class TestFeedScheduler:
     async def test_is_running_reflects_scheduler_state(self, feeds: list[FeedConfig]) -> None:
         """Test is_running property reflects actual scheduler state."""
 
-        async def fetch_job(feed: FeedConfig) -> None:
+        async def fetch_job(_feed: FeedConfig, _scheduled_time: datetime) -> None:
             pass
 
         scheduler = FeedScheduler(
@@ -233,7 +235,7 @@ class TestCreateAndStartScheduler:
         """Test that factory creates and starts a scheduler."""
         feeds = [make_feed("test-feed")]
 
-        async def fetch_job(feed: FeedConfig) -> None:
+        async def fetch_job(_feed: FeedConfig, _scheduled_time: datetime) -> None:
             pass
 
         scheduler = await create_and_start_scheduler(
@@ -251,7 +253,7 @@ class TestCreateAndStartScheduler:
         """Test factory with sharding parameters."""
         feeds = [make_feed(f"feed-{i}") for i in range(10)]
 
-        async def fetch_job(feed: FeedConfig) -> None:
+        async def fetch_job(_feed: FeedConfig, _scheduled_time: datetime) -> None:
             pass
 
         scheduler = await create_and_start_scheduler(
