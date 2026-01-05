@@ -42,3 +42,8 @@ output "github_actions_service_account" {
   description = "Service account email for GitHub Actions deployments"
   value       = google_service_account.github_actions.email
 }
+
+output "dagster_service_account_email" {
+  description = "Email of the Dagster pipeline service account"
+  value       = google_service_account.dagster.email
+}
