@@ -2,9 +2,10 @@
 
 import hashlib
 import uuid
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from apscheduler import AsyncScheduler, CoalescePolicy
+from apscheduler import AsyncScheduler, CoalescePolicy, current_job
 from apscheduler.triggers.interval import IntervalTrigger
 
 from gtfs_rt_archiver.models import FeedConfig
@@ -12,7 +13,7 @@ from gtfs_rt_archiver.models import FeedConfig
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    FetchJobFunc = Callable[[FeedConfig], Awaitable[None]]
+    FetchJobFunc = Callable[[FeedConfig, datetime], Awaitable[None]]
 
 # Global registry to allow APScheduler to find scheduler instances
 # APScheduler v4 requires serializable function references, so we use
@@ -34,7 +35,12 @@ async def _execute_scheduled_fetch(scheduler_id: str, feed_id: str) -> None:
     if scheduler:
         feed = scheduler._feeds_by_id.get(feed_id)
         if feed:
-            await scheduler._fetch_job(feed)
+            # Get scheduled fire time from APScheduler job context
+            job = current_job.get()
+            scheduled_time = (
+                job.scheduled_fire_time if job and job.scheduled_fire_time else datetime.now(UTC)
+            )
+            await scheduler._fetch_job(feed, scheduled_time)
 
 
 def should_handle_feed(feed: FeedConfig, shard_index: int, total_shards: int) -> bool:
@@ -161,7 +167,8 @@ class FeedScheduler:
         Args:
             feed: Feed to fetch.
         """
-        await self._fetch_job(feed)
+        # For manual triggers, use current time as scheduled time
+        await self._fetch_job(feed, datetime.now(UTC))
 
 
 async def create_and_start_scheduler(

@@ -31,6 +31,12 @@ from gtfs_rt_archiver.metrics import (
     record_fetch_attempt,
     record_fetch_error,
     record_fetch_success,
+    record_processed_bytes,
+    record_processing_time,
+    record_queue_delay,
+    record_scheduler_delay,
+    record_total_delay,
+    record_upload_attempt,
     record_upload_error,
     record_upload_success,
     set_active_feeds,
@@ -61,13 +67,30 @@ async def create_fetch_job(
     """
     logger = get_logger(__name__)
 
-    async def fetch_job(feed: FeedConfig) -> None:
+    async def fetch_job(feed: FeedConfig, scheduled_time: datetime) -> None:
         """Fetch a single feed and upload to storage."""
         feed_type = feed.feed_type.value
         agency = feed.agency_id
 
+        # Record scheduler delay (before semaphore acquisition)
+        job_start = datetime.now(UTC)
+        scheduler_delay_secs = (job_start - scheduled_time).total_seconds()
+        record_scheduler_delay(feed.id, feed_type, agency, scheduler_delay_secs)
+
         # Acquire semaphore to limit concurrent operations
         async with semaphore:
+            # Record queue delay (time waiting for semaphore)
+            semaphore_acquired = datetime.now(UTC)
+            queue_delay_secs = (semaphore_acquired - job_start).total_seconds()
+            record_queue_delay(feed.id, feed_type, agency, queue_delay_secs)
+
+            # Record total delay (scheduler + queue)
+            total_delay_secs = (semaphore_acquired - scheduled_time).total_seconds()
+            record_total_delay(feed.id, feed_type, agency, total_delay_secs)
+
+            # Start processing time measurement
+            processing_start = datetime.now(UTC)
+
             # Record attempt inside semaphore for accurate concurrency metrics
             record_fetch_attempt(feed.id, feed_type, agency)
 
@@ -92,6 +115,9 @@ async def create_fetch_job(
                     content_length=result.content_length,
                 )
 
+                # Record upload attempt before trying
+                record_upload_attempt(feed.id, feed_type, agency)
+
                 # Upload to storage with retry
                 upload_start = datetime.now(UTC)
                 try:
@@ -110,6 +136,12 @@ async def create_fetch_job(
 
                     record_upload_success(feed.id, feed_type, agency, upload_duration)
 
+                    # Record processed bytes with content_type
+                    content_type = result.content_type or "unknown"
+                    record_processed_bytes(
+                        feed.id, feed_type, agency, content_type, result.content_length
+                    )
+
                     logger.info(
                         "upload_success",
                         feed_id=feed.id,
@@ -125,6 +157,10 @@ async def create_fetch_job(
                         error_type=type(e).__name__,
                         error_message=str(e),
                     )
+
+                # Record end-to-end processing time (fetch + upload)
+                processing_duration = (datetime.now(UTC) - processing_start).total_seconds()
+                record_processing_time(feed.id, feed_type, agency, processing_duration)
 
             except NonRetryableError as e:
                 error_type = f"http_{e.status_code}"
@@ -170,7 +206,7 @@ async def create_fetch_job(
 
 
 # Type alias for the fetch job callable
-type FetchJobCallable = Callable[[FeedConfig], Awaitable[None]]
+type FetchJobCallable = Callable[[FeedConfig, datetime], Awaitable[None]]
 
 
 async def run() -> None:

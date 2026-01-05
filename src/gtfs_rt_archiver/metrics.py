@@ -2,6 +2,9 @@
 
 from prometheus_client import Counter, Gauge, Histogram
 
+# Common histogram buckets for timing metrics (matches production v3)
+TIMING_BUCKETS = [0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0, 15.0, 20.0, 25.0, 30.0]
+
 # Fetch metrics
 fetch_total = Counter(
     "gtfs_rt_fetch_total",
@@ -70,6 +73,50 @@ last_fetch_timestamp = Gauge(
     "gtfs_rt_last_fetch_timestamp",
     "Unix timestamp of last fetch attempt",
     ["feed_id"],
+)
+
+# Delay/slippage metrics (3 separate measurements for diagnosing bottlenecks)
+scheduler_delay = Histogram(
+    "gtfs_rt_scheduler_delay_seconds",
+    "Time from scheduled tick to job dispatch (APScheduler overhead)",
+    ["feed_id", "feed_type", "agency"],
+    buckets=TIMING_BUCKETS,
+)
+
+queue_delay = Histogram(
+    "gtfs_rt_queue_delay_seconds",
+    "Time waiting for concurrency semaphore",
+    ["feed_id", "feed_type", "agency"],
+    buckets=TIMING_BUCKETS,
+)
+
+total_delay = Histogram(
+    "gtfs_rt_total_delay_seconds",
+    "Total time from scheduled tick to job start (scheduler + queue)",
+    ["feed_id", "feed_type", "agency"],
+    buckets=TIMING_BUCKETS,
+)
+
+# End-to-end processing time
+processing_time = Histogram(
+    "gtfs_rt_processing_time_seconds",
+    "Total time to fetch and upload (end-to-end)",
+    ["feed_id", "feed_type", "agency"],
+    buckets=TIMING_BUCKETS,
+)
+
+# Bytes counter with content_type label (cumulative throughput tracking)
+processed_bytes = Counter(
+    "gtfs_rt_processed_bytes_total",
+    "Total bytes processed (downloaded and uploaded)",
+    ["feed_id", "feed_type", "agency", "content_type"],
+)
+
+# Upload attempt counter (for symmetry with fetch_total)
+upload_total = Counter(
+    "gtfs_rt_upload_total",
+    "Total upload attempts",
+    ["feed_id", "feed_type", "agency"],
 )
 
 
@@ -198,3 +245,107 @@ def set_scheduler_jobs(count: int) -> None:
         count: Number of scheduled jobs.
     """
     scheduler_jobs.set(count)
+
+
+def record_scheduler_delay(
+    feed_id: str,
+    feed_type: str,
+    agency: str | None,
+    delay_seconds: float,
+) -> None:
+    """Record time from scheduled tick to job dispatch.
+
+    Args:
+        feed_id: Feed identifier.
+        feed_type: Type of feed.
+        agency: Agency identifier or None.
+        delay_seconds: Delay in seconds.
+    """
+    labels = get_labels(feed_id, feed_type, agency)
+    scheduler_delay.labels(**labels).observe(delay_seconds)
+
+
+def record_queue_delay(
+    feed_id: str,
+    feed_type: str,
+    agency: str | None,
+    delay_seconds: float,
+) -> None:
+    """Record time waiting for concurrency semaphore.
+
+    Args:
+        feed_id: Feed identifier.
+        feed_type: Type of feed.
+        agency: Agency identifier or None.
+        delay_seconds: Delay in seconds.
+    """
+    labels = get_labels(feed_id, feed_type, agency)
+    queue_delay.labels(**labels).observe(delay_seconds)
+
+
+def record_total_delay(
+    feed_id: str,
+    feed_type: str,
+    agency: str | None,
+    delay_seconds: float,
+) -> None:
+    """Record total delay from scheduled tick to job start.
+
+    Args:
+        feed_id: Feed identifier.
+        feed_type: Type of feed.
+        agency: Agency identifier or None.
+        delay_seconds: Delay in seconds.
+    """
+    labels = get_labels(feed_id, feed_type, agency)
+    total_delay.labels(**labels).observe(delay_seconds)
+
+
+def record_processing_time(
+    feed_id: str,
+    feed_type: str,
+    agency: str | None,
+    duration_seconds: float,
+) -> None:
+    """Record end-to-end processing time (fetch + upload).
+
+    Args:
+        feed_id: Feed identifier.
+        feed_type: Type of feed.
+        agency: Agency identifier or None.
+        duration_seconds: Duration in seconds.
+    """
+    labels = get_labels(feed_id, feed_type, agency)
+    processing_time.labels(**labels).observe(duration_seconds)
+
+
+def record_processed_bytes(
+    feed_id: str,
+    feed_type: str,
+    agency: str | None,
+    content_type: str,
+    byte_count: int,
+) -> None:
+    """Record bytes processed (cumulative counter).
+
+    Args:
+        feed_id: Feed identifier.
+        feed_type: Type of feed.
+        agency: Agency identifier or None.
+        content_type: Content-Type header value.
+        byte_count: Number of bytes processed.
+    """
+    labels = get_labels(feed_id, feed_type, agency)
+    processed_bytes.labels(**labels, content_type=content_type).inc(byte_count)
+
+
+def record_upload_attempt(feed_id: str, feed_type: str, agency: str | None) -> None:
+    """Record an upload attempt.
+
+    Args:
+        feed_id: Feed identifier.
+        feed_type: Type of feed.
+        agency: Agency identifier or None.
+    """
+    labels = get_labels(feed_id, feed_type, agency)
+    upload_total.labels(**labels).inc()
