@@ -127,3 +127,10 @@ resource "google_project_iam_member" "github_actions_dns_admin" {
   role    = "roles/dns.admin"
   member  = "serviceAccount:${google_service_account.github_actions.email}"
 }
+
+# BigQuery Admin - manage datasets and tables
+resource "google_project_iam_member" "github_actions_bigquery_admin" {
+  project = var.project_id
+  role    = "roles/bigquery.admin"
+  member  = "serviceAccount:${google_service_account.github_actions.email}"
+}
