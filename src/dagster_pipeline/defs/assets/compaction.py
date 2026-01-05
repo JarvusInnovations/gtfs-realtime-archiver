@@ -482,7 +482,9 @@ def compact_single_feed(
                 # Write batch to parquet stream
                 batch = pa.Table.from_pylist(records, schema=schema)
                 if writer is None:
-                    writer = pq.ParquetWriter(buffer, schema, compression="snappy")
+                    writer = pq.ParquetWriter(
+                        buffer, schema, compression="zstd", compression_level=9
+                    )
                 writer.write_table(batch)
                 records_count += len(records)
             except (DecodeError, ValueError) as e:
