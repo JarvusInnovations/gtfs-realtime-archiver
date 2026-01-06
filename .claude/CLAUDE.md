@@ -57,15 +57,31 @@ gtfs-realtime-archiver/
 │   ├── test_*.py           # Module-specific tests
 │   └── __init__.py
 ├── tf/                     # OpenTofu/Terraform for Cloud Run
-│   ├── main.tf             # Cloud Run service
+│   ├── main.tf             # Cloud Run service (archiver)
 │   ├── storage.tf          # GCS bucket with lifecycle
 │   ├── iam.tf              # Service account and permissions
+│   ├── cloudsql.tf         # Cloud SQL PostgreSQL instance
+│   ├── dagster.tf          # Dagster module instantiation
+│   ├── modules/dagster/    # Dagster deployment module
+│   │   ├── main.tf         # Module locals and config
+│   │   ├── webserver.tf    # Dagster UI (Cloud Run Service)
+│   │   ├── daemon.tf       # Dagster daemon (Worker Pool)
+│   │   ├── code_server.tf  # gRPC code servers
+│   │   ├── run_worker.tf   # Cloud Run Jobs for runs
+│   │   ├── iam.tf          # Service accounts and permissions
+│   │   ├── secrets.tf      # DB password and config secrets
+│   │   ├── database.tf     # Database and user creation
+│   │   ├── storage.tf      # Logs bucket
+│   │   └── config/         # Dagster config templates
+│   │       ├── dagster.yaml.tftpl
+│   │       └── workspace.yaml.tftpl
 │   ├── variables.tf        # Input variables
 │   ├── outputs.tf          # Output values
 │   └── versions.tf         # Provider versions
 ├── pyproject.toml          # Project config, dependencies, tool settings
 ├── uv.lock                 # Dependency lockfile
 ├── Dockerfile              # Multi-stage container build (archiver)
+├── Containerfile.dagster   # Multi-target build (webserver, daemon, code-server)
 ├── agencies.example.yaml   # Example agency configuration
 ├── .env.example            # Environment variables template
 └── .tool-versions          # asdf version pins
@@ -74,8 +90,9 @@ gtfs-realtime-archiver/
 **Dependency Groups** (in pyproject.toml):
 
 - `archiver` / `dev-archiver` - deps for gtfs_rt_archiver
-- `dagster` / `dev-dagster` - deps for dagster_pipeline
-- `dev` - aggregate group (all of the above + mypy, ruff)
+- `dagster` / `dev-dagster` - deps for dagster_pipeline (local dev)
+- `dagster-deploy` - deps for Dagster Cloud Run deployment
+- `dev` - aggregate group (archiver + dagster dev groups + mypy, ruff)
 
 **Managing Dependencies**:
 
@@ -240,3 +257,59 @@ uv run dg launch --partition 2026-01-01
 - UI available at `http://localhost:3000` when running `dg dev`
 - Logs stored in `.dagster_home/storage/*/compute_logs/`
 - Run history in `.dagster_home/history/`
+
+## Dagster Cloud Run Deployment
+
+**Architecture**: Dagster deployed to Google Cloud Run with:
+
+- **Webserver** (Cloud Run Service) - Dagster UI on port 3000
+- **Daemon** (Cloud Run Worker Pool BETA) - Scheduler/sensors, exactly 1 instance
+- **Code Server** (Cloud Run Service) - gRPC API server on port 3030
+- **Run Workers** (Cloud Run Jobs) - Execute runs via CloudRunRunLauncher
+
+**Database**: Cloud SQL PostgreSQL via Unix socket mount (`/cloudsql/{connection}`)
+
+**Configuration**: Rendered from Terraform templates, stored in Secret Manager:
+
+- `dagster.yaml` - Storage, run launcher, compute logs
+- `workspace.yaml` - Code location gRPC endpoints
+
+**Terraform Module**: `tf/modules/dagster/`
+
+- Single code location (gtfsrt) by default
+- Extensible to multi-code-location via `code_locations` variable
+- Per-location service accounts for fine-grained IAM
+
+**Container Images** (via Containerfile.dagster):
+
+- `dagster-webserver` - Runs `dagster-webserver --host 0.0.0.0 --port 3000`
+- `dagster-daemon` - Runs `dagster-daemon run`
+- `dagster-code-server` - Runs `dagster api grpc --module-name dagster_pipeline.definitions`
+
+**Multi-Code-Location Support**:
+
+To add a new code location:
+
+1. Update `tf/dagster.tf` module instantiation:
+
+```hcl
+code_locations = {
+  gtfsrt = { ... }
+  new_location = {
+    image             = "..."
+    module_name       = "new_pipeline.definitions"
+    port              = 3031
+    run_worker_cpu    = "2"
+    run_worker_memory = "4Gi"
+  }
+}
+```
+
+1. Templates auto-generate workspace.yaml and run_launcher config
+2. Build and push new code location image
+
+Each location gets:
+
+- Dedicated code server (gRPC)
+- Dedicated run worker job
+- Dedicated service account with specific IAM permissions
