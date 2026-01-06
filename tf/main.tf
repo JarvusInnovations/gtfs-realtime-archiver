@@ -13,7 +13,7 @@ resource "google_cloud_run_v2_service" "archiver" {
       name = "agencies-config"
       secret {
         secret       = var.agencies_secret_id
-        default_mode = 292  # 0444 in octal
+        default_mode = 292 # 0444 in octal
         items {
           path    = "agencies.yaml"
           version = "latest"
@@ -30,7 +30,7 @@ resource "google_cloud_run_v2_service" "archiver" {
           cpu    = var.cpu
           memory = var.memory
         }
-        cpu_idle = false  # Keep CPU allocated for scheduler
+        cpu_idle = false # Keep CPU allocated for scheduler
       }
 
       ports {

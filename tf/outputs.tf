@@ -47,3 +47,14 @@ output "dagster_service_account_email" {
   description = "Email of the Dagster pipeline service account"
   value       = google_service_account.dagster.email
 }
+
+# Cloud SQL outputs
+output "cloudsql_instance_name" {
+  description = "Name of the Cloud SQL instance"
+  value       = google_sql_database_instance.dagster.name
+}
+
+output "cloudsql_connection_name" {
+  description = "Connection name for Cloud SQL (project:region:instance)"
+  value       = google_sql_database_instance.dagster.connection_name
+}
