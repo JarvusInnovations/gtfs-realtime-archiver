@@ -106,3 +106,22 @@ variable "cloudsql_tier" {
   type        = string
   default     = "db-f1-micro"
 }
+
+# Dagster container images
+variable "dagster_webserver_image" {
+  description = "Container image URL for Dagster webserver"
+  type        = string
+  default     = "us-central1-docker.pkg.dev/gtfs-archiver/ghcr-remote/jarvusinnovations/gtfs-realtime-archiver/dagster-webserver:latest"
+}
+
+variable "dagster_daemon_image" {
+  description = "Container image URL for Dagster daemon"
+  type        = string
+  default     = "us-central1-docker.pkg.dev/gtfs-archiver/ghcr-remote/jarvusinnovations/gtfs-realtime-archiver/dagster-daemon:latest"
+}
+
+variable "dagster_code_server_image" {
+  description = "Container image URL for Dagster code server"
+  type        = string
+  default     = "us-central1-docker.pkg.dev/gtfs-archiver/ghcr-remote/jarvusinnovations/gtfs-realtime-archiver/dagster-code-server:latest"
+}

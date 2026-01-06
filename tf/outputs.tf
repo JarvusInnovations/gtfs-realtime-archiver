@@ -58,3 +58,19 @@ output "cloudsql_connection_name" {
   description = "Connection name for Cloud SQL (project:region:instance)"
   value       = google_sql_database_instance.dagster.connection_name
 }
+
+# Dagster module outputs
+output "dagster_webserver_url" {
+  description = "URL of the Dagster webserver"
+  value       = module.dagster.webserver_url
+}
+
+output "dagster_code_server_urls" {
+  description = "URLs of Dagster code servers by location"
+  value       = module.dagster.code_server_urls
+}
+
+output "dagster_run_worker_job_names" {
+  description = "Cloud Run job names for run workers by location"
+  value       = module.dagster.run_worker_job_names
+}

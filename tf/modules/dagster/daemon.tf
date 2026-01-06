@@ -14,14 +14,14 @@ resource "google_cloud_run_v2_worker_pool" "daemon" {
 
   labels = local.common_labels
 
+  # Manual scaling - daemon needs exactly 1 instance
+  scaling {
+    scaling_mode          = "MANUAL"
+    manual_instance_count = 1
+  }
+
   template {
     service_account = google_service_account.dagster.email
-
-    # Manual scaling - daemon needs exactly 1 instance
-    scaling {
-      scaling_mode          = "MANUAL"
-      manual_instance_count = 1
-    }
 
     # Cloud SQL volume mount
     volumes {
