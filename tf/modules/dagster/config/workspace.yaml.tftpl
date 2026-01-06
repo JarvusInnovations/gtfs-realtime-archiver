@@ -1,4 +1,10 @@
 # Dagster workspace configuration - rendered by Terraform
 # Template variables: code_locations (map of name -> {host, port, module_name})
 
-# Placeholder - will be implemented in config templates commit
+load_from:
+%{ for name, config in code_locations ~}
+  - grpc_server:
+      host: ${config.host}
+      port: ${config.port}
+      location_name: ${name}
+%{ endfor ~}
