@@ -37,3 +37,25 @@ locals {
 data "google_project" "current" {
   project_id = var.project_id
 }
+
+# Template variables for dagster.yaml
+locals {
+  dagster_config_vars = {
+    project_id            = var.project_id
+    region                = var.region
+    db_host               = local.db_socket_path
+    db_name               = var.db_name
+    db_user               = var.db_user
+    logs_bucket           = local.logs_bucket_name
+    run_timeout           = var.run_timeout_seconds
+    code_location_job_map = { for k, v in var.code_locations : k => "dagster-run-worker-${k}" }
+  }
+
+  workspace_config_vars = {
+    code_locations = { for k, v in var.code_locations : k => {
+      host        = trimprefix(google_cloud_run_v2_service.code_server[k].uri, "https://")
+      port        = v.port
+      module_name = v.module_name
+    } }
+  }
+}
