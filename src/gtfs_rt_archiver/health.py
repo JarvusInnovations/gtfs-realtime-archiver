@@ -5,7 +5,11 @@ import time
 from typing import TYPE_CHECKING
 
 from aiohttp import web
-from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from prometheus_client import REGISTRY
+from prometheus_client.openmetrics.exposition import (
+    CONTENT_TYPE_LATEST,
+    generate_latest,
+)
 
 if TYPE_CHECKING:
     from gtfs_rt_archiver.scheduler import FeedScheduler
@@ -93,10 +97,10 @@ class HealthServer:
             request: HTTP request.
 
         Returns:
-            Prometheus metrics in text format.
+            Metrics in OpenMetrics format with explicit unit metadata.
         """
-        metrics = generate_latest()
-        # Strip charset from content type since aiohttp adds it automatically
+        metrics = generate_latest(REGISTRY)  # type: ignore[no-untyped-call]
+        # Split content type and charset for aiohttp
         content_type = CONTENT_TYPE_LATEST.split(";")[0]
         return web.Response(
             body=metrics,
