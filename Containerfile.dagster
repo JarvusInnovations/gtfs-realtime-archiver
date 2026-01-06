@@ -1,0 +1,58 @@
+# syntax=docker/dockerfile:1
+# Multi-target Containerfile for Dagster components
+# Build targets: webserver, daemon, code-server
+
+# Base stage with uv and dependencies
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS base
+
+ENV UV_PROJECT_ENVIRONMENT=/usr/local
+ENV UV_COMPILE_BYTECODE=1
+ENV UV_LINK_MODE=copy
+
+WORKDIR /opt/dagster
+
+# Install dependencies
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project --only-group dagster-deploy
+
+# Copy pipeline code and install
+COPY README.md ./
+COPY src/dagster_pipeline ./dagster_pipeline
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --only-group dagster-deploy
+
+# Create dagster_home directory (config mounted at runtime via Secret Manager volume)
+RUN mkdir -p /opt/dagster/dagster_home
+ENV DAGSTER_HOME=/opt/dagster/dagster_home
+
+
+## WEBSERVER TARGET
+FROM base AS webserver
+
+LABEL org.opencontainers.image.source=https://github.com/JarvusInnovations/gtfs-realtime-archiver
+LABEL org.opencontainers.image.description="Dagster webserver for GTFS-RT pipeline"
+
+EXPOSE 3000
+
+CMD ["dagster-webserver", "--host", "0.0.0.0", "--port", "3000"]
+
+
+## DAEMON TARGET
+FROM base AS daemon
+
+LABEL org.opencontainers.image.source=https://github.com/JarvusInnovations/gtfs-realtime-archiver
+LABEL org.opencontainers.image.description="Dagster daemon for GTFS-RT pipeline"
+
+CMD ["dagster-daemon", "run"]
+
+
+## CODE SERVER TARGET
+FROM base AS code-server
+
+LABEL org.opencontainers.image.source=https://github.com/JarvusInnovations/gtfs-realtime-archiver
+LABEL org.opencontainers.image.description="Dagster code server for GTFS-RT pipeline"
+
+EXPOSE 3030
+
+CMD ["dagster", "api", "grpc", "--host", "0.0.0.0", "--port", "3030", "--module-name", "dagster_pipeline.definitions"]
