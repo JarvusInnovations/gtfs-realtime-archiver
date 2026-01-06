@@ -258,6 +258,24 @@ uv run dg launch --partition 2026-01-01
 - Logs stored in `.dagster_home/storage/*/compute_logs/`
 - Run history in `.dagster_home/history/`
 
+**Service Account for Local Dev**:
+
+Use the run worker SA for dev/prod parity:
+
+```bash
+# Get run worker SA for gtfsrt code location
+export DAGSTER_SA=$(cd tf && tofu output -json dagster_run_worker_service_account_emails | jq -r '.gtfsrt')
+
+# Impersonate for local development
+gcloud auth application-default login --impersonate-service-account=$DAGSTER_SA
+```
+
+Why run worker SA?
+
+- Local dev executes pipeline code (assets/ops)
+- Run worker SA is what executes this code in production
+- Ensures same permissions locally and in production
+
 ## Dagster Cloud Run Deployment
 
 **Architecture**: Dagster deployed to Google Cloud Run with:

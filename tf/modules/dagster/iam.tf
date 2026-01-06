@@ -64,23 +64,6 @@ resource "google_storage_bucket_iam_member" "dagster_logs" {
   member = "serviceAccount:${google_service_account.dagster.email}"
 }
 
-# GCS access for run workers - read protobuf, write parquet
-resource "google_storage_bucket_iam_member" "run_worker_protobuf_read" {
-  for_each = google_service_account.run_worker
-
-  bucket = var.protobuf_bucket_name
-  role   = "roles/storage.objectViewer"
-  member = "serviceAccount:${each.value.email}"
-}
-
-resource "google_storage_bucket_iam_member" "run_worker_parquet_write" {
-  for_each = google_service_account.run_worker
-
-  bucket = var.parquet_bucket_name
-  role   = "roles/storage.objectAdmin"
-  member = "serviceAccount:${each.value.email}"
-}
-
 # Logs bucket access for run workers
 resource "google_storage_bucket_iam_member" "run_worker_logs" {
   for_each = google_service_account.run_worker

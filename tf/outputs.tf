@@ -44,8 +44,13 @@ output "github_actions_service_account" {
 }
 
 output "dagster_service_account_email" {
-  description = "Email of the Dagster pipeline service account"
-  value       = google_service_account.dagster.email
+  description = "Email of the Dagster pipeline service account (primary)"
+  value       = module.dagster.dagster_service_account_email
+}
+
+output "dagster_run_worker_service_account_emails" {
+  description = "Map of code location names to run worker service account emails"
+  value       = module.dagster.run_worker_service_account_emails
 }
 
 # Cloud SQL outputs
