@@ -19,6 +19,14 @@ locals {
   # Cloud Run mounts Cloud SQL at /cloudsql/{connection_name}
   db_socket_path = "/cloudsql/${var.cloud_sql_connection_name}"
 
+  # Naming strategy: omit code location suffix for single location
+  is_single_location = length(var.code_locations) == 1
+
+  # Run worker job names (used in dagster.yaml run launcher config)
+  run_worker_names = {
+    for k, v in var.code_locations : k => local.is_single_location ? "dagster-run-worker" : "dagster-run-worker-${k}"
+  }
+
   # Common environment variables for all Dagster components
   common_env = {
     GCP_PROJECT_ID         = var.project_id
@@ -30,14 +38,7 @@ locals {
     GCS_BUCKET_RT_PROTOBUF = var.protobuf_bucket_name
     GCS_BUCKET_RT_PARQUET  = var.parquet_bucket_name
     DAGSTER_LOGS_BUCKET    = local.logs_bucket_name
-    DAGSTER_RUN_JOB_NAME   = local.is_single_location ? "dagster-run-worker" : null
-  }
-
-  # Per-location run job names for multi-location
-  run_job_env_vars = {
-    for k, v in var.code_locations : k => {
-      DAGSTER_RUN_JOB_NAME = local.run_worker_names[k]
-    }
+    DAGSTER_RUN_JOB_NAME   = local.run_worker_names["gtfsrt"]
   }
 }
 
