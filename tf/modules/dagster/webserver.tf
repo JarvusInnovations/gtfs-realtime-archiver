@@ -8,6 +8,9 @@ resource "google_cloud_run_v2_service" "webserver" {
   # Allow external access to the UI
   ingress = "INGRESS_TRAFFIC_ALL"
 
+  # Allow replacement during development
+  deletion_protection = false
+
   labels = local.common_labels
 
   template {
