@@ -29,6 +29,23 @@ resource "google_storage_bucket_iam_member" "run_worker_parquet_write" {
   member = "serviceAccount:${each.value}"
 }
 
+# GitHub Actions deployment permissions
+# Allow GitHub Actions SA to deploy Cloud Run services using Dagster SAs
+
+resource "google_service_account_iam_member" "github_actions_can_use_dagster_primary" {
+  service_account_id = "projects/${var.project_id}/serviceAccounts/${module.dagster.dagster_service_account_email}"
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.github_actions.email}"
+}
+
+resource "google_service_account_iam_member" "github_actions_can_use_dagster_run_workers" {
+  for_each = module.dagster.run_worker_service_account_emails
+
+  service_account_id = "projects/${var.project_id}/serviceAccounts/${each.value}"
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.github_actions.email}"
+}
+
 # Add future project-specific grants below...
 # Examples:
 # - BigQuery dataset access

@@ -65,6 +65,12 @@ resource "google_cloud_run_v2_job" "run_worker" {
           }
         }
 
+        # Current image for Dagster to identify the code location image
+        env {
+          name  = "DAGSTER_CURRENT_IMAGE"
+          value = each.value.image
+        }
+
         resources {
           limits = {
             cpu    = each.value.run_worker_cpu

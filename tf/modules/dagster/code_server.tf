@@ -74,6 +74,12 @@ resource "google_cloud_run_v2_service" "code_server" {
         }
       }
 
+      # Current image for Dagster to identify the code location image
+      env {
+        name  = "DAGSTER_CURRENT_IMAGE"
+        value = each.value.image
+      }
+
       # gRPC port (h2c = HTTP/2 cleartext)
       ports {
         name           = "h2c"
