@@ -2,7 +2,7 @@
 resource "random_password" "db_password" {
   length           = 32
   special          = true
-  override_special = "!#$%&*()-_=+[]{}<>:?"
+  override_special = "_-" # Conservative set safe for connection strings
 }
 
 # Store database password in Secret Manager

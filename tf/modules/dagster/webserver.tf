@@ -143,8 +143,16 @@ resource "google_cloud_run_v2_service" "webserver" {
   ]
 }
 
-# Allow unauthenticated access to webserver
-# In production, consider using IAP or Cloud Run authentication
+# SECURITY WARNING: Unauthenticated webserver access
+# This allows public access to the Dagster UI without authentication.
+#
+# For production deployments, you should:
+# 1. Use Cloud Run IAP (Identity-Aware Proxy) for authentication
+# 2. Or use Cloud Run authentication with service accounts
+# 3. Or place behind Cloud Load Balancer with IAP/OAuth
+#
+# To enable authentication, remove this resource and configure IAP:
+# https://cloud.google.com/run/docs/authenticating/public
 resource "google_cloud_run_v2_service_iam_member" "webserver_invoker" {
   name     = google_cloud_run_v2_service.webserver.name
   location = var.region

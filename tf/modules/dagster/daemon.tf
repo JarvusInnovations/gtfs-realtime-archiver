@@ -44,6 +44,18 @@ resource "google_cloud_run_v2_worker_pool" "daemon" {
       }
     }
 
+    volumes {
+      name = "workspace-config"
+      secret {
+        secret       = google_secret_manager_secret.workspace_config.secret_id
+        default_mode = 292 # 0444
+        items {
+          path    = "workspace.yaml"
+          version = "latest"
+        }
+      }
+    }
+
     containers {
       name  = "daemon"
       image = var.daemon_image
@@ -57,11 +69,17 @@ resource "google_cloud_run_v2_worker_pool" "daemon" {
         mount_path = "/cloudsql"
       }
 
-      # Mount config file to DAGSTER_HOME
+      # Mount config files to DAGSTER_HOME
       volume_mounts {
         name       = "dagster-config"
         mount_path = "/opt/dagster/dagster_home/dagster.yaml"
         sub_path   = "dagster.yaml"
+      }
+
+      volume_mounts {
+        name       = "workspace-config"
+        mount_path = "/opt/dagster/dagster_home/workspace.yaml"
+        sub_path   = "workspace.yaml"
       }
 
       # Environment variables
@@ -100,16 +118,8 @@ resource "google_cloud_run_v2_worker_pool" "daemon" {
         }
       }
 
-      # Liveness probe - daemon should stay running
-      liveness_probe {
-        tcp_socket {
-          port = 8080
-        }
-        initial_delay_seconds = 30
-        period_seconds        = 60
-        timeout_seconds       = 5
-        failure_threshold     = 3
-      }
+      # Note: No liveness probe - dagster-daemon doesn't expose HTTP/TCP endpoints
+      # Cloud Run's automatic restart policy handles daemon crashes
     }
   }
 
@@ -122,6 +132,7 @@ resource "google_cloud_run_v2_worker_pool" "daemon" {
   depends_on = [
     google_secret_manager_secret_iam_member.dagster_db_password,
     google_secret_manager_secret_iam_member.dagster_config,
+    google_secret_manager_secret_iam_member.dagster_workspace,
     google_cloud_run_v2_service.code_server
   ]
 }
