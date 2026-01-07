@@ -51,6 +51,15 @@ resource "google_cloud_run_v2_service" "webserver" {
         }
       }
 
+      # Code server URLs for gRPC connections (for workspace.yaml)
+      dynamic "env" {
+        for_each = google_cloud_run_v2_service.code_server
+        content {
+          name  = "CODE_SERVER_HOST_${upper(env.key)}"
+          value = trimprefix(env.value.uri, "https://")
+        }
+      }
+
       # Database password from Secret Manager
       env {
         name = "DAGSTER_POSTGRES_PASSWORD"
