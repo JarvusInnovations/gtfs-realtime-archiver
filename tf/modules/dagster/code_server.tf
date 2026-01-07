@@ -11,6 +11,9 @@ resource "google_cloud_run_v2_service" "code_server" {
   # Internal only - accessed by webserver and daemon
   ingress = "INGRESS_TRAFFIC_INTERNAL_ONLY"
 
+  # Allow replacement during development
+  deletion_protection = false
+
   labels = local.common_labels
 
   template {

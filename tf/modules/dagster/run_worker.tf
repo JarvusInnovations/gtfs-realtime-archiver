@@ -8,6 +8,9 @@ resource "google_cloud_run_v2_job" "run_worker" {
   location = var.region
   project  = var.project_id
 
+  # Allow replacement during development
+  deletion_protection = false
+
   labels = local.common_labels
 
   template {

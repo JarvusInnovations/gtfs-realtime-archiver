@@ -66,6 +66,7 @@ dagster-deploy = [
     "dagster-contrib-gcp>=0.0.9",
     "dagster-gcp>=0.24.0",
     "dagster-postgres>=0.24.0",
+    "dagster-webserver>=1.12.8",
 ]
 
 [tool.ruff]

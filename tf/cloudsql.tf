@@ -52,4 +52,8 @@ resource "google_sql_database_instance" "dagster" {
   lifecycle {
     prevent_destroy = true
   }
+
+  depends_on = [
+    google_project_service.sqladmin
+  ]
 }
