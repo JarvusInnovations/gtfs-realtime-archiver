@@ -134,3 +134,10 @@ resource "google_project_iam_member" "github_actions_bigquery_admin" {
   role    = "roles/bigquery.admin"
   member  = "serviceAccount:${google_service_account.github_actions.email}"
 }
+
+# Cloud SQL Admin - manage Cloud SQL instances and databases
+resource "google_project_iam_member" "github_actions_cloudsql_admin" {
+  project = var.project_id
+  role    = "roles/cloudsql.admin"
+  member  = "serviceAccount:${google_service_account.github_actions.email}"
+}
