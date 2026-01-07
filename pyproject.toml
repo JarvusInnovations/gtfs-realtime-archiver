@@ -60,6 +60,13 @@ dev = [
     "ruff>=0.14.10",
     "types-protobuf>=6.32.1.20251210",
 ]
+# Deployment group - includes dagster base plus deployment-specific deps
+dagster-deploy = [
+    { include-group = "dagster" },
+    "dagster-contrib-gcp>=0.0.9",
+    "dagster-gcp>=0.24.0",
+    "dagster-postgres>=0.24.0",
+]
 
 [tool.ruff]
 target-version = "py312"

@@ -29,6 +29,7 @@ fetch_duration = Histogram(
     "Time to fetch feed",
     ["feed_id", "feed_type", "agency"],
     buckets=[0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0],
+    unit="seconds",
 )
 
 fetch_bytes = Histogram(
@@ -56,6 +57,7 @@ upload_duration = Histogram(
     "Time to upload to GCS",
     ["feed_id", "feed_type", "agency"],
     buckets=[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0],
+    unit="seconds",
 )
 
 # System metrics
@@ -81,6 +83,7 @@ scheduler_delay = Histogram(
     "Time from scheduled tick to job dispatch (APScheduler overhead)",
     ["feed_id", "feed_type", "agency"],
     buckets=TIMING_BUCKETS,
+    unit="seconds",
 )
 
 queue_delay = Histogram(
@@ -88,6 +91,7 @@ queue_delay = Histogram(
     "Time waiting for concurrency semaphore",
     ["feed_id", "feed_type", "agency"],
     buckets=TIMING_BUCKETS,
+    unit="seconds",
 )
 
 total_delay = Histogram(
@@ -95,6 +99,7 @@ total_delay = Histogram(
     "Total time from scheduled tick to job start (scheduler + queue)",
     ["feed_id", "feed_type", "agency"],
     buckets=TIMING_BUCKETS,
+    unit="seconds",
 )
 
 # End-to-end processing time
@@ -103,6 +108,7 @@ processing_time = Histogram(
     "Total time to fetch and upload (end-to-end)",
     ["feed_id", "feed_type", "agency"],
     buckets=TIMING_BUCKETS,
+    unit="seconds",
 )
 
 # Bytes counter with content_type label (cumulative throughput tracking)

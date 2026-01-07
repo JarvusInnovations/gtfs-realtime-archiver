@@ -19,6 +19,15 @@
             "timeout": 30
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'file_path=$(cat | jq -r \".tool_input.file_path\"); [[ \"$file_path\" == *.tf ]] && tofu fmt \"$file_path\" || true'"
+          }
+        ]
       }
     ]
   }

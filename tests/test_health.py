@@ -50,14 +50,16 @@ class TestHealthServerEndpoints(AioHTTPTestCase):
 
     @unittest_run_loop
     async def test_metrics_endpoint_returns_prometheus_format(self) -> None:
-        """Test /metrics returns Prometheus metrics."""
+        """Test /metrics returns OpenMetrics format."""
         resp = await self.client.get("/metrics")
         assert resp.status == 200
-        assert "text/plain" in resp.content_type or "text/openmetrics" in resp.content_type
+        assert "openmetrics" in resp.content_type or "text/plain" in resp.content_type
 
         text = await resp.text()
-        # Should contain some Prometheus metrics
+        # Should contain OpenMetrics format metadata
         assert "# HELP" in text or "# TYPE" in text or len(text) > 0
+        # OpenMetrics format includes UNIT declarations for time metrics
+        assert "# UNIT" in text or "# TYPE" in text
 
 
 class TestHealthServerWithScheduler(AioHTTPTestCase):

@@ -44,6 +44,38 @@ output "github_actions_service_account" {
 }
 
 output "dagster_service_account_email" {
-  description = "Email of the Dagster pipeline service account"
-  value       = google_service_account.dagster.email
+  description = "Email of the Dagster pipeline service account (primary)"
+  value       = module.dagster.dagster_service_account_email
+}
+
+output "dagster_run_worker_service_account_emails" {
+  description = "Map of code location names to run worker service account emails"
+  value       = module.dagster.run_worker_service_account_emails
+}
+
+# Cloud SQL outputs
+output "cloudsql_instance_name" {
+  description = "Name of the Cloud SQL instance"
+  value       = google_sql_database_instance.dagster.name
+}
+
+output "cloudsql_connection_name" {
+  description = "Connection name for Cloud SQL (project:region:instance)"
+  value       = google_sql_database_instance.dagster.connection_name
+}
+
+# Dagster module outputs
+output "dagster_webserver_url" {
+  description = "URL of the Dagster webserver"
+  value       = module.dagster.webserver_url
+}
+
+output "dagster_code_server_urls" {
+  description = "URLs of Dagster code servers by location"
+  value       = module.dagster.code_server_urls
+}
+
+output "dagster_run_worker_job_names" {
+  description = "Cloud Run job names for run workers by location"
+  value       = module.dagster.run_worker_job_names
 }
