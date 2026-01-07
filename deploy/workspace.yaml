@@ -1,0 +1,9 @@
+# Dagster workspace configuration with environment variable placeholders
+# Copied into container images at build time
+
+load_from:
+  - grpc_server:
+      host:
+        env: CODE_SERVER_HOST_GTFSRT
+      port: 3030
+      location_name: gtfsrt

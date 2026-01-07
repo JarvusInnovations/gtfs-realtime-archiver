@@ -30,6 +30,14 @@ locals {
     GCS_BUCKET_RT_PROTOBUF = var.protobuf_bucket_name
     GCS_BUCKET_RT_PARQUET  = var.parquet_bucket_name
     DAGSTER_LOGS_BUCKET    = local.logs_bucket_name
+    DAGSTER_RUN_JOB_NAME   = local.is_single_location ? "dagster-run-worker" : null
+  }
+
+  # Per-location run job names for multi-location
+  run_job_env_vars = {
+    for k, v in var.code_locations : k => {
+      DAGSTER_RUN_JOB_NAME = local.run_worker_names[k]
+    }
   }
 }
 
@@ -38,24 +46,6 @@ data "google_project" "current" {
   project_id = var.project_id
 }
 
-# Template variables for dagster.yaml
-locals {
-  dagster_config_vars = {
-    project_id            = var.project_id
-    region                = var.region
-    db_host               = local.db_socket_path
-    db_name               = var.db_name
-    db_user               = var.db_user
-    logs_bucket           = local.logs_bucket_name
-    run_timeout           = var.run_timeout_seconds
-    code_location_job_map = { for k, v in var.code_locations : k => "dagster-run-worker-${k}" }
-  }
-
-  workspace_config_vars = {
-    code_locations = { for k, v in var.code_locations : k => {
-      host        = trimprefix(google_cloud_run_v2_service.code_server[k].uri, "https://")
-      port        = v.port
-      module_name = v.module_name
-    } }
-  }
-}
+# Note: Config templates (dagster.yaml, workspace.yaml) are now baked into
+# container images at build time with environment variable placeholders.
+# No Terraform template rendering needed - all values passed via env vars.

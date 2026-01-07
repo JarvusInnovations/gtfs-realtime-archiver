@@ -28,21 +28,7 @@ resource "google_cloud_run_v2_service" "code_server" {
       max_instance_count = 1
     }
 
-    # Config files volumes (from Secret Manager)
-    # Order matches Cloud Run's stored order to prevent drift
-    volumes {
-      name = "dagster-config"
-      secret {
-        secret       = google_secret_manager_secret.dagster_config.secret_id
-        default_mode = 292 # 0444
-        items {
-          path    = "dagster.yaml"
-          version = "latest"
-        }
-      }
-    }
-
-    # Cloud SQL volume mount
+    # Cloud SQL volume mount for database access
     volumes {
       name = "cloudsql"
       cloud_sql_instance {
@@ -61,13 +47,6 @@ resource "google_cloud_run_v2_service" "code_server" {
         "--port", tostring(each.value.port),
         "--module-name", each.value.module_name
       ]
-
-      # Mount config secrets to separate directories
-      # Symlinks in container point from DAGSTER_HOME to these mount points
-      volume_mounts {
-        name       = "dagster-config"
-        mount_path = "/mnt/dagster-config"
-      }
 
       # Mount Cloud SQL socket
       volume_mounts {

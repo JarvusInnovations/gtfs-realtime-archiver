@@ -1,0 +1,50 @@
+# Dagster configuration with environment variable placeholders
+# Copied into container images at build time
+
+# PostgreSQL storage backend
+storage:
+  postgres:
+    postgres_db:
+      username:
+        env: DAGSTER_POSTGRES_USER
+      password:
+        env: DAGSTER_POSTGRES_PASSWORD
+      hostname:
+        env: DAGSTER_POSTGRES_HOST
+      db_name:
+        env: DAGSTER_POSTGRES_DB
+      port: 5432
+
+# Cloud Run run launcher
+run_launcher:
+  module: dagster_contrib_gcp.cloud_run.run_launcher
+  class: CloudRunRunLauncher
+  config:
+    project:
+      env: GCP_PROJECT_ID
+    region:
+      env: GCP_REGION
+    job_name_by_code_location:
+      gtfsrt:
+        env: DAGSTER_RUN_JOB_NAME
+    run_timeout: 86400
+
+# Queued run coordinator for managing concurrent runs
+run_coordinator:
+  module: dagster.core.run_coordinator
+  class: QueuedRunCoordinator
+  config:
+    max_concurrent_runs: 10
+
+# GCS compute log manager
+compute_logs:
+  module: dagster_gcp.gcs.compute_log_manager
+  class: GCSComputeLogManager
+  config:
+    bucket:
+      env: DAGSTER_LOGS_BUCKET
+    prefix: compute_logs
+
+# Disable telemetry
+telemetry:
+  enabled: false

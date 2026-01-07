@@ -22,12 +22,11 @@ COPY src/dagster_pipeline ./dagster_pipeline
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --only-group dagster-deploy
 
-# Create dagster_home directory and symlinks to config mount points
-# Configs will be mounted at runtime to /mnt/dagster-config/ and /mnt/workspace-config/
-# Symlinks allow Dagster to find configs at expected paths in DAGSTER_HOME
-RUN mkdir -p /opt/dagster/dagster_home /mnt/dagster-config /mnt/workspace-config && \
-    ln -s /mnt/dagster-config/dagster.yaml /opt/dagster/dagster_home/dagster.yaml && \
-    ln -s /mnt/workspace-config/workspace.yaml /opt/dagster/dagster_home/workspace.yaml
+# Create dagster_home directory and copy config templates
+# Config files use environment variable placeholders resolved at runtime
+RUN mkdir -p /opt/dagster/dagster_home
+COPY deploy/dagster.yaml /opt/dagster/dagster_home/dagster.yaml
+COPY deploy/workspace.yaml /opt/dagster/dagster_home/workspace.yaml
 ENV DAGSTER_HOME=/opt/dagster/dagster_home
 
 

@@ -32,16 +32,9 @@ resource "google_service_account_iam_member" "dagster_can_impersonate_run_worker
   member             = "serviceAccount:${google_service_account.dagster.email}"
 }
 
-# Secret Manager access for primary SA (DB password, config secrets)
+# Secret Manager access for primary SA (DB password only)
 resource "google_secret_manager_secret_iam_member" "dagster_db_password" {
   secret_id = google_secret_manager_secret.db_password.secret_id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.dagster.email}"
-  project   = var.project_id
-}
-
-resource "google_secret_manager_secret_iam_member" "dagster_config" {
-  secret_id = google_secret_manager_secret.dagster_config.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.dagster.email}"
   project   = var.project_id
