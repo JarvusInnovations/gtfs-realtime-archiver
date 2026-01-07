@@ -136,4 +136,12 @@ resource "google_cloud_run_v2_worker_pool" "daemon" {
     google_secret_manager_secret_iam_member.dagster_workspace,
     google_cloud_run_v2_service.code_server
   ]
+
+  lifecycle {
+    ignore_changes = [
+      # API doesn't return scaling_mode, causes perpetual diff
+      # See: https://github.com/hashicorp/terraform-provider-google/issues/25580
+      scaling[0].scaling_mode
+    ]
+  }
 }
