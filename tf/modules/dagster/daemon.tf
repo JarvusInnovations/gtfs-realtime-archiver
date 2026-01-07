@@ -69,17 +69,16 @@ resource "google_cloud_run_v2_worker_pool" "daemon" {
         mount_path = "/cloudsql"
       }
 
-      # Mount config files to DAGSTER_HOME
+      # Mount config secrets to separate directories
+      # Symlinks in container point from DAGSTER_HOME to these mount points
       volume_mounts {
         name       = "dagster-config"
-        mount_path = "/opt/dagster/dagster_home/dagster.yaml"
-        sub_path   = "dagster.yaml"
+        mount_path = "/mnt/dagster-config"
       }
 
       volume_mounts {
         name       = "workspace-config"
-        mount_path = "/opt/dagster/dagster_home/workspace.yaml"
-        sub_path   = "workspace.yaml"
+        mount_path = "/mnt/workspace-config"
       }
 
       # Environment variables
