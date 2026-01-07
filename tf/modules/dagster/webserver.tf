@@ -21,15 +21,8 @@ resource "google_cloud_run_v2_service" "webserver" {
       max_instance_count = 2
     }
 
-    # Cloud SQL volume mount
-    volumes {
-      name = "cloudsql"
-      cloud_sql_instance {
-        instances = [var.cloud_sql_connection_name]
-      }
-    }
-
-    # Config files volume (from Secret Manager)
+    # Config files volumes (from Secret Manager)
+    # Order matches Cloud Run's stored order to prevent drift
     volumes {
       name = "dagster-config"
       secret {
@@ -54,6 +47,14 @@ resource "google_cloud_run_v2_service" "webserver" {
       }
     }
 
+    # Cloud SQL volume mount
+    volumes {
+      name = "cloudsql"
+      cloud_sql_instance {
+        instances = [var.cloud_sql_connection_name]
+      }
+    }
+
     containers {
       name  = "webserver"
       image = var.webserver_image
@@ -61,14 +62,9 @@ resource "google_cloud_run_v2_service" "webserver" {
       # Run Dagster webserver
       command = ["dagster-webserver", "--host", "0.0.0.0", "--port", "3000"]
 
-      # Mount Cloud SQL socket
-      volume_mounts {
-        name       = "cloudsql"
-        mount_path = "/cloudsql"
-      }
-
       # Mount config secrets to separate directories
       # Symlinks in container point from DAGSTER_HOME to these mount points
+      # Order matches volume order to prevent drift
       volume_mounts {
         name       = "dagster-config"
         mount_path = "/mnt/dagster-config"
@@ -77,6 +73,12 @@ resource "google_cloud_run_v2_service" "webserver" {
       volume_mounts {
         name       = "workspace-config"
         mount_path = "/mnt/workspace-config"
+      }
+
+      # Mount Cloud SQL socket
+      volume_mounts {
+        name       = "cloudsql"
+        mount_path = "/cloudsql"
       }
 
       # Environment variables
