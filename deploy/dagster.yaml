@@ -17,9 +17,9 @@ run_launcher:
     region:
       env: GCP_REGION
     job_name_by_code_location:
-      dagster_pipeline.definitions:
-        name:
-          env: DAGSTER_RUN_JOB_NAME
+      # Key must match the module name Dagster uses for the code location
+      # Value is the Cloud Run job name from Terraform
+      dagster_pipeline.definitions: dagster-run-worker-gtfsrt
     run_timeout: 86400
 
 # Queued run coordinator for managing concurrent runs
