@@ -82,6 +82,31 @@ resource "google_storage_bucket_iam_member" "run_worker_logs_reader" {
   member = "serviceAccount:${each.value.email}"
 }
 
+# Protobuf bucket read access for primary SA (sensors discover feeds by listing objects)
+resource "google_storage_bucket_iam_member" "dagster_protobuf_reader" {
+  bucket = var.protobuf_bucket_name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.dagster.email}"
+}
+
+# Protobuf bucket read access for run workers (read source data for compaction)
+resource "google_storage_bucket_iam_member" "run_worker_protobuf_reader" {
+  for_each = google_service_account.run_worker
+
+  bucket = var.protobuf_bucket_name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${each.value.email}"
+}
+
+# Parquet bucket write access for run workers (write compacted output)
+resource "google_storage_bucket_iam_member" "run_worker_parquet_writer" {
+  for_each = google_service_account.run_worker
+
+  bucket = var.parquet_bucket_name
+  role   = "roles/storage.objectUser"
+  member = "serviceAccount:${each.value.email}"
+}
+
 # Cloud SQL client role for service accounts (required for socket connections)
 resource "google_project_iam_member" "dagster_cloudsql_client" {
   project = var.project_id
