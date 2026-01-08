@@ -22,7 +22,7 @@ locals {
   # Naming strategy: omit code location suffix for single location
   is_single_location = length(var.code_locations) == 1
 
-  # Run worker job names (used in dagster.yaml run launcher config)
+  # Run worker job names for run launcher config
   run_worker_names = {
     for k, v in var.code_locations : k => local.is_single_location ? "dagster-run-worker" : "dagster-run-worker-${k}"
   }
@@ -47,6 +47,5 @@ data "google_project" "current" {
   project_id = var.project_id
 }
 
-# Note: Config templates (dagster.yaml, workspace.yaml) are now baked into
-# container images at build time with environment variable placeholders.
-# No Terraform template rendering needed - all values passed via env vars.
+# Note: Dagster config files are baked into container images at build time
+# with environment variable placeholders. All values passed via env vars.

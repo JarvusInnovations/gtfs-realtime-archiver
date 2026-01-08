@@ -51,7 +51,7 @@ resource "google_cloud_run_v2_service" "webserver" {
         }
       }
 
-      # Code server URLs for gRPC connections (for workspace.yaml)
+      # Code server URLs for gRPC connections
       dynamic "env" {
         for_each = google_cloud_run_v2_service.code_server
         content {

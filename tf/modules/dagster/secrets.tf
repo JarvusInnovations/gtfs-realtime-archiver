@@ -22,6 +22,5 @@ resource "google_secret_manager_secret_version" "db_password" {
   secret_data = random_password.db_password.result
 }
 
-# Note: Dagster config files (dagster.yaml, workspace.yaml) are now baked
-# into container images at build time with environment variable placeholders.
-# No Secret Manager storage needed for these configs.
+# Note: Dagster config files are baked into container images at build time
+# with environment variable placeholders. No Secret Manager storage needed.
