@@ -1,12 +1,22 @@
 # Webserver outputs
 output "webserver_url" {
-  description = "URL of the Dagster webserver"
+  description = "URL of the Dagster webserver (Cloud Run URL)"
   value       = google_cloud_run_v2_service.webserver.uri
 }
 
 output "webserver_service_name" {
   description = "Name of the webserver Cloud Run service"
   value       = google_cloud_run_v2_service.webserver.name
+}
+
+output "webserver_iap_url" {
+  description = "IAP-protected custom domain URL for Dagster webserver"
+  value       = var.custom_domain != null ? "https://${var.custom_domain}" : null
+}
+
+output "webserver_iap_enabled" {
+  description = "Whether IAP is enabled on the webserver"
+  value       = var.iap_allowed_domain != null
 }
 
 # Service account outputs

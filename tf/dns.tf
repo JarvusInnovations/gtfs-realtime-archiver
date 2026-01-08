@@ -23,3 +23,15 @@ resource "google_dns_record_set" "parquet_bucket" {
   ttl          = 300
   rrdatas      = ["c.storage.googleapis.com."]
 }
+
+# DNS record for Dagster webserver custom domain
+resource "google_dns_record_set" "dagster" {
+  count = var.dagster_iap_allowed_domain != null ? 1 : 0
+
+  name         = "${var.dagster_domain}."
+  managed_zone = data.google_dns_managed_zone.gtfsrt_io.name
+  project      = var.project_id
+  type         = "CNAME"
+  ttl          = 300
+  rrdatas      = ["ghs.googlehosted.com."]
+}

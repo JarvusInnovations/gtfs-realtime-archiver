@@ -66,8 +66,18 @@ output "cloudsql_connection_name" {
 
 # Dagster module outputs
 output "dagster_webserver_url" {
-  description = "URL of the Dagster webserver"
+  description = "Cloud Run URL of the Dagster webserver"
   value       = module.dagster.webserver_url
+}
+
+output "dagster_url" {
+  description = "Primary URL for Dagster webserver (custom domain if IAP enabled, otherwise Cloud Run URL)"
+  value       = var.dagster_iap_allowed_domain != null ? "https://${var.dagster_domain}" : module.dagster.webserver_url
+}
+
+output "dagster_iap_enabled" {
+  description = "Whether IAP is enabled on Dagster webserver"
+  value       = module.dagster.webserver_iap_enabled
 }
 
 output "dagster_code_server_urls" {
