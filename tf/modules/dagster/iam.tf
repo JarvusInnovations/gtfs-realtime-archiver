@@ -57,12 +57,28 @@ resource "google_storage_bucket_iam_member" "dagster_logs" {
   member = "serviceAccount:${google_service_account.dagster.email}"
 }
 
+# Logs bucket metadata access for primary SA (GCSComputeLogManager needs storage.buckets.get)
+resource "google_storage_bucket_iam_member" "dagster_logs_reader" {
+  bucket = local.logs_bucket_name
+  role   = "roles/storage.legacyBucketReader"
+  member = "serviceAccount:${google_service_account.dagster.email}"
+}
+
 # Logs bucket access for run workers
 resource "google_storage_bucket_iam_member" "run_worker_logs" {
   for_each = google_service_account.run_worker
 
   bucket = local.logs_bucket_name
   role   = "roles/storage.objectUser"
+  member = "serviceAccount:${each.value.email}"
+}
+
+# Logs bucket metadata access for run workers (GCSComputeLogManager needs storage.buckets.get)
+resource "google_storage_bucket_iam_member" "run_worker_logs_reader" {
+  for_each = google_service_account.run_worker
+
+  bucket = local.logs_bucket_name
+  role   = "roles/storage.legacyBucketReader"
   member = "serviceAccount:${each.value.email}"
 }
 
