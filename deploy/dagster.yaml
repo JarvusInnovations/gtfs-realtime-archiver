@@ -17,7 +17,7 @@ run_launcher:
     region:
       env: GCP_REGION
     job_name_by_code_location:
-      gtfsrt:
+      dagster_pipeline.definitions:
         env: DAGSTER_RUN_JOB_NAME
     run_timeout: 86400
 
