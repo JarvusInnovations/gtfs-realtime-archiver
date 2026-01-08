@@ -147,8 +147,8 @@ jobs:
       - name: Run tests
         run: uv run pytest tests/ -v --tb=short
 
-  build:
-    name: Build Container
+  build-archiver:
+    name: Build Archiver
     runs-on: ubuntu-latest
     needs: [lint, typecheck, dagster, test]
     steps:
