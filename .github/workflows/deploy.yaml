@@ -189,6 +189,7 @@ jobs:
             -var="dagster_webserver_image=${{ steps.version.outputs.dagster_webserver_image }}" \
             -var="dagster_daemon_image=${{ steps.version.outputs.dagster_daemon_image }}" \
             -var="dagster_code_server_image=${{ steps.version.outputs.dagster_code_server_image }}" \
+            -var="dagster_iap_allowed_domain=${{ vars.DAGSTER_IAP_ALLOWED_DOMAIN }}" \
             -out=tfplan
 
       - name: Apply deployment
