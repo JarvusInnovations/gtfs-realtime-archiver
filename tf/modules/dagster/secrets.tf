@@ -22,5 +22,20 @@ resource "google_secret_manager_secret_version" "db_password" {
   secret_data = random_password.db_password.result
 }
 
-# Note: Dagster config files are baked into container images at build time
-# with environment variable placeholders. No Secret Manager storage needed.
+# Full PostgreSQL connection URL for Unix socket connections
+# Format: postgresql://user:pass@/dbname?host=/cloudsql/connection
+resource "google_secret_manager_secret" "postgres_url" {
+  secret_id = "dagster-postgres-url"
+  project   = var.project_id
+
+  labels = local.common_labels
+
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_version" "postgres_url" {
+  secret      = google_secret_manager_secret.postgres_url.id
+  secret_data = "postgresql://${var.db_user}:${random_password.db_password.result}@/${var.db_name}?host=${local.db_socket_path}"
+}
