@@ -75,6 +75,9 @@ gtfs-realtime-archiver/
 │   ├── variables.tf        # Input variables
 │   ├── outputs.tf          # Output values
 │   └── versions.tf         # Provider versions
+├── deploy/                 # Dagster deployment configs
+│   ├── dagster.yaml        # Dagster config with env var placeholders
+│   └── workspace.yaml      # Workspace config with env var placeholders
 ├── pyproject.toml          # Project config, dependencies, tool settings
 ├── uv.lock                 # Dependency lockfile
 ├── Dockerfile              # Multi-stage container build (archiver)
