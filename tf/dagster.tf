@@ -1,5 +1,10 @@
 # Dagster deployment module instantiation
 
+# Get project number for IAP service account
+data "google_project" "current" {
+  project_id = var.project_id
+}
+
 module "dagster" {
   source = "./modules/dagster"
 
@@ -22,6 +27,11 @@ module "dagster" {
       run_worker_memory = "4Gi"
     }
   }
+
+  # IAP configuration
+  iap_allowed_domain = var.dagster_iap_allowed_domain
+  project_number     = data.google_project.current.number
+  custom_domain      = var.dagster_iap_allowed_domain != null ? var.dagster_domain : null
 
   labels = {
     project = "gtfs-rt-archiver"

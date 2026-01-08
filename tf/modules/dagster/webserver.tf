@@ -1,9 +1,16 @@
 # Cloud Run service for Dagster webserver (UI)
 
 resource "google_cloud_run_v2_service" "webserver" {
+  # Use beta provider for IAP support
+  provider = google-beta
+
   name     = "dagster-webserver"
   location = var.region
   project  = var.project_id
+
+  # Enable IAP (Preview feature) - requires BETA launch stage
+  launch_stage = var.iap_allowed_domain != null ? "BETA" : null
+  iap_enabled  = var.iap_allowed_domain != null
 
   # Allow external access to the UI
   ingress = "INGRESS_TRAFFIC_ALL"
@@ -115,20 +122,57 @@ resource "google_cloud_run_v2_service" "webserver" {
   ]
 }
 
-# SECURITY WARNING: Unauthenticated webserver access
-# This allows public access to the Dagster UI without authentication.
-#
-# For production deployments, you should:
-# 1. Use Cloud Run IAP (Identity-Aware Proxy) for authentication
-# 2. Or use Cloud Run authentication with service accounts
-# 3. Or place behind Cloud Load Balancer with IAP/OAuth
-#
-# To enable authentication, remove this resource and configure IAP:
-# https://cloud.google.com/run/docs/authenticating/public
-resource "google_cloud_run_v2_service_iam_member" "webserver_invoker" {
+# Public access when IAP is disabled
+# SECURITY WARNING: This allows unauthenticated access to the Dagster UI.
+# Only created when var.iap_allowed_domain is null.
+resource "google_cloud_run_v2_service_iam_member" "webserver_public_invoker" {
+  count = var.iap_allowed_domain == null ? 1 : 0
+
+  provider = google-beta
   name     = google_cloud_run_v2_service.webserver.name
   location = var.region
   project  = var.project_id
   role     = "roles/run.invoker"
   member   = "allUsers"
+}
+
+# IAP service agent invoker - allows IAP to call Cloud Run
+resource "google_cloud_run_v2_service_iam_member" "webserver_iap_invoker" {
+  count = var.iap_allowed_domain != null ? 1 : 0
+
+  provider = google-beta
+  name     = google_cloud_run_v2_service.webserver.name
+  location = var.region
+  project  = var.project_id
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:service-${var.project_number}@gcp-sa-iap.iam.gserviceaccount.com"
+}
+
+# IAP access for Google Workspace domain
+resource "google_iap_web_cloud_run_service_iam_member" "webserver_domain_access" {
+  count = var.iap_allowed_domain != null ? 1 : 0
+
+  provider               = google-beta
+  project                = var.project_number # Must use project number, not ID
+  location               = var.region
+  cloud_run_service_name = google_cloud_run_v2_service.webserver.name
+  role                   = "roles/iap.httpsResourceAccessor"
+  member                 = "domain:${var.iap_allowed_domain}"
+}
+
+# Custom domain mapping for webserver
+resource "google_cloud_run_domain_mapping" "webserver" {
+  count = var.custom_domain != null ? 1 : 0
+
+  name     = var.custom_domain
+  location = var.region
+  project  = var.project_id
+
+  metadata {
+    namespace = var.project_id
+  }
+
+  spec {
+    route_name = google_cloud_run_v2_service.webserver.name
+  }
 }

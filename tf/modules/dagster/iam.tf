@@ -57,11 +57,52 @@ resource "google_storage_bucket_iam_member" "dagster_logs" {
   member = "serviceAccount:${google_service_account.dagster.email}"
 }
 
+# Logs bucket metadata access for primary SA (GCSComputeLogManager needs storage.buckets.get)
+resource "google_storage_bucket_iam_member" "dagster_logs_reader" {
+  bucket = local.logs_bucket_name
+  role   = "roles/storage.legacyBucketReader"
+  member = "serviceAccount:${google_service_account.dagster.email}"
+}
+
 # Logs bucket access for run workers
 resource "google_storage_bucket_iam_member" "run_worker_logs" {
   for_each = google_service_account.run_worker
 
   bucket = local.logs_bucket_name
+  role   = "roles/storage.objectUser"
+  member = "serviceAccount:${each.value.email}"
+}
+
+# Logs bucket metadata access for run workers (GCSComputeLogManager needs storage.buckets.get)
+resource "google_storage_bucket_iam_member" "run_worker_logs_reader" {
+  for_each = google_service_account.run_worker
+
+  bucket = local.logs_bucket_name
+  role   = "roles/storage.legacyBucketReader"
+  member = "serviceAccount:${each.value.email}"
+}
+
+# Protobuf bucket read access for primary SA (sensors discover feeds by listing objects)
+resource "google_storage_bucket_iam_member" "dagster_protobuf_reader" {
+  bucket = var.protobuf_bucket_name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.dagster.email}"
+}
+
+# Protobuf bucket read access for run workers (read source data for compaction)
+resource "google_storage_bucket_iam_member" "run_worker_protobuf_reader" {
+  for_each = google_service_account.run_worker
+
+  bucket = var.protobuf_bucket_name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${each.value.email}"
+}
+
+# Parquet bucket write access for run workers (write compacted output)
+resource "google_storage_bucket_iam_member" "run_worker_parquet_writer" {
+  for_each = google_service_account.run_worker
+
+  bucket = var.parquet_bucket_name
   role   = "roles/storage.objectUser"
   member = "serviceAccount:${each.value.email}"
 }

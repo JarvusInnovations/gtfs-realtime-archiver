@@ -125,3 +125,16 @@ variable "dagster_code_server_image" {
   type        = string
   default     = "us-central1-docker.pkg.dev/gtfs-archiver/ghcr-remote/jarvusinnovations/gtfs-realtime-archiver/dagster-code-server:latest"
 }
+
+# Dagster IAP configuration
+variable "dagster_iap_allowed_domain" {
+  description = "Google Workspace domain allowed to access Dagster via IAP (e.g., 'example.com'). Set to null to disable IAP."
+  type        = string
+  default     = null
+}
+
+variable "dagster_domain" {
+  description = "Custom domain for Dagster webserver"
+  type        = string
+  default     = "dagster.gtfsrt.io"
+}

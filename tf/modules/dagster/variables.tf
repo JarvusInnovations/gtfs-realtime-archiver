@@ -113,3 +113,22 @@ variable "labels" {
   type        = map(string)
   default     = {}
 }
+
+# IAP configuration
+variable "iap_allowed_domain" {
+  description = "Google Workspace domain for IAP access. Null disables IAP."
+  type        = string
+  default     = null
+}
+
+variable "custom_domain" {
+  description = "Custom domain for webserver (requires DNS record)"
+  type        = string
+  default     = null
+}
+
+variable "project_number" {
+  description = "GCP project number (required for IAP service account)"
+  type        = string
+  default     = null
+}
