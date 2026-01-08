@@ -3,7 +3,7 @@
 #
 # The module handles Dagster-internal permissions:
 # - Logs bucket access (module creates/manages)
-# - Secret Manager (DB password, config secrets)
+# - Secret Manager (DB password only)
 # - Cloud SQL client role
 # - Cloud Run admin (for launching jobs)
 #
