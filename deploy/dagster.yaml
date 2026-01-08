@@ -1,15 +1,18 @@
-# Dagster configuration - rendered by Terraform
-# Template variables: project_id, region, db_host, db_name, db_user, logs_bucket, run_timeout, code_location_job_map
+# Dagster configuration with environment variable placeholders
+# Copied into container images at build time
 
 # PostgreSQL storage backend
 storage:
   postgres:
     postgres_db:
-      username: ${db_user}
+      username:
+        env: DAGSTER_POSTGRES_USER
       password:
         env: DAGSTER_POSTGRES_PASSWORD
-      hostname: ${db_host}
-      db_name: ${db_name}
+      hostname:
+        env: DAGSTER_POSTGRES_HOST
+      db_name:
+        env: DAGSTER_POSTGRES_DB
       port: 5432
 
 # Cloud Run run launcher
@@ -22,10 +25,9 @@ run_launcher:
     region:
       env: GCP_REGION
     job_name_by_code_location:
-%{ for location, job_name in code_location_job_map ~}
-      ${location}: ${job_name}
-%{ endfor ~}
-    run_timeout: ${run_timeout}
+      gtfsrt:
+        env: DAGSTER_RUN_JOB_NAME
+    run_timeout: 86400
 
 # Queued run coordinator for managing concurrent runs
 run_coordinator:
@@ -39,7 +41,8 @@ compute_logs:
   module: dagster_gcp.gcs.compute_log_manager
   class: GCSComputeLogManager
   config:
-    bucket: ${logs_bucket}
+    bucket:
+      env: DAGSTER_LOGS_BUCKET
     prefix: compute_logs
 
 # Disable telemetry

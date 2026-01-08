@@ -160,12 +160,12 @@ The `data/` directory maps to fake GCS buckets:
 
 ```
 data/
-├── rt-protobuf/                    # Raw protobuf archives
+├── protobuf.gtfsrt.io/                    # Raw protobuf archives
 │   └── vehicle_positions/
 │       └── date=2026-01-02/
 │           └── hour=2026-01-02T03:00:00Z/
 │               └── base64url=.../
-└── rt-parquet/                     # Compacted parquet (after Dagster run)
+└── parquet.gtfsrt.io/                     # Compacted parquet (after Dagster run)
     └── vehicle_positions/
         └── date=2026-01-02/
             └── base64url=.../

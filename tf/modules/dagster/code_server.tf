@@ -28,7 +28,7 @@ resource "google_cloud_run_v2_service" "code_server" {
       max_instance_count = 1
     }
 
-    # Cloud SQL volume mount
+    # Cloud SQL volume mount for database access
     volumes {
       name = "cloudsql"
       cloud_sql_instance {

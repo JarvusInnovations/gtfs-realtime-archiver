@@ -16,19 +16,8 @@ defaults:
 
 # Agency definitions
 agencies:
-  # Simple agency without systems
-  - id: actransit
-    name: AC Transit
-    schedule_url: https://api.actransit.org/transit/gtfs/download
-    feeds:
-      - feed_type: vehicle_positions
-        url: https://api.actransit.org/transit/gtfsrt/vehicles
-      - feed_type: trip_updates
-        url: https://api.actransit.org/transit/gtfsrt/tripupdates
-      - feed_type: service_alerts
-        url: https://api.actransit.org/transit/gtfsrt/alerts
-
   # Agency with multiple systems (bus vs rail)
+  # This is the default example - no authentication required
   - id: septa
     name: SEPTA
     systems:
@@ -54,48 +43,67 @@ agencies:
           - feed_type: service_alerts
             url: https://www3.septa.org/gtfsrt/septarail-pa-us/Service/rtServiceAlerts.pb
 
-  # Simple agency
-  - id: metrolink
-    name: Metrolink
-    schedule_url: https://metrolinktrains.com/gtfs
-    feeds:
-      - feed_type: vehicle_positions
-        url: https://metrolink-gtfsrt.gbsdigital.us/feed/gtfsrt-vp/1
-      - feed_type: trip_updates
-        url: https://metrolink-gtfsrt.gbsdigital.us/feed/gtfsrt-tu/1
-      - feed_type: service_alerts
-        url: https://metrolink-gtfsrt.gbsdigital.us/feed/gtfsrt-sa/1
-
-  # Example: Agency with query parameter authentication (via GCP Secret Manager)
-  # The secret value will be fetched from Secret Manager and added as a query param
-  # - id: vta
-  #   name: Santa Clara VTA
-  #   schedule_url: https://data.vta.org/gtfs/google_transit.zip
+  # Example: Agency with header authentication and custom intervals
+  # - id: metrolink
+  #   name: Metrolink
+  #   schedule_url: https://metrolinktrains.com/gtfs
   #   auth:
-  #     type: query                   # Auth via query parameter
-  #     secret_name: vta-511-api-key  # Secret name in GCP Secret Manager
-  #     key: api_key                  # Query parameter name
+  #     type: header                    # Auth via HTTP header
+  #     secret_name: metrolink-api-key  # Secret name in GCP Secret Manager
+  #     key: X-Api-Key                  # Header name
   #   feeds:
   #     - feed_type: vehicle_positions
-  #       url: https://api.511.org/transit/VehiclePositions?agency=SC
+  #       url: https://metrolink-gtfsrt.gbsdigital.us/feed/gtfsrt-vehicles
+  #       interval_seconds: 30          # Override default (20s)
   #     - feed_type: trip_updates
-  #       url: https://api.511.org/transit/TripUpdates?agency=SC
+  #       url: https://metrolink-gtfsrt.gbsdigital.us/feed/gtfsrt-trips
+  #       interval_seconds: 30          # Override default (20s)
+
+  # Example: Agency with query parameter authentication and custom intervals
+  # - id: actransit
+  #   name: AC Transit
+  #   schedule_url: https://api.actransit.org/transit/gtfs/download
+  #   auth:
+  #     type: query                     # Auth via query parameter
+  #     secret_name: actransit-api-key  # Secret name in GCP Secret Manager
+  #     key: token                      # Query parameter name
+  #   feeds:
+  #     - feed_type: vehicle_positions
+  #       url: https://api.actransit.org/transit/gtfsrt/vehicles
+  #       interval_seconds: 60          # Override default (20s)
+  #     - feed_type: trip_updates
+  #       url: https://api.actransit.org/transit/gtfsrt/tripupdates
+  #       interval_seconds: 60          # Override default (20s)
+  #     - feed_type: service_alerts
+  #       url: https://api.actransit.org/transit/gtfsrt/alerts
+  #       interval_seconds: 60          # Override default (60s)
+
+  # Example: 511 API pattern (common for Bay Area agencies)
+  # - id: vta
+  #   name: Santa Clara VTA
+  #   auth:
+  #     type: query                     # Auth via query parameter
+  #     secret_name: 511-api-key        # Shared secret for 511 API
+  #     key: api_key                    # Query parameter name
+  #   feeds:
+  #     - feed_type: vehicle_positions
+  #       url: https://api.511.org/transit/vehiclepositions?agency=SC
+  #     - feed_type: trip_updates
+  #       url: https://api.511.org/transit/tripupdates?agency=SC
   #     - feed_type: service_alerts
   #       url: https://api.511.org/transit/servicealerts?agency=SC
 
-  # Example: Agency with header authentication
-  # Auth configured at agency level is inherited by all feeds
-  # - id: mta
-  #   name: MTA New York
-  #   auth:
-  #     type: header                  # Auth via HTTP header
-  #     secret_name: mta-api-key      # Secret name in GCP Secret Manager
-  #     key: x-api-key                # Header name
+  # Example: Simple agency with HTTP feeds (no authentication)
+  # Note: HTTP test case—this feed IS available over HTTPS too though
+  # - id: bigbluebus
+  #   name: Big Blue Bus
   #   feeds:
   #     - feed_type: vehicle_positions
-  #       url: https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs
+  #       url: http://gtfs.bigbluebus.com/vehiclepositions.bin
   #     - feed_type: trip_updates
-  #       url: https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-ace
+  #       url: http://gtfs.bigbluebus.com/tripupdates.bin
+  #     - feed_type: service_alerts
+  #       url: http://gtfs.bigbluebus.com/alerts.bin
 
   # Example: Agency with templated authentication (e.g., Bearer token)
   # Use ${SECRET} placeholder to embed the secret within a value
@@ -129,14 +137,3 @@ agencies:
   #         secret_name: special-trips-key
   #         key: token
   #       # Overrides with feed-specific query auth
-
-  # Example: Per-feed interval override
-  # - id: custom-intervals
-  #   name: Custom Intervals Agency
-  #   feeds:
-  #     - feed_type: vehicle_positions
-  #       url: https://api.example.com/vehicles
-  #       interval_seconds: 10        # Override default (20s) with faster polling
-  #     - feed_type: service_alerts
-  #       url: https://api.example.com/alerts
-  #       interval_seconds: 300       # Override default (60s) with slower polling

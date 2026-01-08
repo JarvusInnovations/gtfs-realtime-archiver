@@ -19,8 +19,8 @@ env:
   SERVICE_NAME: gtfs-rt-archiver
 
 jobs:
-  build:
-    name: Build and Push Container
+  build-archiver:
+    name: Build and Push Archiver Container
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -113,7 +113,7 @@ jobs:
 
   deploy:
     name: Deploy to Cloud Run
-    needs: [build, build-dagster]
+    needs: [build-archiver, build-dagster]
     runs-on: ubuntu-latest
     # Only deploy non-prerelease releases
     if: ${{ !github.event.release.prerelease }}

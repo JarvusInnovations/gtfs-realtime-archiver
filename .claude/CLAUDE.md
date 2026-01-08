@@ -69,15 +69,15 @@ gtfs-realtime-archiver/
 │   │   ├── code_server.tf  # gRPC code servers
 │   │   ├── run_worker.tf   # Cloud Run Jobs for runs
 │   │   ├── iam.tf          # Service accounts and permissions
-│   │   ├── secrets.tf      # DB password and config secrets
+│   │   ├── secrets.tf      # DB password secret
 │   │   ├── database.tf     # Database and user creation
-│   │   ├── storage.tf      # Logs bucket
-│   │   └── config/         # Dagster config templates
-│   │       ├── dagster.yaml.tftpl
-│   │       └── workspace.yaml.tftpl
+│   │   └── storage.tf      # Logs bucket
 │   ├── variables.tf        # Input variables
 │   ├── outputs.tf          # Output values
 │   └── versions.tf         # Provider versions
+├── deploy/                 # Dagster deployment configs
+│   ├── dagster.yaml        # Dagster config with env var placeholders
+│   └── workspace.yaml      # Workspace config with env var placeholders
 ├── pyproject.toml          # Project config, dependencies, tool settings
 ├── uv.lock                 # Dependency lockfile
 ├── Dockerfile              # Multi-stage container build (archiver)
@@ -287,10 +287,10 @@ Why run worker SA?
 
 **Database**: Cloud SQL PostgreSQL via Unix socket mount (`/cloudsql/{connection}`)
 
-**Configuration**: Rendered from Terraform templates, stored in Secret Manager:
+**Configuration**: Baked into container images (from `deploy/` directory)
 
-- `dagster.yaml` - Storage, run launcher, compute logs
-- `workspace.yaml` - Code location gRPC endpoints
+- Config files use environment variable placeholders
+- Values resolved at runtime from Terraform-provided env vars
 
 **Terraform Module**: `tf/modules/dagster/`
 
@@ -323,7 +323,7 @@ code_locations = {
 }
 ```
 
-1. Templates auto-generate workspace.yaml and run_launcher config
+1. Update `deploy/workspace.yaml` to add new code location
 2. Build and push new code location image
 
 Each location gets:

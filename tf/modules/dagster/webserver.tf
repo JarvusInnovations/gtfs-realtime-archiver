@@ -21,33 +21,7 @@ resource "google_cloud_run_v2_service" "webserver" {
       max_instance_count = 2
     }
 
-    # Config files volumes (from Secret Manager)
-    # Order matches Cloud Run's stored order to prevent drift
-    volumes {
-      name = "dagster-config"
-      secret {
-        secret       = google_secret_manager_secret.dagster_config.secret_id
-        default_mode = 292 # 0444
-        items {
-          path    = "dagster.yaml"
-          version = "latest"
-        }
-      }
-    }
-
-    volumes {
-      name = "workspace-config"
-      secret {
-        secret       = google_secret_manager_secret.workspace_config.secret_id
-        default_mode = 292 # 0444
-        items {
-          path    = "workspace.yaml"
-          version = "latest"
-        }
-      }
-    }
-
-    # Cloud SQL volume mount
+    # Cloud SQL volume mount for Unix socket connection
     volumes {
       name = "cloudsql"
       cloud_sql_instance {
@@ -62,19 +36,6 @@ resource "google_cloud_run_v2_service" "webserver" {
       # Run Dagster webserver
       command = ["dagster-webserver", "--host", "0.0.0.0", "--port", "3000"]
 
-      # Mount config secrets to separate directories
-      # Symlinks in container point from DAGSTER_HOME to these mount points
-      # Order matches volume order to prevent drift
-      volume_mounts {
-        name       = "dagster-config"
-        mount_path = "/mnt/dagster-config"
-      }
-
-      volume_mounts {
-        name       = "workspace-config"
-        mount_path = "/mnt/workspace-config"
-      }
-
       # Mount Cloud SQL socket
       volume_mounts {
         name       = "cloudsql"
@@ -87,6 +48,15 @@ resource "google_cloud_run_v2_service" "webserver" {
         content {
           name  = env.key
           value = env.value
+        }
+      }
+
+      # Code server URLs for gRPC connections
+      dynamic "env" {
+        for_each = google_cloud_run_v2_service.code_server
+        content {
+          name  = "CODE_SERVER_HOST_${upper(env.key)}"
+          value = trimprefix(env.value.uri, "https://")
         }
       }
 
@@ -141,9 +111,7 @@ resource "google_cloud_run_v2_service" "webserver" {
   }
 
   depends_on = [
-    google_secret_manager_secret_iam_member.dagster_db_password,
-    google_secret_manager_secret_iam_member.dagster_config,
-    google_secret_manager_secret_iam_member.dagster_workspace
+    google_secret_manager_secret_iam_member.dagster_db_password
   ]
 }
 

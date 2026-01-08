@@ -15,6 +15,27 @@
       "envFile": "${workspaceFolder}/.env",
       "preLaunchTask": "Start fake-gcs",
       "console": "integratedTerminal"
+    },
+    {
+      "name": "Debug Dagster",
+      "type": "debugpy",
+      "request": "launch",
+      "env": {
+        "PATH": "${workspaceFolder}/.venv/bin",
+        "PYDEVD_DISABLE_FILE_VALIDATION": "1",
+        "DAGSTER_HOME": "${workspaceFolder}/.dagster_home",
+        "STORAGE_EMULATOR_HOST": "http://localhost:4443",
+        "LOG_FORMAT": "text"
+      },
+      "envFile": "${workspaceFolder}/.env",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "module": "dagster",
+      "cwd": "${workspaceFolder}",
+      "args": ["dev"],
+      "subProcess": true,
+      "preLaunchTask": "Start fake-gcs",
+      "console": "integratedTerminal",
+      "justMyCode": false
     }
   ]
 }
