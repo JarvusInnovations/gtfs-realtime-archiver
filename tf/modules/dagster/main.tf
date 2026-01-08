@@ -28,13 +28,11 @@ locals {
   }
 
   # Common environment variables for all Dagster components
+  # Note: Database connection is via DAGSTER_POSTGRES_URL secret (includes socket path)
   common_env = {
     GCP_PROJECT_ID         = var.project_id
     GCP_REGION             = var.region
     DAGSTER_HOME           = "/opt/dagster/dagster_home"
-    DAGSTER_POSTGRES_HOST  = local.db_socket_path
-    DAGSTER_POSTGRES_DB    = var.db_name
-    DAGSTER_POSTGRES_USER  = var.db_user
     GCS_BUCKET_RT_PROTOBUF = var.protobuf_bucket_name
     GCS_BUCKET_RT_PARQUET  = var.parquet_bucket_name
     DAGSTER_LOGS_BUCKET    = local.logs_bucket_name

@@ -63,12 +63,12 @@ resource "google_cloud_run_v2_service" "code_server" {
         }
       }
 
-      # Database password from Secret Manager
+      # Database connection URL from Secret Manager (includes password)
       env {
-        name = "DAGSTER_POSTGRES_PASSWORD"
+        name = "DAGSTER_POSTGRES_URL"
         value_source {
           secret_key_ref {
-            secret  = google_secret_manager_secret.db_password.secret_id
+            secret  = google_secret_manager_secret.postgres_url.secret_id
             version = "latest"
           }
         }
@@ -109,7 +109,7 @@ resource "google_cloud_run_v2_service" "code_server" {
   }
 
   depends_on = [
-    google_secret_manager_secret_iam_member.dagster_db_password
+    google_secret_manager_secret_iam_member.dagster_postgres_url
   ]
 }
 

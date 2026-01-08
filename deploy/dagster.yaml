@@ -1,19 +1,11 @@
 # Dagster configuration with environment variable placeholders
 # Copied into container images at build time
 
-# PostgreSQL storage backend
+# PostgreSQL storage backend (connection string for Unix socket support)
 storage:
   postgres:
-    postgres_db:
-      username:
-        env: DAGSTER_POSTGRES_USER
-      password:
-        env: DAGSTER_POSTGRES_PASSWORD
-      hostname:
-        env: DAGSTER_POSTGRES_HOST
-      db_name:
-        env: DAGSTER_POSTGRES_DB
-      port: 5432
+    postgres_url:
+      env: DAGSTER_POSTGRES_URL
 
 # Cloud Run run launcher
 run_launcher:
