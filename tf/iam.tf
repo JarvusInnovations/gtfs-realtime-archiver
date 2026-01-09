@@ -62,3 +62,24 @@ resource "google_project_iam_member" "archiver_metrics_writer" {
 
 # Dagster service accounts are now provisioned by the Dagster module
 # See tf/dagster.tf and tf/dagster_iam.tf for Dagster IAM configuration
+
+# Metabase service account for analytics
+resource "google_service_account" "metabase" {
+  account_id   = "metabase"
+  display_name = "Metabase"
+  project      = var.project_id
+}
+
+# Metabase reads parquet files for analytics
+resource "google_storage_bucket_iam_member" "metabase_parquet_viewer" {
+  bucket = google_storage_bucket.parquet.name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.metabase.email}"
+}
+
+# Metabase runs BigQuery queries
+resource "google_project_iam_member" "metabase_bigquery_job_user" {
+  project = var.project_id
+  role    = "roles/bigquery.jobUser"
+  member  = "serviceAccount:${google_service_account.metabase.email}"
+}
