@@ -141,3 +141,10 @@ resource "google_project_iam_member" "github_actions_cloudsql_admin" {
   role    = "roles/cloudsql.admin"
   member  = "serviceAccount:${google_service_account.github_actions.email}"
 }
+
+# IAP Admin - manage Identity-Aware Proxy settings and IAM policies
+resource "google_project_iam_member" "github_actions_iap_admin" {
+  project = var.project_id
+  role    = "roles/iap.admin"
+  member  = "serviceAccount:${google_service_account.github_actions.email}"
+}
