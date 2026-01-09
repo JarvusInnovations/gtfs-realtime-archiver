@@ -173,6 +173,7 @@ class TestExtractVehiclePositions:
                 sample_vehicle_position_feed,
                 "test/file.pb",
                 "https://example.com/feed",
+                None,
             )
         )
 
@@ -206,6 +207,7 @@ class TestExtractVehiclePositions:
                 sample_vehicle_position_feed,
                 "test/file.pb",
                 "https://example.com/feed",
+                None,
             )
         )
 
@@ -222,7 +224,7 @@ class TestExtractVehiclePositions:
 
     def test_extract_empty_feed(self, empty_feed: gtfs_realtime_pb2.FeedMessage) -> None:
         """Test extracting from empty feed."""
-        records = list(extract_vehicle_positions(empty_feed, "test.pb", "http://test"))
+        records = list(extract_vehicle_positions(empty_feed, "test.pb", "http://test", None))
         assert records == []
 
 
@@ -238,6 +240,7 @@ class TestExtractTripUpdates:
                 sample_trip_update_feed,
                 "test/file.pb",
                 "https://example.com/feed",
+                None,
             )
         )
 
@@ -274,6 +277,7 @@ class TestExtractTripUpdates:
                 sample_trip_update_feed,
                 "test/file.pb",
                 "https://example.com/feed",
+                None,
             )
         )
 
@@ -287,7 +291,7 @@ class TestExtractTripUpdates:
 
     def test_extract_empty_feed(self, empty_feed: gtfs_realtime_pb2.FeedMessage) -> None:
         """Test extracting from empty feed."""
-        records = list(extract_trip_updates(empty_feed, "test.pb", "http://test"))
+        records = list(extract_trip_updates(empty_feed, "test.pb", "http://test", None))
         assert records == []
 
 
@@ -303,6 +307,7 @@ class TestExtractServiceAlerts:
                 sample_service_alert_feed,
                 "test/file.pb",
                 "https://example.com/feed",
+                None,
             )
         )
 
@@ -337,6 +342,7 @@ class TestExtractServiceAlerts:
                 sample_service_alert_feed,
                 "test/file.pb",
                 "https://example.com/feed",
+                None,
             )
         )
 
@@ -350,5 +356,5 @@ class TestExtractServiceAlerts:
 
     def test_extract_empty_feed(self, empty_feed: gtfs_realtime_pb2.FeedMessage) -> None:
         """Test extracting from empty feed."""
-        records = list(extract_service_alerts(empty_feed, "test.pb", "http://test"))
+        records = list(extract_service_alerts(empty_feed, "test.pb", "http://test", None))
         assert records == []

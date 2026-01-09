@@ -10,6 +10,7 @@ VEHICLE_POSITIONS_SCHEMA = pa.schema(
         pa.field("source_file", pa.string(), nullable=False),
         pa.field("feed_url", pa.string(), nullable=False),
         pa.field("feed_timestamp", pa.uint64()),
+        pa.field("fetch_timestamp", pa.timestamp("us", tz="UTC")),
         pa.field("entity_id", pa.string(), nullable=False),
         # Trip descriptor
         pa.field("trip_id", pa.string()),
@@ -47,6 +48,7 @@ TRIP_UPDATES_SCHEMA = pa.schema(
         pa.field("source_file", pa.string(), nullable=False),
         pa.field("feed_url", pa.string(), nullable=False),
         pa.field("feed_timestamp", pa.uint64()),
+        pa.field("fetch_timestamp", pa.timestamp("us", tz="UTC")),
         pa.field("entity_id", pa.string(), nullable=False),
         # Trip descriptor
         pa.field("trip_id", pa.string()),
@@ -82,6 +84,7 @@ SERVICE_ALERTS_SCHEMA = pa.schema(
         pa.field("source_file", pa.string(), nullable=False),
         pa.field("feed_url", pa.string(), nullable=False),
         pa.field("feed_timestamp", pa.uint64()),
+        pa.field("fetch_timestamp", pa.timestamp("us", tz="UTC")),
         pa.field("entity_id", pa.string(), nullable=False),
         # Alert fields
         pa.field("cause", pa.int32()),
