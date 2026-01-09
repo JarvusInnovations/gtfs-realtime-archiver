@@ -5,11 +5,12 @@ import os
 import dagster as dg
 
 from dagster_pipeline.defs.assets import (
+    feeds_metadata,
     service_alerts_parquet,
     trip_updates_parquet,
     vehicle_positions_parquet,
 )
-from dagster_pipeline.defs.resources import GCSResource
+from dagster_pipeline.defs.resources import GCSResource, SecretManagerResource
 from dagster_pipeline.defs.schedules import (
     service_alerts_compaction_job,
     service_alerts_schedule,
@@ -25,6 +26,7 @@ defs = dg.Definitions(
         vehicle_positions_parquet,
         trip_updates_parquet,
         service_alerts_parquet,
+        feeds_metadata,
     ],
     jobs=[
         vehicle_positions_compaction_job,
@@ -44,6 +46,10 @@ defs = dg.Definitions(
             project_id=os.environ.get("GCP_PROJECT_ID"),
             protobuf_bucket=os.environ.get("GCS_BUCKET_RT_PROTOBUF", ""),
             parquet_bucket=os.environ.get("GCS_BUCKET_RT_PARQUET", ""),
+        ),
+        "secret_manager": SecretManagerResource(
+            project_id=os.environ.get("GCP_PROJECT_ID", ""),
+            agencies_secret_id=os.environ.get("AGENCIES_SECRET_ID", "agencies-config"),
         ),
     },
 )

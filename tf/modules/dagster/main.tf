@@ -29,6 +29,7 @@ locals {
     GCS_BUCKET_RT_PROTOBUF = var.protobuf_bucket_name
     GCS_BUCKET_RT_PARQUET  = var.parquet_bucket_name
     DAGSTER_LOGS_BUCKET    = local.logs_bucket_name
+    AGENCIES_SECRET_ID     = var.agencies_secret_id
   }
 }
 

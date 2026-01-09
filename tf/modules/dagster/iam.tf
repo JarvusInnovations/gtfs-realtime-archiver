@@ -121,3 +121,13 @@ resource "google_project_iam_member" "run_worker_cloudsql_client" {
   role    = "roles/cloudsql.client"
   member  = "serviceAccount:${each.value.email}"
 }
+
+# Secret Manager access for run workers (agencies config for feeds_metadata asset)
+resource "google_secret_manager_secret_iam_member" "run_worker_agencies_config" {
+  for_each = google_service_account.run_worker
+
+  secret_id = var.agencies_secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${each.value.email}"
+  project   = var.project_id
+}

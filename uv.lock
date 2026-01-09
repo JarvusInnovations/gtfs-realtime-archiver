@@ -1327,6 +1327,7 @@ archiver = [
 ]
 dagster = [
     { name = "dagster" },
+    { name = "google-cloud-secret-manager" },
     { name = "google-cloud-storage" },
     { name = "gtfs-realtime-bindings" },
     { name = "pyarrow" },
@@ -1337,6 +1338,7 @@ dagster-deploy = [
     { name = "dagster-gcp" },
     { name = "dagster-postgres" },
     { name = "dagster-webserver" },
+    { name = "google-cloud-secret-manager" },
     { name = "google-cloud-storage" },
     { name = "gtfs-realtime-bindings" },
     { name = "pyarrow" },
@@ -1398,6 +1400,7 @@ archiver = [
 ]
 dagster = [
     { name = "dagster", specifier = "==1.12.8" },
+    { name = "google-cloud-secret-manager", specifier = ">=2.26.0" },
     { name = "google-cloud-storage", specifier = ">=3.7.0" },
     { name = "gtfs-realtime-bindings", specifier = ">=2.0.0" },
     { name = "pyarrow", specifier = ">=22.0.0" },
@@ -1408,6 +1411,7 @@ dagster-deploy = [
     { name = "dagster-gcp", specifier = ">=0.24.0" },
     { name = "dagster-postgres", specifier = ">=0.24.0" },
     { name = "dagster-webserver", specifier = ">=1.12.8" },
+    { name = "google-cloud-secret-manager", specifier = ">=2.26.0" },
     { name = "google-cloud-storage", specifier = ">=3.7.0" },
     { name = "gtfs-realtime-bindings", specifier = ">=2.0.0" },
     { name = "pyarrow", specifier = ">=22.0.0" },
