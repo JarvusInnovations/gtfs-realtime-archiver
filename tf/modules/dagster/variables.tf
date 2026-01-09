@@ -132,3 +132,9 @@ variable "project_number" {
   type        = string
   default     = null
 }
+
+variable "agencies_secret_id" {
+  description = "Secret Manager secret ID containing agencies.yaml configuration"
+  type        = string
+  default     = "agencies-config"
+}

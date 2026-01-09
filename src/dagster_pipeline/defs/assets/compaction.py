@@ -2,8 +2,10 @@
 
 import base64
 import io
+import json
 import re
 from collections.abc import Iterator
+from datetime import datetime
 from typing import Any
 
 import dagster as dg
@@ -138,10 +140,34 @@ def parse_protobuf(content: bytes) -> gtfs_realtime_pb2.FeedMessage:
     return feed
 
 
+def read_meta_file(
+    bucket: storage.Bucket,
+    pb_path: str,
+) -> datetime | None:
+    """Read fetch_timestamp from adjacent .meta file.
+
+    Args:
+        bucket: GCS bucket
+        pb_path: Path to .pb file
+
+    Returns:
+        Parsed datetime or None if .meta file missing/invalid
+    """
+    meta_path = pb_path.replace(".pb", ".meta")
+    try:
+        blob = bucket.blob(meta_path)
+        content = blob.download_as_text()
+        metadata = json.loads(content)
+        return datetime.fromisoformat(metadata["fetch_timestamp"])
+    except Exception:
+        return None
+
+
 def extract_vehicle_positions(
     feed: gtfs_realtime_pb2.FeedMessage,
     source_file: str,
     feed_url: str,
+    fetch_timestamp: datetime | None,
 ) -> Iterator[dict[str, Any]]:
     """Extract vehicle positions from a FeedMessage."""
     feed_timestamp = feed.header.timestamp if feed.header.timestamp else None
@@ -155,6 +181,7 @@ def extract_vehicle_positions(
                 "source_file": source_file,
                 "feed_url": feed_url,
                 "feed_timestamp": feed_timestamp,
+                "fetch_timestamp": fetch_timestamp,
                 "entity_id": entity.id,
                 # Trip descriptor
                 "trip_id": vp.trip.trip_id if vp.HasField("trip") else None,
@@ -214,6 +241,7 @@ def extract_trip_updates(
     feed: gtfs_realtime_pb2.FeedMessage,
     source_file: str,
     feed_url: str,
+    fetch_timestamp: datetime | None,
 ) -> Iterator[dict[str, Any]]:
     """Extract trip updates from a FeedMessage (denormalized by stop_time_update)."""
     feed_timestamp = feed.header.timestamp if feed.header.timestamp else None
@@ -228,6 +256,7 @@ def extract_trip_updates(
                 "source_file": source_file,
                 "feed_url": feed_url,
                 "feed_timestamp": feed_timestamp,
+                "fetch_timestamp": fetch_timestamp,
                 "entity_id": entity.id,
                 # Trip descriptor
                 "trip_id": tu.trip.trip_id if tu.HasField("trip") else None,
@@ -322,6 +351,7 @@ def extract_service_alerts(
     feed: gtfs_realtime_pb2.FeedMessage,
     source_file: str,
     feed_url: str,
+    fetch_timestamp: datetime | None,
 ) -> Iterator[dict[str, Any]]:
     """Extract service alerts from a FeedMessage (denormalized by informed_entity)."""
     feed_timestamp = feed.header.timestamp if feed.header.timestamp else None
@@ -356,6 +386,7 @@ def extract_service_alerts(
                 "source_file": source_file,
                 "feed_url": feed_url,
                 "feed_timestamp": feed_timestamp,
+                "fetch_timestamp": fetch_timestamp,
                 "entity_id": entity.id,
                 # Alert fields
                 "cause": alert.cause if alert.HasField("cause") else None,
@@ -473,9 +504,12 @@ def compact_single_feed(
             blob = protobuf_bucket.blob(pb_file)
             content = blob.download_as_bytes()
 
+            # Read fetch_timestamp from adjacent .meta file
+            fetch_timestamp = read_meta_file(protobuf_bucket, pb_file)
+
             try:
                 feed = parse_protobuf(content)
-                records = list(extractor(feed, pb_file, feed_url))
+                records = list(extractor(feed, pb_file, feed_url, fetch_timestamp))
                 if not records:
                     continue
 

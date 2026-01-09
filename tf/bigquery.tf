@@ -8,6 +8,11 @@ resource "google_bigquery_dataset" "gtfs_rt" {
     role          = "OWNER"
     special_group = "projectOwners"
   }
+
+  access {
+    role          = "READER"
+    user_by_email = google_service_account.metabase.email
+  }
 }
 
 # Vehicle Positions - one external table for all feeds
@@ -33,6 +38,7 @@ resource "google_bigquery_table" "vehicle_positions" {
     { name = "source_file", type = "STRING", mode = "REQUIRED" },
     { name = "feed_url", type = "STRING", mode = "REQUIRED" },
     { name = "feed_timestamp", type = "INT64", mode = "NULLABLE" },
+    { name = "fetch_timestamp", type = "TIMESTAMP", mode = "NULLABLE" },
     { name = "entity_id", type = "STRING", mode = "REQUIRED" },
     { name = "trip_id", type = "STRING", mode = "NULLABLE" },
     { name = "route_id", type = "STRING", mode = "NULLABLE" },
@@ -81,6 +87,7 @@ resource "google_bigquery_table" "trip_updates" {
     { name = "source_file", type = "STRING", mode = "REQUIRED" },
     { name = "feed_url", type = "STRING", mode = "REQUIRED" },
     { name = "feed_timestamp", type = "INT64", mode = "NULLABLE" },
+    { name = "fetch_timestamp", type = "TIMESTAMP", mode = "NULLABLE" },
     { name = "entity_id", type = "STRING", mode = "REQUIRED" },
     { name = "trip_id", type = "STRING", mode = "NULLABLE" },
     { name = "route_id", type = "STRING", mode = "NULLABLE" },
@@ -127,6 +134,7 @@ resource "google_bigquery_table" "service_alerts" {
     { name = "source_file", type = "STRING", mode = "REQUIRED" },
     { name = "feed_url", type = "STRING", mode = "REQUIRED" },
     { name = "feed_timestamp", type = "INT64", mode = "NULLABLE" },
+    { name = "fetch_timestamp", type = "TIMESTAMP", mode = "NULLABLE" },
     { name = "entity_id", type = "STRING", mode = "REQUIRED" },
     { name = "cause", type = "INT64", mode = "NULLABLE" },
     { name = "effect", type = "INT64", mode = "NULLABLE" },
@@ -144,4 +152,17 @@ resource "google_bigquery_table" "service_alerts" {
     { name = "trip_route_id", type = "STRING", mode = "NULLABLE" },
     { name = "trip_direction_id", type = "INT64", mode = "NULLABLE" },
   ])
+}
+
+# Feeds metadata - lookup table for agency/system/interval by base64url
+resource "google_bigquery_table" "feeds" {
+  dataset_id          = google_bigquery_dataset.gtfs_rt.dataset_id
+  table_id            = "feeds"
+  deletion_protection = false
+
+  external_data_configuration {
+    source_format = "PARQUET"
+    autodetect    = true
+    source_uris   = ["gs://${google_storage_bucket.parquet.name}/feeds.parquet"]
+  }
 }
