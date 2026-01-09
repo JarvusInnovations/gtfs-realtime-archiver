@@ -16,12 +16,12 @@ COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project --only-group dagster-deploy
 
-# Copy pipeline code and install
+# Copy pipeline code and install project
 COPY README.md ./
-COPY src/dagster_pipeline ./dagster_pipeline
-COPY src/gtfs_rt_archiver ./gtfs_rt_archiver
+COPY src/dagster_pipeline ./src/dagster_pipeline
+COPY src/gtfs_rt_archiver ./src/gtfs_rt_archiver
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --only-group dagster-deploy
+    uv sync --frozen --group dagster-deploy --no-dev
 
 # Create dagster_home directory and copy config templates
 # Config files use environment variable placeholders resolved at runtime

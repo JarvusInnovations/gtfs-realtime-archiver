@@ -63,6 +63,7 @@ dev = [
 ]
 # Deployment group - includes dagster base plus deployment-specific deps
 dagster-deploy = [
+    { include-group = "archiver" },
     { include-group = "dagster" },
     "dagster-contrib-gcp>=0.0.9",
     "dagster-gcp>=0.24.0",
