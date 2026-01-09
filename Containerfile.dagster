@@ -19,6 +19,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Copy pipeline code and install
 COPY README.md ./
 COPY src/dagster_pipeline ./dagster_pipeline
+COPY src/gtfs_rt_archiver ./gtfs_rt_archiver
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --only-group dagster-deploy
 
