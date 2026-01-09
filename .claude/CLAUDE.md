@@ -331,3 +331,48 @@ Each location gets:
 - Dedicated code server (gRPC)
 - Dedicated run worker job
 - Dedicated service account with specific IAM permissions
+
+## Testing Container Builds
+
+**When to test locally**:
+
+- Changes to `Containerfile.dagster` or `Dockerfile`
+- Adding/removing dependencies in `pyproject.toml`
+- Adding imports between `dagster_pipeline` and `gtfs_rt_archiver`
+- Modifying package structure in `src/`
+
+**Build and test the Dagster code-server** (most common):
+
+```bash
+# Build the code-server target
+docker build -f Containerfile.dagster --target code-server -t dagster-code-server:test .
+
+# Run with required env vars to verify startup
+docker run --rm \
+  -e GCS_BUCKET_RT_PROTOBUF=test \
+  -e GCS_BUCKET_RT_PARQUET=test \
+  -e GCP_PROJECT_ID=test \
+  dagster-code-server:test
+
+# Expected output (success):
+# Starting Dagster code server for module dagster_pipeline.definitions on port 3030
+# Started Dagster code server for module dagster_pipeline.definitions on port 3030
+```
+
+**Other targets**:
+
+```bash
+# Webserver
+docker build -f Containerfile.dagster --target webserver -t dagster-webserver:test .
+
+# Daemon
+docker build -f Containerfile.dagster --target daemon -t dagster-daemon:test .
+
+# Archiver service
+docker build -f Dockerfile -t gtfs-rt-archiver:test .
+```
+
+**Common issues**:
+
+- `ModuleNotFoundError` - Check that source is copied to `src/` directory and `uv sync` installs the project (not just deps)
+- Missing dependencies - Ensure the dependency group includes all required packages (e.g., `dagster-deploy` includes `archiver` group)
