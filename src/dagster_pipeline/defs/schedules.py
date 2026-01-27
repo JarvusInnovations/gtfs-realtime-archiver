@@ -5,6 +5,7 @@ from datetime import timedelta
 import dagster as dg
 
 from dagster_pipeline.defs.assets import (
+    bucket_inventory,
     service_alerts_parquet,
     trip_updates_parquet,
     vehicle_positions_parquet,
@@ -138,3 +139,27 @@ def _create_run_requests(
         )
         for feed in known_feeds
     ]
+
+
+# Job for inventory generation
+inventory_job = dg.define_asset_job(
+    name="inventory_job",
+    selection=[bucket_inventory],
+)
+
+
+@dg.schedule(
+    job=inventory_job,
+    cron_schedule="0 4 * * *",  # 4am UTC (2 hours after compaction starts)
+    execution_timezone="UTC",
+    default_status=dg.DefaultScheduleStatus.RUNNING,
+)
+def bucket_inventory_schedule(
+    context: dg.ScheduleEvaluationContext,
+) -> dg.RunRequest:
+    """Daily bucket inventory generation schedule.
+
+    Runs at 4am UTC, 2 hours after compaction jobs start, to allow
+    time for parquet file generation to complete.
+    """
+    return dg.RunRequest()
