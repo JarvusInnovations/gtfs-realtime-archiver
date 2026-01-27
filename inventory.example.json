@@ -1,0 +1,35 @@
+[
+  {
+    "url": "https://realtime.sdmts.com/api/gtfs-realtime/vehiclepositions",
+    "base64url": "cmVhbHRpbWUuc2RtdHMuY29tL2FwaS9ndGZzLXJlYWx0aW1lL3ZlaGljbGVwb3NpdGlvbnM",
+    "agency_id": "sdmts",
+    "agency_name": "San Diego MTS",
+    "feed_type": "vehicle_positions",
+    "date_min": "2026-01-01",
+    "date_max": "2026-01-26",
+    "total_records": 15420000,
+    "total_bytes": 892000000
+  },
+  {
+    "url": "https://realtime.sdmts.com/api/gtfs-realtime/tripupdates",
+    "base64url": "cmVhbHRpbWUuc2RtdHMuY29tL2FwaS9ndGZzLXJlYWx0aW1lL3RyaXB1cGRhdGVz",
+    "agency_id": "sdmts",
+    "agency_name": "San Diego MTS",
+    "feed_type": "trip_updates",
+    "date_min": "2026-01-01",
+    "date_max": "2026-01-26",
+    "total_records": 48200000,
+    "total_bytes": 1420000000
+  },
+  {
+    "url": "https://realtime.sdmts.com/api/gtfs-realtime/alerts",
+    "base64url": "cmVhbHRpbWUuc2RtdHMuY29tL2FwaS9ndGZzLXJlYWx0aW1lL2FsZXJ0cw",
+    "agency_id": "sdmts",
+    "agency_name": "San Diego MTS",
+    "feed_type": "service_alerts",
+    "date_min": "2026-01-01",
+    "date_max": "2026-01-26",
+    "total_records": 8500,
+    "total_bytes": 2400000
+  }
+]
