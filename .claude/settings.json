@@ -32,6 +32,9 @@
     ]
   },
   "enabledPlugins": {
-    "dg@dagster-claude-plugins": true
+    "dg@dagster-claude-plugins": true,
+    "dagster-conventions@dagster-claude-plugins": true,
+    "dagster-integrations@dagster-claude-plugins": true,
+    "dignified-python@dagster-claude-plugins": true
   }
 }
