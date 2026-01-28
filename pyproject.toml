@@ -41,6 +41,7 @@ dev-archiver = [
 ]
 dagster = [
     "dagster==1.12.8",
+    "gcsfs>=2026.1.0",
     "google-cloud-secret-manager>=2.26.0",
     "google-cloud-storage>=3.7.0",
     "gtfs-realtime-bindings>=2.0.0",
