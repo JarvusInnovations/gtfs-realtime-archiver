@@ -65,10 +65,10 @@ def read_parquet_row_count(
 def load_feeds_metadata(
     client: storage.Client,
     bucket_name: str,
-) -> dict[str, dict[str, str]]:
+) -> dict[str, dict[str, str | None]]:
     """Load feeds.parquet and return lookup by base64url.
 
-    Returns dict mapping base64url -> {agency_id, agency_name, feed_type}
+    Returns dict mapping base64url -> {agency_id, agency_name, system_id, system_name, feed_type}
     """
     bucket = client.bucket(bucket_name)
     blob = bucket.blob("feeds.parquet")
@@ -81,14 +81,25 @@ def load_feeds_metadata(
     buffer.seek(0)
 
     table = pq.read_table(
-        buffer, columns=["base64url", "url", "agency_id", "agency_name", "feed_type"]
+        buffer,
+        columns=[
+            "base64url",
+            "url",
+            "agency_id",
+            "agency_name",
+            "system_id",
+            "system_name",
+            "feed_type",
+        ],
     )
-    feeds: dict[str, dict[str, str]] = {}
+    feeds: dict[str, dict[str, str | None]] = {}
     for row in table.to_pylist():
         feeds[row["base64url"]] = {
             "url": row["url"],
             "agency_id": row["agency_id"],
             "agency_name": row["agency_name"],
+            "system_id": row["system_id"],
+            "system_name": row["system_name"],
             "feed_type": row["feed_type"],
         }
     return feeds
@@ -152,6 +163,8 @@ def bucket_inventory(
                 "base64url": base64url,
                 "agency_id": feed_meta.get("agency_id"),
                 "agency_name": feed_meta.get("agency_name"),
+                "system_id": feed_meta.get("system_id"),
+                "system_name": feed_meta.get("system_name"),
                 "feed_type": feed_meta.get("feed_type"),
                 "dates": set(),
                 "total_records": 0,
@@ -183,6 +196,8 @@ def bucket_inventory(
                 "base64url": base64url,
                 "agency_id": agg["agency_id"],
                 "agency_name": agg["agency_name"],
+                "system_id": agg["system_id"],
+                "system_name": agg["system_name"],
                 "feed_type": agg["feed_type"],
                 "date_min": sorted_dates[0] if sorted_dates else None,
                 "date_max": sorted_dates[-1] if sorted_dates else None,
