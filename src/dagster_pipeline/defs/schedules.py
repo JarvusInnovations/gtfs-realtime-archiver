@@ -155,7 +155,7 @@ inventory_job = dg.define_asset_job(
     default_status=dg.DefaultScheduleStatus.RUNNING,
 )
 def bucket_inventory_schedule(
-    context: dg.ScheduleEvaluationContext,
+    _context: dg.ScheduleEvaluationContext,
 ) -> dg.RunRequest:
     """Daily bucket inventory generation schedule.
 
