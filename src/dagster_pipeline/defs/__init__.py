@@ -5,6 +5,7 @@ import os
 import dagster as dg
 
 from dagster_pipeline.defs.assets import (
+    bucket_inventory,
     feeds_metadata,
     service_alerts_parquet,
     trip_updates_parquet,
@@ -12,6 +13,8 @@ from dagster_pipeline.defs.assets import (
 )
 from dagster_pipeline.defs.resources import GCSResource, SecretManagerResource
 from dagster_pipeline.defs.schedules import (
+    bucket_inventory_schedule,
+    inventory_job,
     service_alerts_compaction_job,
     service_alerts_schedule,
     trip_updates_compaction_job,
@@ -27,16 +30,19 @@ defs = dg.Definitions(
         trip_updates_parquet,
         service_alerts_parquet,
         feeds_metadata,
+        bucket_inventory,
     ],
     jobs=[
         vehicle_positions_compaction_job,
         trip_updates_compaction_job,
         service_alerts_compaction_job,
+        inventory_job,
     ],
     schedules=[
         vehicle_positions_schedule,
         trip_updates_schedule,
         service_alerts_schedule,
+        bucket_inventory_schedule,
     ],
     sensors=[
         feed_discovery_sensor,
