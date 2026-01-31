@@ -6,6 +6,7 @@ import dagster as dg
 
 from dagster_pipeline.defs.assets import (
     bucket_inventory,
+    feeds_metadata,
     service_alerts_parquet,
     trip_updates_parquet,
     vehicle_positions_parquet,
@@ -141,10 +142,10 @@ def _create_run_requests(
     ]
 
 
-# Job for inventory generation
+# Job for inventory generation (includes feeds_metadata to refresh from Secret Manager)
 inventory_job = dg.define_asset_job(
     name="inventory_job",
-    selection=[bucket_inventory],
+    selection=[feeds_metadata, bucket_inventory],
 )
 
 
