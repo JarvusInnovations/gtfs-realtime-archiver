@@ -2,7 +2,7 @@
 
 import hashlib
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from apscheduler import AsyncScheduler, CoalescePolicy, current_job
@@ -41,6 +41,24 @@ async def _execute_scheduled_fetch(scheduler_id: str, feed_id: str) -> None:
                 job.scheduled_fire_time if job and job.scheduled_fire_time else datetime.now(UTC)
             )
             await scheduler._fetch_job(feed, scheduled_time)
+
+
+def compute_start_offset(feed_id: str, interval_seconds: int) -> float:
+    """Compute a deterministic start offset to stagger feed schedules.
+
+    Spreads feeds evenly across their interval period so they don't all
+    fire simultaneously at startup. Uses MD5 hash for determinism across
+    restarts.
+
+    Args:
+        feed_id: Feed identifier.
+        interval_seconds: Feed's polling interval in seconds.
+
+    Returns:
+        Offset in seconds (0 <= offset < interval_seconds).
+    """
+    feed_hash = int(hashlib.md5(feed_id.encode()).hexdigest(), 16)
+    return feed_hash % interval_seconds
 
 
 def should_handle_feed(feed: FeedConfig, shard_index: int, total_shards: int) -> bool:
@@ -124,9 +142,12 @@ class FeedScheduler:
         self._scheduler = AsyncScheduler()
         await self._scheduler.__aenter__()
 
-        # Register jobs for each feed using the module-level function
+        # Register jobs for each feed with staggered start times
+        now = datetime.now(UTC)
         for feed in self._active_feeds:
-            trigger = IntervalTrigger(seconds=feed.interval_seconds)
+            offset = compute_start_offset(feed.id, feed.interval_seconds)
+            start_time = now + timedelta(seconds=offset)
+            trigger = IntervalTrigger(seconds=feed.interval_seconds, start_time=start_time)
 
             await self._scheduler.add_schedule(
                 _execute_scheduled_fetch,

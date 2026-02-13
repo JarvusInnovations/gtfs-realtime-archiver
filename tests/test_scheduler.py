@@ -7,6 +7,7 @@ import pytest
 from gtfs_rt_archiver.models import FeedConfig
 from gtfs_rt_archiver.scheduler import (
     FeedScheduler,
+    compute_start_offset,
     create_and_start_scheduler,
     should_handle_feed,
 )
@@ -23,6 +24,28 @@ def make_feed(feed_id: str) -> FeedConfig:
         agency_name="Test Agency",
         interval_seconds=30,
     )
+
+
+class TestComputeStartOffset:
+    """Tests for compute_start_offset staggering function."""
+
+    def test_offset_within_interval(self) -> None:
+        """Offset should be within [0, interval_seconds)."""
+        for i in range(50):
+            offset = compute_start_offset(f"feed-{i}", 20)
+            assert 0 <= offset < 20
+
+    def test_deterministic(self) -> None:
+        """Same feed ID and interval should produce same offset."""
+        a = compute_start_offset("my-feed", 60)
+        b = compute_start_offset("my-feed", 60)
+        assert a == b
+
+    def test_different_feeds_spread_out(self) -> None:
+        """Different feed IDs should produce a spread of offsets."""
+        offsets = {compute_start_offset(f"feed-{i}", 60) for i in range(30)}
+        # With 30 feeds across 60 possible offsets, we expect reasonable spread
+        assert len(offsets) > 10
 
 
 class TestShouldHandleFeed:
