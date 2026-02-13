@@ -1,6 +1,11 @@
 """Prometheus metrics for GTFS-RT Archiver."""
 
+import time
+
 from prometheus_client import Counter, Gauge, Histogram
+
+# In-memory last-success timestamps per feed (for /health/feeds endpoint)
+_last_success_timestamps: dict[str, float] = {}
 
 # Common histogram buckets for timing metrics (matches production v3)
 TIMING_BUCKETS = [0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0, 15.0, 20.0, 25.0, 30.0]
@@ -343,6 +348,29 @@ def record_processed_bytes(
     """
     labels = get_labels(feed_id, feed_type, agency)
     processed_bytes.labels(**labels, content_type=content_type).inc(byte_count)
+
+
+def record_feed_success(feed_id: str) -> None:
+    """Record a successful fetch+upload cycle for a feed.
+
+    Updates the in-memory timestamp used by the /health/feeds endpoint.
+
+    Args:
+        feed_id: Feed identifier.
+    """
+    _last_success_timestamps[feed_id] = time.time()
+
+
+def get_last_success_timestamp(feed_id: str) -> float | None:
+    """Get the timestamp of the last successful fetch+upload for a feed.
+
+    Args:
+        feed_id: Feed identifier.
+
+    Returns:
+        Unix timestamp of last success, or None if never succeeded.
+    """
+    return _last_success_timestamps.get(feed_id)
 
 
 def record_upload_attempt(feed_id: str, feed_type: str, agency: str | None) -> None:

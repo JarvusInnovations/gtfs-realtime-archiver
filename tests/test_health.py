@@ -1,11 +1,14 @@
 """Tests for health check and metrics HTTP server."""
 
+import time
 from unittest.mock import MagicMock
 
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 
 from gtfs_rt_archiver.health import HealthServer
+from gtfs_rt_archiver.metrics import _last_success_timestamps
+from gtfs_rt_archiver.models import FeedConfig, FeedType
 
 
 class TestHealthServerEndpoints(AioHTTPTestCase):
@@ -16,6 +19,7 @@ class TestHealthServerEndpoints(AioHTTPTestCase):
         self.health_server = HealthServer(port=8080, scheduler=None)
         app = web.Application()
         app.router.add_get("/health", self.health_server._handle_health)
+        app.router.add_get("/health/feeds", self.health_server._handle_feeds)
         app.router.add_get("/ready", self.health_server._handle_ready)
         app.router.add_get("/metrics", self.health_server._handle_metrics)
         return app
@@ -49,6 +53,15 @@ class TestHealthServerEndpoints(AioHTTPTestCase):
         assert data["status"] == "ready"
 
     @unittest_run_loop
+    async def test_feeds_endpoint_without_scheduler(self) -> None:
+        """Test /health/feeds returns 503 when no scheduler configured."""
+        resp = await self.client.get("/health/feeds")
+        assert resp.status == 503
+
+        data = await resp.json()
+        assert data["error"] == "no scheduler"
+
+    @unittest_run_loop
     async def test_metrics_endpoint_returns_prometheus_format(self) -> None:
         """Test /metrics returns OpenMetrics format."""
         resp = await self.client.get("/metrics")
@@ -62,19 +75,38 @@ class TestHealthServerEndpoints(AioHTTPTestCase):
         assert "# UNIT" in text or "# TYPE" in text
 
 
+def _make_feed(feed_id: str, agency_id: str, feed_type: FeedType) -> FeedConfig:
+    """Create a FeedConfig for testing."""
+    return FeedConfig(
+        id=feed_id,
+        name=f"Test {feed_id}",
+        url=f"https://example.com/{feed_id}",  # type: ignore[arg-type]
+        feed_type=feed_type,
+        agency_id=agency_id,
+        agency_name=f"Test Agency {agency_id}",
+    )
+
+
 class TestHealthServerWithScheduler(AioHTTPTestCase):
     """Test health server with a mocked scheduler."""
 
     async def get_application(self) -> web.Application:
         """Create application with mocked scheduler."""
+        self.test_feeds = [
+            _make_feed("feed-1", "agency-a", FeedType.VEHICLE_POSITIONS),
+            _make_feed("feed-2", "agency-a", FeedType.TRIP_UPDATES),
+            _make_feed("feed-3", "agency-b", FeedType.SERVICE_ALERTS),
+        ]
+
         self.mock_scheduler = MagicMock()
         self.mock_scheduler.is_running = True
-        self.mock_scheduler.get_job_count.return_value = 5
-        self.mock_scheduler.active_feeds = [MagicMock() for _ in range(5)]
+        self.mock_scheduler.get_job_count.return_value = len(self.test_feeds)
+        self.mock_scheduler.active_feeds = self.test_feeds
 
         self.health_server = HealthServer(port=8080, scheduler=self.mock_scheduler)
         app = web.Application()
         app.router.add_get("/health", self.health_server._handle_health)
+        app.router.add_get("/health/feeds", self.health_server._handle_feeds)
         app.router.add_get("/ready", self.health_server._handle_ready)
         app.router.add_get("/metrics", self.health_server._handle_metrics)
         return app
@@ -87,10 +119,10 @@ class TestHealthServerWithScheduler(AioHTTPTestCase):
 
         assert "scheduler" in data
         assert data["scheduler"]["running"] is True
-        assert data["scheduler"]["jobs_scheduled"] == 5
+        assert data["scheduler"]["jobs_scheduled"] == 3
 
         assert "feeds" in data
-        assert data["feeds"]["total"] == 5
+        assert data["feeds"]["total"] == 3
 
     @unittest_run_loop
     async def test_ready_when_scheduler_running(self) -> None:
@@ -100,6 +132,42 @@ class TestHealthServerWithScheduler(AioHTTPTestCase):
 
         data = await resp.json()
         assert data["status"] == "ready"
+
+    @unittest_run_loop
+    async def test_feeds_endpoint_returns_per_feed_status(self) -> None:
+        """Test /health/feeds returns per-feed list with expected fields."""
+        resp = await self.client.get("/health/feeds")
+        assert resp.status == 200
+
+        data = await resp.json()
+        assert len(data) == 3
+
+        first = data[0]
+        assert first["feed_id"] == "feed-1"
+        assert first["agency_id"] == "agency-a"
+        assert first["feed_type"] == "vehicle_positions"
+        assert first["interval_seconds"] == 20
+        assert first["last_success_seconds_ago"] is None
+
+    @unittest_run_loop
+    async def test_feeds_endpoint_shows_last_success(self) -> None:
+        """Test /health/feeds includes seconds since last success."""
+        # Simulate a successful fetch 10 seconds ago
+        _last_success_timestamps["feed-2"] = time.time() - 10.0
+
+        try:
+            resp = await self.client.get("/health/feeds")
+            data = await resp.json()
+
+            feed_2 = next(f for f in data if f["feed_id"] == "feed-2")
+            assert feed_2["last_success_seconds_ago"] is not None
+            assert 9.0 <= feed_2["last_success_seconds_ago"] <= 12.0
+
+            # Other feeds should still be None
+            feed_1 = next(f for f in data if f["feed_id"] == "feed-1")
+            assert feed_1["last_success_seconds_ago"] is None
+        finally:
+            _last_success_timestamps.pop("feed-2", None)
 
     @unittest_run_loop
     async def test_ready_not_ready_when_scheduler_stopped(self) -> None:

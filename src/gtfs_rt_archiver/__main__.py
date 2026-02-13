@@ -28,6 +28,7 @@ from gtfs_rt_archiver.fetcher import (
 from gtfs_rt_archiver.health import HealthServer
 from gtfs_rt_archiver.logging import configure_logging, get_logger
 from gtfs_rt_archiver.metrics import (
+    record_feed_success,
     record_fetch_attempt,
     record_fetch_error,
     record_fetch_success,
@@ -148,6 +149,9 @@ async def create_fetch_job(
                         path=path,
                         duration_seconds=upload_duration,
                     )
+
+                    # Record successful fetch+upload cycle for /health/feeds
+                    record_feed_success(feed.id)
 
                 except Exception as e:
                     record_upload_error(feed.id, feed_type, agency, type(e).__name__)
