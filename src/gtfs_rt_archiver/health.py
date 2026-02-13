@@ -1,6 +1,7 @@
 """Health check and metrics HTTP server."""
 
 import json
+import os
 import time
 from typing import TYPE_CHECKING
 
@@ -47,6 +48,7 @@ class HealthServer:
         uptime = time.time() - self._start_time
 
         status: dict[str, object] = {
+            "version": os.environ.get("APP_VERSION", "dev"),
             "status": "healthy",
             "uptime_seconds": round(uptime, 2),
         }
