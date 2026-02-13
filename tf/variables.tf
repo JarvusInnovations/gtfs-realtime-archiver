@@ -55,7 +55,7 @@ variable "cpu" {
 variable "memory" {
   description = "Memory allocation for Cloud Run service"
   type        = string
-  default     = "1Gi"
+  default     = "512Mi"
 }
 
 variable "min_instances" {
@@ -137,4 +137,10 @@ variable "dagster_domain" {
   description = "Custom domain for Dagster webserver"
   type        = string
   default     = "dagster.gtfsrt.io"
+}
+
+variable "archiver_domain" {
+  description = "Custom domain for the archiver Cloud Run service"
+  type        = string
+  default     = "archiver.gtfsrt.io"
 }
