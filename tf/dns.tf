@@ -24,6 +24,16 @@ resource "google_dns_record_set" "parquet_bucket" {
   rrdatas      = ["c.storage.googleapis.com."]
 }
 
+# DNS record for archiver custom domain
+resource "google_dns_record_set" "archiver" {
+  name         = "${var.archiver_domain}."
+  managed_zone = data.google_dns_managed_zone.gtfsrt_io.name
+  project      = var.project_id
+  type         = "CNAME"
+  ttl          = 300
+  rrdatas      = ["ghs.googlehosted.com."]
+}
+
 # DNS record for Dagster webserver custom domain
 resource "google_dns_record_set" "dagster" {
   count = var.dagster_iap_allowed_domain != null ? 1 : 0
