@@ -39,9 +39,11 @@ COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/src /app/src
 
 # Set environment variables
+ARG APP_VERSION=dev
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    APP_VERSION=${APP_VERSION}
 
 # Copy agencies config (if present, can be overridden via mount)
 COPY --chown=archiver:archiver agencies.example.yaml /app/agencies.yaml
