@@ -11,6 +11,8 @@ from prometheus_client.openmetrics.exposition import (
     generate_latest,
 )
 
+from gtfs_rt_archiver.metrics import get_last_success_timestamp
+
 if TYPE_CHECKING:
     from gtfs_rt_archiver.scheduler import FeedScheduler
 
@@ -90,6 +92,40 @@ class HealthServer:
 
         return web.json_response({"status": "ready"})
 
+    async def _handle_feeds(self, _request: web.Request) -> web.Response:
+        """Handle /health/feeds endpoint with per-feed status.
+
+        Args:
+            request: HTTP request.
+
+        Returns:
+            JSON response with per-feed status list.
+        """
+        if self.scheduler is None:
+            return web.Response(
+                text=json.dumps({"error": "no scheduler"}),
+                status=503,
+                content_type="application/json",
+            )
+
+        now = time.time()
+        feeds = []
+        for feed in self.scheduler.active_feeds:
+            last_success = get_last_success_timestamp(feed.id)
+            feeds.append(
+                {
+                    "feed_id": feed.id,
+                    "agency_id": feed.agency_id,
+                    "feed_type": feed.feed_type.value,
+                    "interval_seconds": feed.interval_seconds,
+                    "last_success_seconds_ago": (
+                        round(now - last_success, 1) if last_success is not None else None
+                    ),
+                }
+            )
+
+        return web.json_response(feeds)
+
     async def _handle_metrics(self, _request: web.Request) -> web.Response:
         """Handle /metrics endpoint for Prometheus scraping.
 
@@ -112,6 +148,7 @@ class HealthServer:
         """Start the HTTP server."""
         self._app = web.Application()
         self._app.router.add_get("/health", self._handle_health)
+        self._app.router.add_get("/health/feeds", self._handle_feeds)
         self._app.router.add_get("/ready", self._handle_ready)
         self._app.router.add_get("/metrics", self._handle_metrics)
 

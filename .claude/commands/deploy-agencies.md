@@ -128,6 +128,19 @@ curl -s https://archiver.gtfsrt.io/health
 
 Expected health response: `{"status":"healthy"}`
 
+**Verify feeds are live** (wait ~30-60 seconds for first successful scrapes):
+
+```bash
+# Check per-feed status
+curl -s https://archiver.gtfsrt.io/health/feeds | jq .
+
+# Filter to a specific agency (replace AGENCY_ID)
+curl -s https://archiver.gtfsrt.io/health/feeds | \
+  jq '[.[] | select(.agency_id == "AGENCY_ID")]'
+```
+
+Each feed should have a non-null `last_success_seconds_ago` value within `interval_seconds` of startup (typically 20-60 seconds). A `null` value means the feed hasn't completed a successful fetch+upload cycle yet.
+
 ### Step 8: Cleanup
 
 Remove the temporary deployed config file:
