@@ -50,6 +50,14 @@ resource "google_storage_bucket" "parquet" {
 
   uniform_bucket_level_access = true
 
+  # Allow browser fetch from gtfsrt.io (and any origin for public data)
+  cors {
+    origin          = ["*"]
+    method          = ["GET", "HEAD"]
+    response_header = ["Content-Type", "Content-Length"]
+    max_age_seconds = 3600
+  }
+
   # Parquet files are read more frequently for analytics, so slower tiering
   lifecycle_rule {
     condition {
