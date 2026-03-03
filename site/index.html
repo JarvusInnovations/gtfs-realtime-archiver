@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>gtfsrt.io — Open GTFS-Realtime Data Archive</title>
+  <meta name="description" content="A continuously-updated archive of GTFS-Realtime feeds from transit agencies across the US. Free protobuf and Parquet access for researchers and developers.">
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+  <nav class="nav" id="nav">
+    <div class="container nav-inner">
+      <a href="#" class="nav-logo">gtfsrt.io</a>
+      <div class="nav-links">
+        <a href="#inventory">Inventory</a>
+        <a href="#access">Access Data</a>
+        <a href="#sandbox">Sandbox</a>
+        <a href="#source">Source</a>
+      </div>
+    </div>
+  </nav>
+
+  <header class="hero">
+    <div class="container">
+      <h1>gtfsrt.io</h1>
+      <p class="hero-tagline">Open GTFS-Realtime data archive</p>
+      <p class="hero-description">
+        A continuously-updated archive of GTFS-Realtime feeds from transit agencies across the US.
+        Raw protobuf snapshots and analytics-ready Parquet files, freely accessible for researchers and developers.
+      </p>
+      <p class="hero-by">by <a href="https://jarv.us" target="_blank" rel="noopener">Jarvus Innovations</a></p>
+    </div>
+  </header>
+
+  <section class="stats-bar" id="stats-bar">
+    <div class="container stats-grid">
+      <div class="stat">
+        <span class="stat-value" id="stat-agencies">&mdash;</span>
+        <span class="stat-label">Agencies</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value" id="stat-feeds">&mdash;</span>
+        <span class="stat-label">Feeds</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value" id="stat-records">&mdash;</span>
+        <span class="stat-label">Records</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value" id="stat-size">&mdash;</span>
+        <span class="stat-label">Archived</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value" id="stat-range">&mdash;</span>
+        <span class="stat-label">Date Range</span>
+      </div>
+    </div>
+  </section>
+
+  <main class="container">
+
+    <section id="inventory" class="section">
+      <h2>Data Inventory</h2>
+      <p class="section-subtitle">Live from the archive &mdash; updated daily by the compaction pipeline</p>
+
+      <div id="inventory-content">
+        <div class="loading">
+          <div class="skeleton skeleton-card"></div>
+          <div class="skeleton skeleton-card"></div>
+          <div class="skeleton skeleton-card"></div>
+        </div>
+      </div>
+
+      <noscript>
+        <p>
+          JavaScript is required to load the live inventory.
+          You can view the raw data at
+          <a href="https://storage.googleapis.com/parquet.gtfsrt.io/inventory.json">inventory.json</a>.
+        </p>
+      </noscript>
+    </section>
+
+    <section id="access" class="section">
+      <h2>Access the Data</h2>
+      <p class="section-subtitle">No authentication required &mdash; all data is publicly accessible</p>
+
+      <h3>Query with DuckDB</h3>
+      <p>Query Parquet files directly from GCS using DuckDB's httpfs extension:</p>
+      <pre><code>INSTALL httpfs;
+LOAD httpfs;
+
+SELECT *
+FROM read_parquet(
+  'http://parquet.gtfsrt.io/vehicle_positions/date=2026-01-24/base64url=*/data.parquet',
+  hive_partitioning = true
+)
+LIMIT 100;</code></pre>
+
+      <h3>Read with Python</h3>
+      <p>Use PyArrow or pandas to read Parquet files over HTTP:</p>
+      <pre><code>import pandas as pd
+
+df = pd.read_parquet(
+    "http://parquet.gtfsrt.io/vehicle_positions"
+    "/date=2026-01-24"
+    "/base64url=aHR0cHM6Ly9hcGkuYWN0cmFuc2l0Lm9yZy90cmFuc2l0L2d0ZnNydC92ZWhpY2xlcw"
+    "/data.parquet"
+)
+print(df.head())</code></pre>
+
+      <h3>Direct Download</h3>
+      <p>Files are organized with Hive-style partitioning:</p>
+      <pre><code># Parquet files (compacted daily)
+http://parquet.gtfsrt.io/{feed_type}/date={YYYY-MM-DD}/base64url={encoded_url}/data.parquet
+
+# Raw protobuf snapshots
+http://protobuf.gtfsrt.io/{feed_type}/date={YYYY-MM-DD}/hour={ISO_HOUR}/base64url={encoded_url}/{timestamp}.pb</code></pre>
+      <p>
+        The <code>base64url</code> partition is a URL-safe base64 encoding (no padding) of the feed URL.
+        Use the inventory table above to find feed URLs and their encoded values.
+      </p>
+    </section>
+
+    <section id="sandbox" class="section">
+      <h2>Explore with the Sandbox</h2>
+      <p>
+        The <strong>GTFS-RT Sandbox</strong> is a companion project for exploring this archived data
+        using <a href="https://duckdb.org" target="_blank" rel="noopener">DuckDB</a> and
+        <a href="https://www.getdbt.com" target="_blank" rel="noopener">dbt</a>.
+        It includes staging models, TIDES-compliant transformations, and analytics views
+        you can run on your laptop.
+      </p>
+      <div class="link-cards">
+        <a href="https://github.com/JarvusInnovations/gtfsrt-sandbox" class="link-card" target="_blank" rel="noopener">
+          <strong>Sandbox Repository</strong>
+          <span>Clone and explore with dbt + DuckDB</span>
+        </a>
+        <a href="https://jarvusinnovations.github.io/gtfsrt-sandbox/" class="link-card" target="_blank" rel="noopener">
+          <strong>dbt Documentation</strong>
+          <span>Browse models, columns, and lineage</span>
+        </a>
+      </div>
+    </section>
+
+    <section id="source" class="section">
+      <h2>Source Code</h2>
+      <div class="link-cards">
+        <a href="https://github.com/JarvusInnovations/gtfs-realtime-archiver" class="link-card" target="_blank" rel="noopener">
+          <strong>gtfs-realtime-archiver</strong>
+          <span>Archiver service, Dagster pipeline, and infrastructure</span>
+        </a>
+        <a href="https://github.com/JarvusInnovations/gtfsrt-sandbox" class="link-card" target="_blank" rel="noopener">
+          <strong>gtfsrt-sandbox</strong>
+          <span>dbt + DuckDB sandbox for data exploration</span>
+        </a>
+      </div>
+      <p class="license-note">Licensed under <a href="https://github.com/JarvusInnovations/gtfs-realtime-archiver/blob/develop/LICENSE" target="_blank" rel="noopener">AGPL-3.0</a></p>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      <p>Made with &hearts; by <a href="https://jarv.us" target="_blank" rel="noopener">Jarvus Innovations</a></p>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

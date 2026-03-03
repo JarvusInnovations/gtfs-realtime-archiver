@@ -35,9 +35,15 @@ See [DESIGN.md](../DESIGN.md) for detailed technical specifications.
 
 ```
 gtfs-realtime-archiver/
-├── .github/workflows/      # CI/CD (lint, test, build, push)
+├── .github/workflows/      # CI/CD (lint, test, build, push, pages)
 ├── .claude/                # AI assistant guidelines (this directory)
 ├── .dagster_home/          # Dagster configuration
+├── site/                   # Static site for gtfsrt.io (GitHub Pages)
+│   ├── index.html          # Single-page site
+│   ├── style.css           # Styles
+│   ├── app.js              # Inventory fetch and render
+│   ├── CNAME               # Custom domain: gtfsrt.io
+│   └── favicon.svg         # Site icon
 ├── src/
 │   ├── gtfs_rt_archiver/   # Archiver service
 │   │   ├── __main__.py     # Application entry point and orchestration
@@ -132,6 +138,7 @@ This project uses **Conventional Commits** with components:
 - `tf` - Infrastructure/Terraform
 - `ci` - GitHub Actions workflows
 - `docker` - Dockerfile and container
+- `site` - Static site (gtfsrt.io)
 - `claude` - AI assistant documentation
 
 **Format**: `type(component): description`
