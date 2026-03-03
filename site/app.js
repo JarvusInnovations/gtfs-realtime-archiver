@@ -176,15 +176,17 @@ FROM read_parquet(
 LIMIT 100;`;
 
   document.getElementById('example-python').textContent =
-`import pandas as pd
+`# pip install polars
+import polars as pl
 
-df = pd.read_parquet(
+df = pl.read_parquet(
     "http://parquet.gtfsrt.io/${feedType}"
     "/date=${date}"
     "/base64url=${base64url}"
     "/data.parquet"
 )
-print(df.head())`;
+print(df.schema)
+print(df.head(10))`;
 
   document.getElementById('example-download').textContent =
 `# Parquet files (compacted daily)

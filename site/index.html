@@ -106,16 +106,18 @@ FROM read_parquet(
 LIMIT 100;</code></pre>
 
       <h3>Read with Python</h3>
-      <p>Use PyArrow or pandas to read Parquet files over HTTP:</p>
-      <pre><code id="example-python">import pandas as pd
+      <p>Use Polars to read Parquet files over HTTP:</p>
+      <pre><code id="example-python"># pip install polars
+import polars as pl
 
-df = pd.read_parquet(
+df = pl.read_parquet(
     "http://parquet.gtfsrt.io/&lt;feed_type&gt;"
     "/date=&lt;date&gt;"
     "/base64url=&lt;base64url&gt;"
     "/data.parquet"
 )
-print(df.head())</code></pre>
+print(df.schema)
+print(df.head(10))</code></pre>
 
       <h3>Direct Download</h3>
       <p>Files are organized with Hive-style partitioning:</p>
