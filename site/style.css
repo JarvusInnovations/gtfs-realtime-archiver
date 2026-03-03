@@ -132,7 +132,7 @@ a:hover {
   color: #64748b;
 }
 
-.hero-by a {
+.hero-by a:not(.jarvus) {
   color: #94a3b8;
 }
 
@@ -474,11 +474,12 @@ p code {
   font-size: 0.875rem;
 }
 
-.footer a {
-  color: #cbd5e1;
+.jarvus {
+  color: #F47E20;
+  font-weight: 600;
 }
 
-.footer a:hover {
+.jarvus:hover {
   color: #ffffff;
 }
 
