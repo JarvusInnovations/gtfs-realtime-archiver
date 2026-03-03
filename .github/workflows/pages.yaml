@@ -2,7 +2,7 @@ name: Deploy Site
 
 on:
   push:
-    branches: [main]
+    branches: [develop]
     paths: ['site/**']
   workflow_dispatch:
 
