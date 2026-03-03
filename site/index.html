@@ -86,37 +86,44 @@
       <h2>Access the Data</h2>
       <p class="section-subtitle">No authentication required &mdash; all data is publicly accessible</p>
 
+      <div class="feed-selector">
+        <label for="feed-select">Select a feed to populate examples:</label>
+        <select id="feed-select" disabled>
+          <option value="">&lt;feed_type&gt; / &lt;date&gt; / &lt;base64url&gt;</option>
+        </select>
+      </div>
+
       <h3>Query with DuckDB</h3>
       <p>Query Parquet files directly from GCS using DuckDB's httpfs extension:</p>
-      <pre><code>INSTALL httpfs;
+      <pre><code id="example-duckdb">INSTALL httpfs;
 LOAD httpfs;
 
 SELECT *
 FROM read_parquet(
-  'http://parquet.gtfsrt.io/vehicle_positions/date=2026-01-24/base64url=*/data.parquet',
+  'http://parquet.gtfsrt.io/&lt;feed_type&gt;/date=&lt;date&gt;/base64url=&lt;base64url&gt;/data.parquet',
   hive_partitioning = true
 )
 LIMIT 100;</code></pre>
 
       <h3>Read with Python</h3>
       <p>Use PyArrow or pandas to read Parquet files over HTTP:</p>
-      <pre><code>import pandas as pd
+      <pre><code id="example-python">import pandas as pd
 
 df = pd.read_parquet(
-    "http://parquet.gtfsrt.io/vehicle_positions"
-    "/date=2026-01-24"
-    "/base64url=aHR0cHM6Ly9hcGkuYWN0cmFuc2l0Lm9yZy90cmFuc2l0L2d0ZnNydC92ZWhpY2xlcw"
+    "http://parquet.gtfsrt.io/&lt;feed_type&gt;"
+    "/date=&lt;date&gt;"
+    "/base64url=&lt;base64url&gt;"
     "/data.parquet"
 )
 print(df.head())</code></pre>
 
       <h3>Direct Download</h3>
       <p>Files are organized with Hive-style partitioning:</p>
-      <pre><code># Parquet files (compacted daily)
-http://parquet.gtfsrt.io/{feed_type}/date={YYYY-MM-DD}/base64url={encoded_url}/data.parquet
+      <pre><code id="example-download"># Parquet files (compacted daily)
+http://parquet.gtfsrt.io/&lt;feed_type&gt;/date=&lt;date&gt;/base64url=&lt;base64url&gt;/data.parquet
 
 # Raw protobuf snapshots
-http://protobuf.gtfsrt.io/{feed_type}/date={YYYY-MM-DD}/hour={ISO_HOUR}/base64url={encoded_url}/{timestamp}.pb</code></pre>
+http://protobuf.gtfsrt.io/&lt;feed_type&gt;/date=&lt;date&gt;/hour={ISO_HOUR}/base64url=&lt;base64url&gt;/{timestamp}.pb</code></pre>
       <p>
         The <code>base64url</code> partition is a URL-safe base64 encoding (no padding) of the feed URL.
         Use the inventory table above to find feed URLs and their encoded values.

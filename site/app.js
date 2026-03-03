@@ -15,6 +15,7 @@ async function fetchInventory() {
     const feeds = await response.json();
     renderStats(computeStats(feeds));
     renderInventory(container, groupByAgency(feeds));
+    populateFeedSelector(feeds);
   } catch (error) {
     showError(container, error);
   }
@@ -114,6 +115,83 @@ function renderInventory(container, agencies) {
       </details>
     `;
   }).join('');
+}
+
+// Feed selector for code examples
+
+function populateFeedSelector(feeds) {
+  const select = document.getElementById('feed-select');
+  const agencies = groupByAgency(feeds);
+
+  for (const agency of agencies) {
+    const group = document.createElement('optgroup');
+    group.label = agency.name;
+
+    const sortedFeeds = [...agency.feeds].sort((a, b) => {
+      const sysCompare = (a.system_name || '').localeCompare(b.system_name || '');
+      if (sysCompare !== 0) return sysCompare;
+      return feedTypeSortOrder(a.feed_type) - feedTypeSortOrder(b.feed_type);
+    });
+
+    for (const feed of sortedFeeds) {
+      const option = document.createElement('option');
+      const systemLabel = feed.system_name ? ` / ${feed.system_name}` : '';
+      option.textContent = `${feedTypeLabel(feed.feed_type)}${systemLabel}`;
+      option.value = JSON.stringify({
+        feed_type: feed.feed_type,
+        base64url: feed.base64url,
+        date: feed.date_max,
+      });
+      group.appendChild(option);
+    }
+
+    select.appendChild(group);
+  }
+
+  select.disabled = false;
+  select.addEventListener('change', onFeedSelect);
+}
+
+function onFeedSelect(e) {
+  const select = e.target;
+  if (!select.value) {
+    updateExamples('<feed_type>', '<date>', '<base64url>');
+    return;
+  }
+
+  const { feed_type, base64url, date } = JSON.parse(select.value);
+  updateExamples(feed_type, date, base64url);
+}
+
+function updateExamples(feedType, date, base64url) {
+  document.getElementById('example-duckdb').textContent =
+`INSTALL httpfs;
+LOAD httpfs;
+
+SELECT *
+FROM read_parquet(
+  'http://parquet.gtfsrt.io/${feedType}/date=${date}/base64url=${base64url}/data.parquet',
+  hive_partitioning = true
+)
+LIMIT 100;`;
+
+  document.getElementById('example-python').textContent =
+`import pandas as pd
+
+df = pd.read_parquet(
+    "http://parquet.gtfsrt.io/${feedType}"
+    "/date=${date}"
+    "/base64url=${base64url}"
+    "/data.parquet"
+)
+print(df.head())`;
+
+  document.getElementById('example-download').textContent =
+`# Parquet files (compacted daily)
+http://parquet.gtfsrt.io/${feedType}/date=${date}/base64url=${base64url}/data.parquet
+
+# Raw protobuf snapshots
+http://protobuf.gtfsrt.io/${feedType}/date=${date}/hour={ISO_HOUR}/base64url=${base64url}/{timestamp}.pb`;
 }
 
 function showError(container, error) {
