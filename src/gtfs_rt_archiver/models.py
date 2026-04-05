@@ -80,12 +80,17 @@ class SystemConfig(BaseModel):
     id: Annotated[str, Field(pattern=r"^[a-z0-9-]+$")]
     name: str
     schedule_url: HttpUrl | None = None
+    schedule_urls: list[HttpUrl] | None = None
     auth: AuthConfig | None = None
     feeds: list[RealtimeFeedConfig]
 
     @model_validator(mode="after")
-    def validate_has_feeds(self) -> Self:
-        """Ensure system has at least one feed."""
+    def normalize_schedule_urls(self) -> Self:
+        """Normalize schedule_url/schedule_urls into schedule_urls list."""
+        if self.schedule_urls is None:
+            self.schedule_urls = [self.schedule_url] if self.schedule_url else []
+        elif self.schedule_url and self.schedule_url not in self.schedule_urls:
+            self.schedule_urls.insert(0, self.schedule_url)
         if not self.feeds:
             raise ValueError("System must have at least one feed")
         return self
@@ -97,13 +102,14 @@ class AgencyConfig(BaseModel):
     id: Annotated[str, Field(pattern=r"^[a-z0-9-]+$")]
     name: str
     schedule_url: HttpUrl | None = None
+    schedule_urls: list[HttpUrl] | None = None
     auth: AuthConfig | None = None
     feeds: list[RealtimeFeedConfig] | None = None
     systems: list[SystemConfig] | None = None
 
     @model_validator(mode="after")
-    def validate_feeds_or_systems(self) -> Self:
-        """Ensure agency has either feeds or systems, but not both."""
+    def validate_config(self) -> Self:
+        """Validate feeds/systems and normalize schedule URLs."""
         has_feeds = self.feeds is not None and len(self.feeds) > 0
         has_systems = self.systems is not None and len(self.systems) > 0
 
@@ -111,6 +117,13 @@ class AgencyConfig(BaseModel):
             raise ValueError("Agency cannot have both feeds and systems")
         if not has_feeds and not has_systems:
             raise ValueError("Agency must have either feeds or systems")
+
+        # Normalize schedule_url/schedule_urls
+        if self.schedule_urls is None:
+            self.schedule_urls = [self.schedule_url] if self.schedule_url else []
+        elif self.schedule_url and self.schedule_url not in self.schedule_urls:
+            self.schedule_urls.insert(0, self.schedule_url)
+
         return self
 
 
@@ -134,7 +147,8 @@ class FeedConfig(BaseModel):
     agency_name: str
     system_id: str | None = None
     system_name: str | None = None
-    schedule_url: HttpUrl | None = None
+    schedule_url: HttpUrl | None = None  # primary schedule URL (first in list, for backwards compat)
+    schedule_urls: list[HttpUrl] = Field(default_factory=list)  # all schedule URLs
 
     # Runtime settings
     interval_seconds: int = Field(default=20, ge=5, le=3600)

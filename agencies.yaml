@@ -1,0 +1,305 @@
+# GTFS-RT Archiver Agency Configuration
+# Copy this file to customize for your deployment.
+
+# Default settings applied to all feeds unless overridden
+defaults:
+  timeout_seconds: 30
+  retry:
+    max_attempts: 3
+    backoff_base: 1.0
+    backoff_max: 10.0
+  # Per-feed-type interval defaults (in seconds)
+  intervals:
+    vehicle_positions: 20
+    trip_updates: 20
+    service_alerts: 60
+
+# Agency definitions
+agencies:
+  - id: septa
+    name: SEPTA
+    systems:
+      - id: bus
+        name: Bus
+        schedule_url: https://www3.septa.org/developer/google_bus.zip
+        feeds:
+          - feed_type: vehicle_positions
+            url: https://www3.septa.org/gtfsrt/septa-pa-us/Vehicle/rtVehiclePosition.pb
+          - feed_type: trip_updates
+            url: https://www3.septa.org/gtfsrt/septa-pa-us/Trip/rtTripUpdates.pb
+          - feed_type: service_alerts
+            url: https://www3.septa.org/gtfsrt/septa-pa-us/Service/rtServiceAlerts.pb
+
+      - id: rail
+        name: Regional Rail
+        schedule_url: https://www3.septa.org/developer/google_rail.zip
+        feeds:
+          - feed_type: vehicle_positions
+            url: https://www3.septa.org/gtfsrt/septarail-pa-us/Vehicle/rtVehiclePosition.pb
+          - feed_type: trip_updates
+            url: https://www3.septa.org/gtfsrt/septarail-pa-us/Trip/rtTripUpdates.pb
+          - feed_type: service_alerts
+            url: https://www3.septa.org/gtfsrt/septarail-pa-us/Service/rtServiceAlerts.pb
+
+  - id: metrolink
+    name: Metrolink
+    schedule_url: https://metrolinktrains.com/globalassets/about/gtfs/gtfs.zip
+    auth:
+      type: header
+      secret_name: metrolink-api-key
+      key: X-Api-Key
+    feeds:
+      - feed_type: vehicle_positions
+        url: https://metrolink-gtfsrt.gbsdigital.us/feed/gtfsrt-vehicles
+        interval_seconds: 30
+      - feed_type: trip_updates
+        url: https://metrolink-gtfsrt.gbsdigital.us/feed/gtfsrt-trips
+        interval_seconds: 30
+
+  - id: actransit
+    name: AC Transit
+    schedule_url: https://api.actransit.org/transit/gtfs/download
+    auth:
+      type: query
+      secret_name: actransit-api-key
+      key: token
+    feeds:
+      - feed_type: vehicle_positions
+        url: https://api.actransit.org/transit/gtfsrt/vehicles
+        interval_seconds: 60
+      - feed_type: trip_updates
+        url: https://api.actransit.org/transit/gtfsrt/tripupdates
+        interval_seconds: 60
+      - feed_type: service_alerts
+        url: https://api.actransit.org/transit/gtfsrt/alerts
+        interval_seconds: 60
+
+  - id: vta
+    name: Santa Clara VTA
+    schedule_url: https://gtfs.vta.org/gtfs_vta.zip
+    auth:
+      type: query
+      secret_name: 511-api-key
+      key: api_key
+    feeds:
+      - feed_type: vehicle_positions
+        url: https://api.511.org/transit/vehiclepositions?agency=SC
+      - feed_type: trip_updates
+        url: https://api.511.org/transit/tripupdates?agency=SC
+      - feed_type: service_alerts
+        url: https://api.511.org/transit/servicealerts?agency=SC
+
+  - id: bigbluebus
+    name: Big Blue Bus
+    schedule_url: http://gtfs.bigbluebus.com/current.zip
+    feeds:
+      - feed_type: vehicle_positions
+        url: https://cleverapi.bigbluebus.com/gtfsrt/vehicles
+      - feed_type: trip_updates
+        url: https://cleverapi.bigbluebus.com/gtfsrt/trips
+      - feed_type: service_alerts
+        url: https://cleverapi.bigbluebus.com/gtfsrt/alerts
+
+  - id: metro-transit-madison
+    name: Metro Transit - City of Madison
+    schedule_url: http://transitdata.cityofmadison.com/GTFS/mmt_gtfs.zip
+    feeds:
+      - feed_type: vehicle_positions
+        url: https://metromap.cityofmadison.com/gtfsrt/vehicles
+      - feed_type: trip_updates
+        url: https://metromap.cityofmadison.com/gtfsrt/trips
+      - feed_type: service_alerts
+        url: https://metromap.cityofmadison.com/gtfsrt/alerts
+
+  - id: metro-transit-mpls
+    name: Metro Transit (Minneapolis)
+    schedule_url: https://svc.metrotransit.org/mtgtfs/gtfs.zip
+    feeds:
+      - feed_type: vehicle_positions
+        url: https://svc.metrotransit.org/mtgtfs/vehiclepositions.pb
+      - feed_type: trip_updates
+        url: https://svc.metrotransit.org/mtgtfs/tripupdates.pb
+      - feed_type: service_alerts
+        url: https://svc.metrotransit.org/mtgtfs/alerts.pb
+
+  - id: broward-county-transit
+    name: Broward County Transit
+    schedule_url: https://www.broward.org/bct/documents/google_transit.zip
+    feeds:
+      - feed_type: vehicle_positions
+        url: https://bctmyride-buspas.com:8080/GTFS/VehiclePositions
+      - feed_type: trip_updates
+        url: https://bctmyride-buspas.com:8080/GTFS/TripUpdates
+
+  - id: houston-metro
+    name: Houston METRO
+    schedule_url: https://metro.resourcespace.com/pages/download.php?ref=4835&ext=zip
+    auth:
+      type: header
+      secret_name: houston-metro-api-key
+      key: Ocp-Apim-Subscription-Key
+    feeds:
+      - feed_type: trip_updates
+        url: https://api.ridemetro.org/GtfsRealtime/TripUpdates
+      - feed_type: service_alerts
+        url: https://api.ridemetro.org/v2alertspb/alerts.pb
+
+  - id: sound-transit
+    name: Sound Transit
+    schedule_url: https://gtfs.sound.obaweb.org/prod/40_gtfs.zip
+    auth:
+      type: query
+      secret_name: sound-transit-api-key
+      key: key
+    feeds:
+      - feed_type: vehicle_positions
+        url: https://api.pugetsound.onebusaway.org/api/gtfs_realtime/vehicle-positions-for-agency/40.pb
+      - feed_type: trip_updates
+        url: https://api.pugetsound.onebusaway.org/api/gtfs_realtime/trip-updates-for-agency/40.pb
+      - feed_type: service_alerts
+        url: https://api.pugetsound.onebusaway.org/api/gtfs_realtime/alerts-for-agency/40.pb
+
+  - id: mta
+    name: Metropolitan Transportation Authority
+    systems:
+      # Subway line-group feeds contain both VP and TU entities in one protobuf.
+      # VP data has no GPS coords (underground). Stored as trip_updates.
+      # All subway systems share one schedule: supplemented version updated hourly.
+      - id: subway-1234567
+        name: "Subway: Lines 1/2/3/4/5/6/7"
+        schedule_url: http://web.mta.info/developers/data/nyct/subway/google_transit.zip
+        feeds:
+          - feed_type: trip_updates
+            url: https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs
+
+      - id: subway-ace
+        name: "Subway: Lines A/C/E"
+        schedule_url: http://web.mta.info/developers/data/nyct/subway/google_transit.zip
+        feeds:
+          - feed_type: trip_updates
+            url: https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-ace
+
+      - id: subway-bdfm
+        name: "Subway: Lines B/D/F/M"
+        schedule_url: http://web.mta.info/developers/data/nyct/subway/google_transit.zip
+        feeds:
+          - feed_type: trip_updates
+            url: https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-bdfm
+
+      - id: subway-g
+        name: "Subway: Line G"
+        schedule_url: http://web.mta.info/developers/data/nyct/subway/google_transit.zip
+        feeds:
+          - feed_type: trip_updates
+            url: https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-g
+
+      - id: subway-jz
+        name: "Subway: Lines J/Z"
+        schedule_url: http://web.mta.info/developers/data/nyct/subway/google_transit.zip
+        feeds:
+          - feed_type: trip_updates
+            url: https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-jz
+
+      - id: subway-l
+        name: "Subway: Line L"
+        schedule_url: http://web.mta.info/developers/data/nyct/subway/google_transit.zip
+        feeds:
+          - feed_type: trip_updates
+            url: https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-l
+
+      - id: subway-nqrw
+        name: "Subway: Lines N/Q/R/W"
+        schedule_url: http://web.mta.info/developers/data/nyct/subway/google_transit.zip
+        feeds:
+          - feed_type: trip_updates
+            url: https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-nqrw
+
+      - id: subway-sir
+        name: "Subway: Staten Island Railway"
+        schedule_url: http://web.mta.info/developers/data/nyct/subway/google_transit.zip
+        feeds:
+          - feed_type: trip_updates
+            url: https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-si
+
+      - id: subway-alerts
+        name: Subway Alerts
+        schedule_url: http://web.mta.info/developers/data/nyct/subway/google_transit.zip
+        feeds:
+          - feed_type: service_alerts
+            url: https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/camsys%2Fsubway-alerts
+
+      - id: bus
+        name: NYC Bus
+        # MTA publishes per-borough GTFS but a unified RT feed
+        schedule_urls:
+          - http://web.mta.info/developers/data/nyct/bus/google_transit_manhattan.zip
+          - http://web.mta.info/developers/data/nyct/bus/google_transit_brooklyn.zip
+          - http://web.mta.info/developers/data/nyct/bus/google_transit_bronx.zip
+          - http://web.mta.info/developers/data/nyct/bus/google_transit_queens.zip
+          - http://web.mta.info/developers/data/nyct/bus/google_transit_staten_island.zip
+          - http://web.mta.info/developers/data/busco/google_transit.zip
+        # Rate limit: 1 request per 30 seconds per key
+        # Signup: https://register.developer.obanyc.com/
+        auth:
+          type: query
+          secret_name: mta-bus-api-key
+          key: key
+        feeds:
+          - feed_type: vehicle_positions
+            url: https://gtfsrt.prod.obanyc.com/vehiclePositions
+            interval_seconds: 30
+          - feed_type: trip_updates
+            url: https://gtfsrt.prod.obanyc.com/tripUpdates
+            interval_seconds: 30
+          - feed_type: service_alerts
+            url: https://gtfsrt.prod.obanyc.com/alerts
+
+      # LIRR and MNR feeds contain both VP and TU entities (VP has real GPS coords).
+      - id: lirr
+        name: Long Island Rail Road
+        schedule_url: http://web.mta.info/developers/data/lirr/google_transit.zip
+        feeds:
+          - feed_type: trip_updates
+            url: https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/lirr%2Fgtfs-lirr
+          - feed_type: service_alerts
+            url: https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/camsys%2Flirr-alerts
+
+      - id: mnr
+        name: Metro-North Railroad
+        schedule_url: http://web.mta.info/developers/data/mnr/google_transit.zip
+        feeds:
+          - feed_type: trip_updates
+            url: https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/mnr%2Fgtfs-mnr
+          - feed_type: service_alerts
+            url: https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/camsys%2Fmnr-alerts
+
+  - id: path
+    name: PATH
+    schedule_url: http://data.trilliumtransit.com/gtfs/path-nj-us/path-nj-us.zip
+    # Community-maintained feed (https://github.com/jamespfennell/path-train-gtfs-realtime)
+    # Trip Updates only — no VP or SA available. Dummy trip IDs.
+    feeds:
+      - feed_type: trip_updates
+        url: https://path.transitdata.nyc/gtfsrt
+
+  - id: mountain-line-missoula
+    name: Mountain Line (Missoula)
+    schedule_url: http://www.mountainline.com/files/MUTD_GTFS.zip
+    feeds:
+      - feed_type: vehicle_positions
+        url: https://bt.mountainline.com/gtfsrt/vehicles
+      - feed_type: trip_updates
+        url: https://bt.mountainline.com/gtfsrt/trips
+      - feed_type: service_alerts
+        url: https://bt.mountainline.com/gtfsrt/alerts
+
+  - id: nyc-ferry
+    name: NYC Ferry
+    schedule_url: http://nycferry.connexionz.net/rtt/public/utility/gtfs.aspx
+    feeds:
+      - feed_type: vehicle_positions
+        url: http://nycferry.connexionz.net/rtt/public/utility/gtfsrealtime.aspx/vehicleposition
+      - feed_type: trip_updates
+        url: http://nycferry.connexionz.net/rtt/public/utility/gtfsrealtime.aspx/tripupdate
+      - feed_type: service_alerts
+        url: http://nycferry.connexionz.net/rtt/public/utility/gtfsrealtime.aspx/alert
