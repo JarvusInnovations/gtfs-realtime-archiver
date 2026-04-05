@@ -7,6 +7,10 @@ from dagster_pipeline.defs.assets.compaction import (
 )
 from dagster_pipeline.defs.assets.feeds_metadata import feeds_metadata
 from dagster_pipeline.defs.assets.inventory import bucket_inventory
+from dagster_pipeline.defs.assets.schedule import (
+    gtfs_schedule_check,
+    gtfs_schedule_ingest,
+)
 
 __all__ = [
     "vehicle_positions_parquet",
@@ -14,4 +18,6 @@ __all__ = [
     "service_alerts_parquet",
     "feeds_metadata",
     "bucket_inventory",
+    "gtfs_schedule_check",
+    "gtfs_schedule_ingest",
 ]
