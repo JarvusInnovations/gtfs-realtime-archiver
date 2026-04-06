@@ -18,7 +18,7 @@ class BucketScanResult:
 
     def __init__(self) -> None:
         self.rt_parquet_files: list[dict[str, Any]] = []
-        self.schedule_metadata_paths: list[str] = []
+        self.schedule_metadata: list[dict[str, str]] = []  # [{path, base64url, feed_digest}]
 
 
 # RT pattern: {feed_type}/date={YYYY-MM-DD}/base64url={encoded}/data.parquet
@@ -58,7 +58,11 @@ def scan_bucket(
         elif name.endswith("metadata.json") and name.startswith("schedules/"):
             match = _SCHEDULE_PATTERN.match(name)
             if match:
-                result.schedule_metadata_paths.append(name)
+                result.schedule_metadata.append({
+                    "path": name,
+                    "base64url": match.group("base64url"),
+                    "feed_digest": match.group("feed_digest"),
+                })
 
     return result
 
@@ -149,10 +153,10 @@ def bucket_inventory(
     parquet_files = scan.rt_parquet_files
     context.log.info(
         f"Found {len(parquet_files)} RT parquet files, "
-        f"{len(scan.schedule_metadata_paths)} schedule versions"
+        f"{len(scan.schedule_metadata)} schedule versions"
     )
 
-    if not parquet_files and not scan.schedule_metadata_paths:
+    if not parquet_files and not scan.schedule_metadata:
         context.log.info("No data found, writing empty inventories")
         _upload_json(client, gcs.parquet_bucket, "inventory.json", [])
         _upload_json(client, gcs.parquet_bucket, "schedules.json", [])
@@ -233,7 +237,7 @@ def bucket_inventory(
     context.log.info(f"Wrote inventory.json with {len(feeds_output)} RT feeds")
 
     # Step 7: Build and upload schedule inventory
-    schedule_feeds = _build_schedule_inventory(client, gcs.parquet_bucket, scan.schedule_metadata_paths)
+    schedule_feeds = _build_schedule_inventory(client, gcs.parquet_bucket, scan.schedule_metadata)
     _upload_json(client, gcs.parquet_bucket, "schedules.json", schedule_feeds)
     schedule_versions = sum(len(f.get("versions", [])) for f in schedule_feeds)
     context.log.info(f"Wrote schedules.json with {len(schedule_feeds)} feeds, {schedule_versions} versions")
@@ -259,7 +263,7 @@ def bucket_inventory(
 def _build_schedule_inventory(
     client: storage.Client,
     bucket_name: str,
-    metadata_paths: list[str],
+    schedule_metadata: list[dict[str, str]],
 ) -> list[dict[str, Any]]:
     """Read schedule metadata.json files and group by schedule URL.
 
@@ -267,11 +271,10 @@ def _build_schedule_inventory(
     """
     bucket = client.bucket(bucket_name)
 
-    # Read all metadata.json files and group by base64url (= schedule URL)
     by_url: dict[str, dict[str, Any]] = {}
 
-    for path in metadata_paths:
-        blob = bucket.blob(path)
+    for entry in schedule_metadata:
+        blob = bucket.blob(entry["path"])
         try:
             content = blob.download_as_text()
             meta = json.loads(content)
@@ -282,14 +285,7 @@ def _build_schedule_inventory(
         if not schedule_url:
             continue
 
-        # Extract base64url from path
-        # Pattern: schedules/base64url={b64}/_feed_digest={fp}/metadata.json
-        parts = path.split("/")
-        base64url = ""
-        for part in parts:
-            if part.startswith("base64url="):
-                base64url = part[len("base64url="):]
-                break
+        base64url = entry["base64url"]
 
         if schedule_url not in by_url:
             by_url[schedule_url] = {

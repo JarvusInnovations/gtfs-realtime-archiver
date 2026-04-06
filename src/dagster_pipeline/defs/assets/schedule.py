@@ -164,6 +164,8 @@ def gtfs_schedule_check(
         "new_feed_details": new_feeds,
     }
 
+    new_partition_keys = [f["partition_key"] for f in new_feeds]
+
     return dg.Output(
         result,
         metadata={
@@ -171,6 +173,7 @@ def gtfs_schedule_check(
             "new_feeds": len(new_feeds),
             "unchanged": unchanged,
             "errors": errors,
+            "new_partition_keys": dg.MetadataValue.json(new_partition_keys),
         },
     )
 

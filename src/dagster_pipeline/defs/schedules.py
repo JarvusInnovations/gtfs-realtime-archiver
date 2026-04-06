@@ -225,25 +225,22 @@ def gtfs_schedule_ingest_sensor(
     if context.cursor and context.cursor >= event_ts:
         return dg.SensorResult(run_requests=[])
 
-    new_feeds_count = materialization.metadata.get("new_feeds")
-    if not new_feeds_count or new_feeds_count.value == 0:
+    # Read the specific partition keys that had new versions
+    new_keys_meta = materialization.metadata.get("new_partition_keys")
+    if not new_keys_meta or not new_keys_meta.value:
         return dg.SensorResult(run_requests=[], cursor=event_ts)
 
-    # Submit ingest for all registered schedule feed partitions
-    # The ingest asset is idempotent — it checks version_exists before writing
-    known_partitions = list(
-        context.instance.get_dynamic_partitions("schedule_feeds")
-    )
+    new_partition_keys: list[str] = new_keys_meta.value  # type: ignore[assignment]
 
     run_requests = [
         dg.RunRequest(
             run_key=f"schedule_ingest_{event_ts}_{pk}",
             partition_key=pk,
         )
-        for pk in known_partitions
+        for pk in new_partition_keys
     ]
 
-    context.log.info(f"Submitting {len(run_requests)} schedule ingest runs")
+    context.log.info(f"Submitting {len(run_requests)} schedule ingest runs (of {len(new_partition_keys)} new feeds)")
 
     return dg.SensorResult(
         run_requests=run_requests,
