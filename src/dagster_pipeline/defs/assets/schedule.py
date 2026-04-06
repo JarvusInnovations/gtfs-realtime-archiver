@@ -2,34 +2,34 @@
 
 Two assets:
 - gtfs_schedule_check: daily unpartitioned check for new feed versions
-- gtfs_schedule_ingest: partitioned write of new versions as exploded parquet
+- gtfs_schedule_ingest: partitioned by schedule URL, writes new versions as exploded parquet
 """
 
 import hashlib
-import io
 
 import dagster as dg
 import requests
 import yaml
 
-from dagster_pipeline.defs.assets.compaction import encode_base64url
+from dagster_pipeline.defs.assets.compaction import (
+    decode_base64url,
+    encode_base64url,
+    url_to_partition_key,
+    partition_key_to_url,
+)
 from dagster_pipeline.defs.resources import GCSResource, SecretManagerResource
-from gtfs_digester import GTFSArchive, write_exploded, version_exists
+from gtfs_digester import GTFSArchive, write_exploded, version_exists, list_versions
 from gtfs_rt_archiver.config import flatten_agencies
 from gtfs_rt_archiver.models import AgenciesFileConfig, AuthConfig, AuthType
 
-# Dynamic partitions for schedule ingestion: keyed by "{base64url}:{fingerprint}"
+# Dynamic partitions for schedule feeds — keyed by stripped URL (same as RT feeds)
 schedule_feed_partitions = dg.DynamicPartitionsDefinition(name="schedule_feeds")
 
 
 def _resolve_schedule_auth(
     config: AgenciesFileConfig,
 ) -> dict[str, AuthConfig | None]:
-    """Build a map of schedule_url -> auth config from agencies.yaml.
-
-    Since schedule URLs may need the same auth as their RT feeds,
-    we resolve auth through the feed flattening and map it back.
-    """
+    """Build a map of schedule_url -> auth config from agencies.yaml."""
     feeds = flatten_agencies(config)
     url_to_auth: dict[str, AuthConfig | None] = {}
     for feed in feeds:
@@ -56,6 +56,13 @@ def _download_schedule(url: str, auth: AuthConfig | None, timeout: int = 60) -> 
     return resp.content
 
 
+def _load_agencies_config(secret_manager: SecretManagerResource) -> AgenciesFileConfig:
+    """Load and parse agencies.yaml from Secret Manager."""
+    agencies_yaml = secret_manager.get_secret()
+    raw_config = yaml.safe_load(agencies_yaml)
+    return AgenciesFileConfig.model_validate(raw_config)
+
+
 @dg.asset(
     compute_kind="python",
     group_name="schedule",
@@ -72,22 +79,13 @@ def gtfs_schedule_check(
     1. Download the zip
     2. Run gtfs-digester to compute fingerprint
     3. Check if this fingerprint already exists in the parquet bucket
-    4. If new: register a dynamic partition for ingestion
+    4. If new: register the URL as a dynamic partition (if not already) and record the discovery
     """
-    # Load agencies config from Secret Manager
-    agencies_yaml = secret_manager.get_secret()
-    raw_config = yaml.safe_load(agencies_yaml)
-    config = AgenciesFileConfig.model_validate(raw_config)
-
-    # Resolve auth for schedule URLs
+    config = _load_agencies_config(secret_manager)
     url_auth = _resolve_schedule_auth(config)
 
-    # Resolve secrets for URLs that need auth
-    # (In production, secrets are pre-resolved by the archiver service.
-    # For Dagster, we need to resolve them here.)
-    # TODO: resolve auth secrets via Secret Manager
+    # TODO: resolve auth secrets via Secret Manager for feeds that need them
 
-    # Deduplicate schedule URLs
     unique_urls = sorted(url_auth.keys())
     context.log.info(f"Checking {len(unique_urls)} unique schedule URLs")
 
@@ -95,34 +93,25 @@ def gtfs_schedule_check(
     unchanged = 0
     errors = 0
 
+    partition_requests = []
+
     for url in unique_urls:
         b64 = encode_base64url(url)
         base_path = f"gs://{gcs.parquet_bucket}/schedules/base64url={b64}"
+        partition_key = url_to_partition_key(url)
 
         try:
-            # Download
             auth = url_auth[url]
             zip_bytes = _download_schedule(url, auth)
-
-            # Compute SHA256 of raw zip for provenance
             source_sha256 = hashlib.sha256(zip_bytes).hexdigest()
 
-            # Digest
             archive = GTFSArchive.from_zip(zip_bytes)
             fp = archive.fingerprint.root_hash
 
-            # Check if already ingested
             if version_exists(base_path, fp):
                 context.log.debug(f"Unchanged: {url} -> {fp[:24]}...")
                 unchanged += 1
                 continue
-
-            # New version — register partition
-            partition_key = f"{b64}:{fp}"
-            context.instance.add_dynamic_partitions(
-                partitions_def_name="schedule_feeds",
-                partition_keys=[partition_key],
-            )
 
             new_feeds.append({
                 "schedule_url": url,
@@ -131,6 +120,11 @@ def gtfs_schedule_check(
                 "source_sha256": source_sha256,
                 "partition_key": partition_key,
             })
+
+            # Register partition if new
+            partition_requests.append(
+                schedule_feed_partitions.build_add_request([partition_key])
+            )
 
             context.log.info(f"New feed: {url} -> {fp[:24]}...")
 
@@ -161,45 +155,29 @@ def gtfs_schedule_check(
     compute_kind="python",
     group_name="schedule",
     partitions_def=schedule_feed_partitions,
-    description="Ingest a new GTFS schedule version as exploded parquet",
+    description="Ingest the latest GTFS schedule version for a feed URL as exploded parquet",
 )
 def gtfs_schedule_ingest(
     context: dg.AssetExecutionContext,
     gcs: GCSResource,
     secret_manager: SecretManagerResource,
 ) -> dg.Output[dict]:
-    """Ingest a single new GTFS schedule feed version.
+    """Ingest the current GTFS schedule for a URL.
 
-    Partition key format: "{base64url}:{fingerprint}"
-
-    Downloads the zip fresh, runs gtfs-digester, writes exploded parquet
-    to gs://{parquet_bucket}/schedules/base64url={b64}/_feed_digest={fp}/
+    Partition key is a stripped URL (same format as RT feeds).
+    Downloads fresh, digests, writes exploded parquet if the fingerprint is new.
     """
     partition_key = context.partition_key
-    b64, expected_fp = partition_key.split(":", 1)
-
-    # Decode the schedule URL
-    from dagster_pipeline.defs.assets.compaction import decode_base64url
-    schedule_url = decode_base64url(b64)
-
+    schedule_url = partition_key_to_url(partition_key)
+    b64 = encode_base64url(schedule_url)
     base_path = f"gs://{gcs.parquet_bucket}/schedules/base64url={b64}"
 
-    # Check if already written (idempotent)
-    if version_exists(base_path, expected_fp):
-        context.log.info(f"Already ingested: {schedule_url} -> {expected_fp[:24]}...")
-        return dg.Output(
-            {"status": "already_exists", "fingerprint": expected_fp},
-            metadata={"status": "already_exists"},
-        )
-
-    # Resolve auth for this URL
-    agencies_yaml = secret_manager.get_secret()
-    raw_config = yaml.safe_load(agencies_yaml)
-    config = AgenciesFileConfig.model_validate(raw_config)
+    # Resolve auth
+    config = _load_agencies_config(secret_manager)
     url_auth = _resolve_schedule_auth(config)
     auth = url_auth.get(schedule_url)
 
-    # Download fresh and digest
+    # Download and digest
     context.log.info(f"Downloading: {schedule_url}")
     zip_bytes = _download_schedule(schedule_url, auth)
     source_sha256 = hashlib.sha256(zip_bytes).hexdigest()
@@ -207,14 +185,16 @@ def gtfs_schedule_ingest(
     archive = GTFSArchive.from_zip(zip_bytes)
     fp = archive.fingerprint.root_hash
 
-    if fp != expected_fp:
-        context.log.warning(
-            f"Fingerprint mismatch: expected {expected_fp[:24]}... got {fp[:24]}... "
-            f"(feed may have changed between check and ingest)"
+    # Check if already ingested (idempotent)
+    if version_exists(base_path, fp):
+        context.log.info(f"Already ingested: {schedule_url} -> {fp[:24]}...")
+        return dg.Output(
+            {"status": "already_exists", "fingerprint": fp},
+            metadata={"status": "already_exists", "fingerprint": fp},
         )
 
     # Write exploded parquet
-    context.log.info(f"Writing exploded parquet to {base_path}/_feed_digest={fp[:24]}...")
+    context.log.info(f"Writing: {base_path}/_feed_digest={fp[:24]}...")
     from datetime import UTC, datetime
 
     metadata = write_exploded(
@@ -235,7 +215,7 @@ def gtfs_schedule_ingest(
     }
 
     context.log.info(
-        f"Ingested {len(archive.filenames)} files for {schedule_url} "
+        f"Ingested {len(archive.filenames)} files "
         f"(service: {metadata.feed_start_date} to {metadata.feed_end_date})"
     )
 
