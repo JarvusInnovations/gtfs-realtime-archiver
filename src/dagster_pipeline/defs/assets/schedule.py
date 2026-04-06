@@ -28,8 +28,10 @@ schedule_feed_partitions = dg.DynamicPartitionsDefinition(name="schedule_feeds")
 
 def _resolve_schedule_auth(
     config: AgenciesFileConfig,
+    secret_manager: SecretManagerResource,
+    context: dg.AssetExecutionContext,
 ) -> dict[str, AuthConfig | None]:
-    """Build a map of schedule_url -> auth config from agencies.yaml."""
+    """Build a map of schedule_url -> auth config, with secrets resolved."""
     feeds = flatten_agencies(config)
     url_to_auth: dict[str, AuthConfig | None] = {}
     for feed in feeds:
@@ -37,6 +39,30 @@ def _resolve_schedule_auth(
             url_str = str(url)
             if url_str not in url_to_auth:
                 url_to_auth[url_str] = feed.auth
+
+    # Resolve secrets for all unique auth configs
+    resolved_secrets: dict[str, str] = {}  # secret_name -> value
+    for auth in url_to_auth.values():
+        if auth is None or auth.secret_name in resolved_secrets:
+            continue
+        try:
+            secret_value = secret_manager.get_secret(auth.secret_name)
+            resolved_secrets[auth.secret_name] = secret_value
+            context.log.info(f"Resolved secret: {auth.secret_name}")
+        except Exception as e:
+            context.log.warning(f"Failed to resolve secret {auth.secret_name}: {e}")
+
+    # Populate resolved_value on each auth config
+    for auth in url_to_auth.values():
+        if auth is None:
+            continue
+        secret_value = resolved_secrets.get(auth.secret_name)
+        if secret_value:
+            if auth.value is None:
+                auth.resolved_value = secret_value
+            else:
+                auth.resolved_value = auth.value.replace("${SECRET}", secret_value)
+
     return url_to_auth
 
 
@@ -82,9 +108,7 @@ def gtfs_schedule_check(
     4. If new: register the URL as a dynamic partition (if not already) and record the discovery
     """
     config = _load_agencies_config(secret_manager)
-    url_auth = _resolve_schedule_auth(config)
-
-    # TODO: resolve auth secrets via Secret Manager for feeds that need them
+    url_auth = _resolve_schedule_auth(config, secret_manager, context)
 
     unique_urls = sorted(url_auth.keys())
     context.log.info(f"Checking {len(unique_urls)} unique schedule URLs")
@@ -174,7 +198,7 @@ def gtfs_schedule_ingest(
 
     # Resolve auth
     config = _load_agencies_config(secret_manager)
-    url_auth = _resolve_schedule_auth(config)
+    url_auth = _resolve_schedule_auth(config, secret_manager, context)
     auth = url_auth.get(schedule_url)
 
     # Download and digest
