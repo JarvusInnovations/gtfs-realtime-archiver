@@ -12,6 +12,7 @@ from typing import Any
 import dagster as dg
 import requests
 import yaml
+from gtfs_digester import GTFSArchive, version_exists, write_exploded
 
 from dagster_pipeline.defs.assets.compaction import (
     encode_base64url,
@@ -19,7 +20,6 @@ from dagster_pipeline.defs.assets.compaction import (
     url_to_partition_key,
 )
 from dagster_pipeline.defs.resources import GCSResource, SecretManagerResource
-from gtfs_digester import GTFSArchive, version_exists, write_exploded
 from gtfs_rt_archiver.config import flatten_agencies
 from gtfs_rt_archiver.models import AgenciesFileConfig, AuthConfig, AuthType
 
@@ -57,12 +57,12 @@ def _resolve_schedule_auth(
     for auth in url_to_auth.values():
         if auth is None:
             continue
-        secret_value = resolved_secrets.get(auth.secret_name)
-        if secret_value is not None:
+        resolved = resolved_secrets.get(auth.secret_name)
+        if resolved is not None:
             if auth.value is None:
-                auth.resolved_value = secret_value
+                auth.resolved_value = resolved
             else:
-                auth.resolved_value = auth.value.replace("${SECRET}", secret_value)
+                auth.resolved_value = auth.value.replace("${SECRET}", resolved)
 
     return url_to_auth
 
