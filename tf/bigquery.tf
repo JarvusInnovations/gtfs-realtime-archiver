@@ -158,6 +158,11 @@ resource "google_bigquery_table" "service_alerts" {
 # Schedule data is stored as exploded parquet per feed version.
 # Each table uses autodetect since GTFS columns are all strings.
 
+# --- GTFS Schedule tables ---
+# One external table per GTFS file type. Single wildcard matches across
+# both base64url and _feed_digest path levels. AUTO hive partitioning
+# detects both partition keys from the prefix.
+
 locals {
   schedule_tables = [
     "agency", "stops", "routes", "trips", "stop_times",
@@ -191,11 +196,11 @@ resource "google_bigquery_table" "schedule" {
   external_data_configuration {
     source_format = "PARQUET"
     autodetect    = true
-    source_uris   = ["gs://${google_storage_bucket.parquet.name}/schedules/*/_feed_digest=*/${each.value}.parquet"]
+    source_uris   = ["gs://${google_storage_bucket.parquet.name}/schedules/*/${each.value}.parquet"]
 
     hive_partitioning_options {
-      mode                     = "CUSTOM"
-      source_uri_prefix        = "gs://${google_storage_bucket.parquet.name}/schedules/{base64url:STRING}/{_feed_digest:STRING}"
+      mode                     = "AUTO"
+      source_uri_prefix        = "gs://${google_storage_bucket.parquet.name}/schedules/"
       require_partition_filter = false
     }
   }
