@@ -7,10 +7,13 @@ import dagster as dg
 from dagster_pipeline.defs.assets import (
     bucket_inventory,
     feeds_metadata,
+    gtfs_schedule_check,
+    gtfs_schedule_ingest,
     service_alerts_parquet,
     trip_updates_parquet,
     vehicle_positions_parquet,
 )
+from dagster_pipeline.defs.assets.schedule import schedule_feed_partitions
 from dagster_pipeline.defs.partitions import (
     service_alerts_feeds,
     service_alerts_partitions,
@@ -164,3 +167,82 @@ def bucket_inventory_schedule(
     time for parquet file generation to complete.
     """
     return dg.RunRequest()
+
+
+# --- GTFS Schedule ingestion ---
+
+gtfs_schedule_check_job = dg.define_asset_job(
+    name="gtfs_schedule_check_job",
+    selection=[gtfs_schedule_check],
+)
+
+gtfs_schedule_ingest_job = dg.define_asset_job(
+    name="gtfs_schedule_ingest_job",
+    selection=[gtfs_schedule_ingest],
+    partitions_def=schedule_feed_partitions,
+)
+
+
+@dg.schedule(
+    job=gtfs_schedule_check_job,
+    cron_schedule="0 5 * * *",  # 5am UTC (after compaction at 2am, inventory at 4am)
+    execution_timezone="UTC",
+    default_status=dg.DefaultScheduleStatus.RUNNING,
+)
+def gtfs_schedule_check_schedule(
+    _context: dg.ScheduleEvaluationContext,
+) -> dg.RunRequest:
+    """Daily GTFS schedule check — downloads feeds and detects new versions."""
+    return dg.RunRequest()
+
+
+@dg.sensor(
+    asset_selection=[gtfs_schedule_ingest],
+    minimum_interval_seconds=120,
+    default_status=dg.DefaultSensorStatus.RUNNING,
+)
+def gtfs_schedule_ingest_sensor(
+    context: dg.SensorEvaluationContext,
+) -> dg.SensorResult:
+    """Trigger ingestion for schedule URLs that have new versions.
+
+    Monitors gtfs_schedule_check materializations. When the check finds
+    new feeds, this sensor submits ingest runs for those URLs.
+    """
+    events = context.instance.get_latest_materialization_event(dg.AssetKey("gtfs_schedule_check"))
+
+    if events is None:
+        return dg.SensorResult(run_requests=[])
+
+    materialization = events.asset_materialization
+    if materialization is None:
+        return dg.SensorResult(run_requests=[])
+
+    # Use materialization timestamp as cursor
+    event_ts = str(events.timestamp)
+    if context.cursor and context.cursor >= event_ts:
+        return dg.SensorResult(run_requests=[])
+
+    # Read the specific partition keys that had new versions
+    new_keys_meta = materialization.metadata.get("new_partition_keys")
+    if not new_keys_meta or not new_keys_meta.value:
+        return dg.SensorResult(run_requests=[], cursor=event_ts)
+
+    new_partition_keys: list[str] = new_keys_meta.value  # type: ignore[assignment]
+
+    run_requests = [
+        dg.RunRequest(
+            run_key=f"schedule_ingest_{event_ts}_{pk}",
+            partition_key=pk,
+        )
+        for pk in new_partition_keys
+    ]
+
+    context.log.info(
+        f"Submitting {len(run_requests)} schedule ingest runs (of {len(new_partition_keys)} new feeds)"
+    )
+
+    return dg.SensorResult(
+        run_requests=run_requests,
+        cursor=event_ts,
+    )

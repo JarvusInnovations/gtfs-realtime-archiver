@@ -154,6 +154,53 @@ resource "google_bigquery_table" "service_alerts" {
   ])
 }
 
+# --- GTFS Schedule tables ---
+# Schedule data is stored as exploded parquet per feed version.
+# Each table uses autodetect since GTFS columns are all strings.
+
+locals {
+  schedule_tables = [
+    "agency", "stops", "routes", "trips", "stop_times",
+    "calendar", "calendar_dates", "shapes", "feed_info",
+  ]
+}
+
+resource "google_bigquery_dataset" "gtfs_schedule" {
+  dataset_id  = "gtfs_schedule"
+  location    = "US"
+  description = "GTFS Schedule data from archived feeds"
+
+  access {
+    role          = "OWNER"
+    special_group = "projectOwners"
+  }
+
+  access {
+    role          = "READER"
+    user_by_email = google_service_account.metabase.email
+  }
+}
+
+resource "google_bigquery_table" "schedule" {
+  for_each = toset(local.schedule_tables)
+
+  dataset_id          = google_bigquery_dataset.gtfs_schedule.dataset_id
+  table_id            = each.value
+  deletion_protection = false
+
+  external_data_configuration {
+    source_format = "PARQUET"
+    autodetect    = true
+    source_uris   = ["gs://${google_storage_bucket.parquet.name}/schedules/*/_feed_digest=*/${each.value}.parquet"]
+
+    hive_partitioning_options {
+      mode                     = "CUSTOM"
+      source_uri_prefix        = "gs://${google_storage_bucket.parquet.name}/schedules/{base64url:STRING}/{_feed_digest:STRING}"
+      require_partition_filter = false
+    }
+  }
+}
+
 # Feeds metadata - lookup table for agency/system/interval by base64url
 resource "google_bigquery_table" "feeds" {
   dataset_id          = google_bigquery_dataset.gtfs_rt.dataset_id

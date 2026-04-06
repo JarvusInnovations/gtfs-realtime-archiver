@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Self
 
 import yaml
-from pydantic import Field, model_validator
+from pydantic import Field, HttpUrl, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from gtfs_rt_archiver.models import (
@@ -151,12 +151,13 @@ def _flatten_feed(
         agency.auth,
     )
 
-    # Resolve schedule_url (system > agency)
-    schedule_url = None
-    if system and system.schedule_url:
-        schedule_url = system.schedule_url
-    elif agency.schedule_url:
-        schedule_url = agency.schedule_url
+    # Resolve schedule_urls (system > agency)
+    schedule_urls: list[HttpUrl] = []
+    if system and system.schedule_urls:
+        schedule_urls = list(system.schedule_urls)
+    elif agency.schedule_urls:
+        schedule_urls = list(agency.schedule_urls)
+    schedule_url = schedule_urls[0] if schedule_urls else None
 
     return FeedConfig(
         id=feed_id,
@@ -168,6 +169,7 @@ def _flatten_feed(
         system_id=system.id if system else None,
         system_name=system.name if system else None,
         schedule_url=schedule_url,
+        schedule_urls=schedule_urls,
         interval_seconds=interval,
         timeout_seconds=timeout,
         retry=retry,

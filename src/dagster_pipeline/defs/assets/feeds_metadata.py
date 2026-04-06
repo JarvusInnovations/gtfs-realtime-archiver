@@ -1,6 +1,7 @@
 """Feeds metadata asset for exporting agency/feed configuration to Parquet."""
 
 import io
+import json
 
 import dagster as dg
 import pyarrow as pa
@@ -25,6 +26,7 @@ FEEDS_SCHEMA = pa.schema(
         pa.field("system_name", pa.string(), nullable=True),
         pa.field("interval_seconds", pa.int32(), nullable=False),
         pa.field("schedule_url", pa.string(), nullable=True),
+        pa.field("schedule_urls", pa.string(), nullable=True),  # JSON array
     ]
 )
 
@@ -71,6 +73,9 @@ def feeds_metadata(
                 "system_name": feed.system_name,
                 "interval_seconds": feed.interval_seconds,
                 "schedule_url": str(feed.schedule_url) if feed.schedule_url else None,
+                "schedule_urls": json.dumps([str(u) for u in feed.schedule_urls])
+                if feed.schedule_urls
+                else None,
             }
         )
 

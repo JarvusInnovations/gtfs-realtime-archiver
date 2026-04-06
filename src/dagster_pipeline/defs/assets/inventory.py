@@ -13,39 +13,60 @@ from google.cloud import storage
 from dagster_pipeline.defs.resources import GCSResource
 
 
-def list_parquet_files(
+class BucketScanResult:
+    """Results from scanning the parquet bucket in a single pass."""
+
+    def __init__(self) -> None:
+        self.rt_parquet_files: list[dict[str, Any]] = []
+        self.schedule_metadata: list[dict[str, str]] = []  # [{path, base64url, feed_digest}]
+
+
+# RT pattern: {feed_type}/date={YYYY-MM-DD}/base64url={encoded}/data.parquet
+_RT_PATTERN = re.compile(
+    r"^(?P<feed_type>[^/]+)/date=(?P<date>\d{4}-\d{2}-\d{2})/base64url=(?P<base64url>[A-Za-z0-9_-]+)/data\.parquet$"
+)
+
+# Schedule pattern: schedules/base64url={encoded}/_feed_digest={hash}/metadata.json
+_SCHEDULE_PATTERN = re.compile(
+    r"^schedules/base64url=(?P<base64url>[A-Za-z0-9_-]+)/_feed_digest=(?P<feed_digest>[^/]+)/metadata\.json$"
+)
+
+
+def scan_bucket(
     client: storage.Client,
     bucket_name: str,
-) -> list[dict[str, Any]]:
-    """List all data.parquet files in the bucket with their sizes.
-
-    Returns list of dicts with keys: path, feed_type, date, base64url, size_bytes
-    """
+) -> BucketScanResult:
+    """Single-pass scan of the parquet bucket for RT data files and schedule metadata."""
     bucket = client.bucket(bucket_name)
-    results: list[dict[str, Any]] = []
-
-    # Pattern: {feed_type}/date={YYYY-MM-DD}/base64url={encoded}/data.parquet
-    pattern = re.compile(
-        r"^(?P<feed_type>[^/]+)/date=(?P<date>\d{4}-\d{2}-\d{2})/base64url=(?P<base64url>[A-Za-z0-9_-]+)/data\.parquet$"
-    )
+    result = BucketScanResult()
 
     for blob in bucket.list_blobs():
-        if not blob.name.endswith("data.parquet"):
-            continue
+        name = blob.name
 
-        match = pattern.match(blob.name)
-        if match:
-            results.append(
-                {
-                    "path": blob.name,
-                    "feed_type": match.group("feed_type"),
-                    "date": match.group("date"),
-                    "base64url": match.group("base64url"),
-                    "size_bytes": blob.size or 0,
-                }
-            )
+        if name.endswith("data.parquet"):
+            match = _RT_PATTERN.match(name)
+            if match:
+                result.rt_parquet_files.append(
+                    {
+                        "path": name,
+                        "feed_type": match.group("feed_type"),
+                        "date": match.group("date"),
+                        "base64url": match.group("base64url"),
+                        "size_bytes": blob.size or 0,
+                    }
+                )
+        elif name.endswith("metadata.json") and name.startswith("schedules/"):
+            match = _SCHEDULE_PATTERN.match(name)
+            if match:
+                result.schedule_metadata.append(
+                    {
+                        "path": name,
+                        "base64url": match.group("base64url"),
+                        "feed_digest": match.group("feed_digest"),
+                    }
+                )
 
-    return results
+    return result
 
 
 def read_parquet_row_count(
@@ -128,16 +149,21 @@ def bucket_inventory(
     feeds_lookup = load_feeds_metadata(client, gcs.parquet_bucket)
     context.log.info(f"Loaded metadata for {len(feeds_lookup)} feeds")
 
-    # Step 2: List all data.parquet files
-    context.log.info(f"Listing parquet files in gs://{gcs.parquet_bucket}")
-    parquet_files = list_parquet_files(client, gcs.parquet_bucket)
-    context.log.info(f"Found {len(parquet_files)} parquet files")
+    # Step 2: Single-pass bucket scan for RT parquet + schedule metadata
+    context.log.info(f"Scanning gs://{gcs.parquet_bucket}")
+    scan = scan_bucket(client, gcs.parquet_bucket)
+    parquet_files = scan.rt_parquet_files
+    context.log.info(
+        f"Found {len(parquet_files)} RT parquet files, "
+        f"{len(scan.schedule_metadata)} schedule versions"
+    )
 
-    if not parquet_files:
-        context.log.info("No parquet files found, writing empty inventory")
-        _upload_inventory(client, gcs.parquet_bucket, [])
+    if not parquet_files and not scan.schedule_metadata:
+        context.log.info("No data found, writing empty inventories")
+        _upload_json(client, gcs.parquet_bucket, "inventory.json", [])
+        _upload_json(client, gcs.parquet_bucket, "schedules.json", [])
         return dg.Output(
-            {"feeds_count": 0, "files_processed": 0},
+            {"feeds_count": 0, "files_processed": 0, "schedule_feeds": 0, "schedule_versions": 0},
             metadata={"feeds_count": 0, "files_processed": 0},
         )
 
@@ -208,32 +234,96 @@ def bucket_inventory(
         total_records += agg["total_records"]
         total_bytes += agg["total_bytes"]
 
-    # Step 6: Upload inventory
-    _upload_inventory(client, gcs.parquet_bucket, feeds_output)
+    # Step 6: Upload RT inventory
+    _upload_json(client, gcs.parquet_bucket, "inventory.json", feeds_output)
+    context.log.info(f"Wrote inventory.json with {len(feeds_output)} RT feeds")
 
-    output_path = f"gs://{gcs.parquet_bucket}/inventory.json"
-    context.log.info(f"Wrote inventory with {len(feeds_output)} feeds to {output_path}")
+    # Step 7: Build and upload schedule inventory
+    schedule_feeds = _build_schedule_inventory(client, gcs.parquet_bucket, scan.schedule_metadata)
+    _upload_json(client, gcs.parquet_bucket, "schedules.json", schedule_feeds)
+    schedule_versions = sum(len(f.get("versions", [])) for f in schedule_feeds)
+    context.log.info(
+        f"Wrote schedules.json with {len(schedule_feeds)} feeds, {schedule_versions} versions"
+    )
 
     return dg.Output(
-        {"feeds_count": len(feeds_output), "files_processed": len(parquet_files)},
+        {
+            "feeds_count": len(feeds_output),
+            "files_processed": len(parquet_files),
+            "schedule_feeds": len(schedule_feeds),
+            "schedule_versions": schedule_versions,
+        },
         metadata={
             "feeds_count": len(feeds_output),
             "files_processed": len(parquet_files),
             "total_records": total_records,
             "total_bytes": total_bytes,
-            "output_path": output_path,
+            "schedule_feeds": len(schedule_feeds),
+            "schedule_versions": schedule_versions,
         },
     )
 
 
-def _upload_inventory(
+def _build_schedule_inventory(
     client: storage.Client,
     bucket_name: str,
-    feeds: list[dict[str, Any]],
-) -> None:
-    """Upload inventory.json to bucket root."""
-    bucket = client.bucket(bucket_name)
-    blob = bucket.blob("inventory.json")
+    schedule_metadata: list[dict[str, str]],
+) -> list[dict[str, Any]]:
+    """Read schedule metadata.json files and group by schedule URL.
 
-    content = json.dumps(feeds, indent=2)
+    Returns list of dicts: {schedule_url, base64url, versions: [{_feed_digest, date_retrieved, ...}]}
+    """
+    bucket = client.bucket(bucket_name)
+
+    by_url: dict[str, dict[str, Any]] = {}
+
+    for entry in schedule_metadata:
+        blob = bucket.blob(entry["path"])
+        try:
+            content = blob.download_as_text()
+            meta = json.loads(content)
+        except Exception:
+            continue
+
+        schedule_url = meta.get("schedule_url", "")
+        if not schedule_url:
+            continue
+
+        base64url = entry["base64url"]
+
+        if schedule_url not in by_url:
+            by_url[schedule_url] = {
+                "schedule_url": schedule_url,
+                "base64url": base64url,
+                "versions": [],
+            }
+
+        by_url[schedule_url]["versions"].append(
+            {
+                "_feed_digest": meta.get("_feed_digest", ""),
+                "date_retrieved": meta.get("date_retrieved", ""),
+                "feed_start_date": meta.get("feed_start_date"),
+                "feed_end_date": meta.get("feed_end_date"),
+            }
+        )
+
+    # Sort versions by date_retrieved within each feed
+    result = []
+    for feed in sorted(by_url.values(), key=lambda f: f["schedule_url"]):
+        feed["versions"] = sorted(feed["versions"], key=lambda v: v.get("date_retrieved", ""))
+        result.append(feed)
+
+    return result
+
+
+def _upload_json(
+    client: storage.Client,
+    bucket_name: str,
+    filename: str,
+    data: list[dict[str, Any]],
+) -> None:
+    """Upload a JSON file to bucket root."""
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(filename)
+    content = json.dumps(data, indent=2)
     blob.upload_from_string(content, content_type="application/json")
