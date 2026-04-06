@@ -158,13 +158,53 @@ resource "google_bigquery_table" "service_alerts" {
 # Schedule data is stored as exploded parquet per feed version.
 # Each table uses autodetect since GTFS columns are all strings.
 
-# GTFS Schedule data is stored in version-first directories:
-#   schedules/base64url={b64}/_feed_digest={fp}/{table}.parquet
-# This layout doesn't map well to BigQuery external tables (which need
-# one file type per wildcard pattern, and don't support multiple wildcards).
-# Schedule data is queried via DuckDB against gs:// paths instead.
-# TODO: revisit if BigQuery access is needed — could add a materialization
-# step that restructures into table-first layout for BQ compatibility.
+# --- GTFS Schedule tables ---
+# One external table per GTFS file type. Single wildcard matches across
+# both base64url and _feed_digest path levels. AUTO hive partitioning
+# detects both partition keys from the prefix.
+
+locals {
+  schedule_tables = [
+    "agency", "stops", "routes", "trips", "stop_times",
+    "calendar", "calendar_dates", "shapes", "feed_info",
+  ]
+}
+
+resource "google_bigquery_dataset" "gtfs_schedule" {
+  dataset_id  = "gtfs_schedule"
+  location    = "US"
+  description = "GTFS Schedule data from archived feeds"
+
+  access {
+    role          = "OWNER"
+    special_group = "projectOwners"
+  }
+
+  access {
+    role          = "READER"
+    user_by_email = google_service_account.metabase.email
+  }
+}
+
+resource "google_bigquery_table" "schedule" {
+  for_each = toset(local.schedule_tables)
+
+  dataset_id          = google_bigquery_dataset.gtfs_schedule.dataset_id
+  table_id            = each.value
+  deletion_protection = false
+
+  external_data_configuration {
+    source_format = "PARQUET"
+    autodetect    = true
+    source_uris   = ["gs://${google_storage_bucket.parquet.name}/schedules/*/${each.value}.parquet"]
+
+    hive_partitioning_options {
+      mode                     = "AUTO"
+      source_uri_prefix        = "gs://${google_storage_bucket.parquet.name}/schedules/"
+      require_partition_filter = false
+    }
+  }
+}
 
 # Feeds metadata - lookup table for agency/system/interval by base64url
 resource "google_bigquery_table" "feeds" {
