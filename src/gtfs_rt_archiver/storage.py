@@ -136,7 +136,7 @@ class StorageWriter:
         """
         async with self._lock:
             if self._storage is None:
-                self._storage = Storage(session=self._session)
+                self._storage = Storage(session=self._session)  # type: ignore[arg-type]
             return self._storage
 
     async def write(self, feed: FeedConfig, result: FetchResult) -> str:

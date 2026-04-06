@@ -73,7 +73,9 @@ def feeds_metadata(
                 "system_name": feed.system_name,
                 "interval_seconds": feed.interval_seconds,
                 "schedule_url": str(feed.schedule_url) if feed.schedule_url else None,
-                "schedule_urls": json.dumps([str(u) for u in feed.schedule_urls]) if feed.schedule_urls else None,
+                "schedule_urls": json.dumps([str(u) for u in feed.schedule_urls])
+                if feed.schedule_urls
+                else None,
             }
         )
 
