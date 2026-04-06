@@ -6,19 +6,20 @@ Two assets:
 """
 
 import hashlib
+from datetime import UTC, datetime
+from typing import Any
 
 import dagster as dg
 import requests
 import yaml
 
 from dagster_pipeline.defs.assets.compaction import (
-    decode_base64url,
     encode_base64url,
-    url_to_partition_key,
     partition_key_to_url,
+    url_to_partition_key,
 )
 from dagster_pipeline.defs.resources import GCSResource, SecretManagerResource
-from gtfs_digester import GTFSArchive, write_exploded, version_exists, list_versions
+from gtfs_digester import GTFSArchive, version_exists, write_exploded
 from gtfs_rt_archiver.config import flatten_agencies
 from gtfs_rt_archiver.models import AgenciesFileConfig, AuthConfig, AuthType
 
@@ -41,7 +42,7 @@ def _resolve_schedule_auth(
                 url_to_auth[url_str] = feed.auth
 
     # Resolve secrets for all unique auth configs
-    resolved_secrets: dict[str, str] = {}  # secret_name -> value
+    resolved_secrets: dict[str, str] = {}
     for auth in url_to_auth.values():
         if auth is None or auth.secret_name in resolved_secrets:
             continue
@@ -57,7 +58,7 @@ def _resolve_schedule_auth(
         if auth is None:
             continue
         secret_value = resolved_secrets.get(auth.secret_name)
-        if secret_value:
+        if secret_value is not None:
             if auth.value is None:
                 auth.resolved_value = secret_value
             else:
@@ -68,8 +69,8 @@ def _resolve_schedule_auth(
 
 def _download_schedule(url: str, auth: AuthConfig | None, timeout: int = 60) -> bytes:
     """Download a GTFS schedule zip, applying auth if needed."""
-    headers = {}
-    params = {}
+    headers: dict[str, str] = {}
+    params: dict[str, str] = {}
 
     if auth and auth.resolved_value:
         if auth.type == AuthType.HEADER:
@@ -79,7 +80,7 @@ def _download_schedule(url: str, auth: AuthConfig | None, timeout: int = 60) -> 
 
     resp = requests.get(url, headers=headers, params=params, timeout=timeout)
     resp.raise_for_status()
-    return resp.content
+    return bytes(resp.content)
 
 
 def _load_agencies_config(secret_manager: SecretManagerResource) -> AgenciesFileConfig:
@@ -98,7 +99,7 @@ def gtfs_schedule_check(
     context: dg.AssetExecutionContext,
     gcs: GCSResource,
     secret_manager: SecretManagerResource,
-) -> dg.Output[dict]:
+) -> dg.Output[dict[str, Any]]:
     """Daily check for new GTFS schedule feed versions.
 
     For each unique schedule_url in agencies.yaml:
@@ -113,11 +114,9 @@ def gtfs_schedule_check(
     unique_urls = sorted(url_auth.keys())
     context.log.info(f"Checking {len(unique_urls)} unique schedule URLs")
 
-    new_feeds: list[dict] = []
+    new_feeds: list[dict[str, str]] = []
     unchanged = 0
     errors = 0
-
-    partition_requests = []
 
     for url in unique_urls:
         b64 = encode_base64url(url)
@@ -146,8 +145,9 @@ def gtfs_schedule_check(
             })
 
             # Register partition if new
-            partition_requests.append(
-                schedule_feed_partitions.build_add_request([partition_key])
+            context.instance.add_dynamic_partitions(
+                partitions_def_name="schedule_feeds",
+                partition_keys=[partition_key],
             )
 
             context.log.info(f"New feed: {url} -> {fp[:24]}...")
@@ -156,7 +156,7 @@ def gtfs_schedule_check(
             context.log.error(f"Error checking {url}: {e}")
             errors += 1
 
-    result = {
+    result: dict[str, Any] = {
         "urls_checked": len(unique_urls),
         "new_feeds": len(new_feeds),
         "unchanged": unchanged,
@@ -185,7 +185,7 @@ def gtfs_schedule_ingest(
     context: dg.AssetExecutionContext,
     gcs: GCSResource,
     secret_manager: SecretManagerResource,
-) -> dg.Output[dict]:
+) -> dg.Output[dict[str, Any]]:
     """Ingest the current GTFS schedule for a URL.
 
     Partition key is a stripped URL (same format as RT feeds).
@@ -219,7 +219,6 @@ def gtfs_schedule_ingest(
 
     # Write exploded parquet
     context.log.info(f"Writing: {base_path}/_feed_digest={fp[:24]}...")
-    from datetime import UTC, datetime
 
     metadata = write_exploded(
         archive,
@@ -229,7 +228,7 @@ def gtfs_schedule_ingest(
         source_sha256=source_sha256,
     )
 
-    result = {
+    result: dict[str, Any] = {
         "status": "ingested",
         "fingerprint": fp,
         "schedule_url": schedule_url,

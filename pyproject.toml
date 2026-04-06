@@ -47,6 +47,7 @@ dagster = [
     "gtfs-digester>=0.1.0",
     "gtfs-realtime-bindings>=2.0.0",
     "pyarrow>=22.0.0",
+    "types-requests>=2.33.0.20260402",
 ]
 dev-dagster = [
     "dagster-webserver",
