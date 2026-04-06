@@ -147,7 +147,9 @@ class FeedConfig(BaseModel):
     agency_name: str
     system_id: str | None = None
     system_name: str | None = None
-    schedule_url: HttpUrl | None = None  # primary schedule URL (first in list, for backwards compat)
+    schedule_url: HttpUrl | None = (
+        None  # primary schedule URL (first in list, for backwards compat)
+    )
     schedule_urls: list[HttpUrl] = Field(default_factory=list)  # all schedule URLs
 
     # Runtime settings

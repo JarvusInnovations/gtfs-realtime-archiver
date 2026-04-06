@@ -136,13 +136,15 @@ def gtfs_schedule_check(
                 unchanged += 1
                 continue
 
-            new_feeds.append({
-                "schedule_url": url,
-                "base64url": b64,
-                "fingerprint": fp,
-                "source_sha256": source_sha256,
-                "partition_key": partition_key,
-            })
+            new_feeds.append(
+                {
+                    "schedule_url": url,
+                    "base64url": b64,
+                    "fingerprint": fp,
+                    "source_sha256": source_sha256,
+                    "partition_key": partition_key,
+                }
+            )
 
             # Register partition if new
             context.instance.add_dynamic_partitions(

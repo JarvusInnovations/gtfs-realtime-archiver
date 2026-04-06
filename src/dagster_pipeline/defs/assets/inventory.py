@@ -58,11 +58,13 @@ def scan_bucket(
         elif name.endswith("metadata.json") and name.startswith("schedules/"):
             match = _SCHEDULE_PATTERN.match(name)
             if match:
-                result.schedule_metadata.append({
-                    "path": name,
-                    "base64url": match.group("base64url"),
-                    "feed_digest": match.group("feed_digest"),
-                })
+                result.schedule_metadata.append(
+                    {
+                        "path": name,
+                        "base64url": match.group("base64url"),
+                        "feed_digest": match.group("feed_digest"),
+                    }
+                )
 
     return result
 
@@ -240,7 +242,9 @@ def bucket_inventory(
     schedule_feeds = _build_schedule_inventory(client, gcs.parquet_bucket, scan.schedule_metadata)
     _upload_json(client, gcs.parquet_bucket, "schedules.json", schedule_feeds)
     schedule_versions = sum(len(f.get("versions", [])) for f in schedule_feeds)
-    context.log.info(f"Wrote schedules.json with {len(schedule_feeds)} feeds, {schedule_versions} versions")
+    context.log.info(
+        f"Wrote schedules.json with {len(schedule_feeds)} feeds, {schedule_versions} versions"
+    )
 
     return dg.Output(
         {
@@ -294,12 +298,14 @@ def _build_schedule_inventory(
                 "versions": [],
             }
 
-        by_url[schedule_url]["versions"].append({
-            "_feed_digest": meta.get("_feed_digest", ""),
-            "date_retrieved": meta.get("date_retrieved", ""),
-            "feed_start_date": meta.get("feed_start_date"),
-            "feed_end_date": meta.get("feed_end_date"),
-        })
+        by_url[schedule_url]["versions"].append(
+            {
+                "_feed_digest": meta.get("_feed_digest", ""),
+                "date_retrieved": meta.get("date_retrieved", ""),
+                "feed_start_date": meta.get("feed_start_date"),
+                "feed_end_date": meta.get("feed_end_date"),
+            }
+        )
 
     # Sort versions by date_retrieved within each feed
     result = []

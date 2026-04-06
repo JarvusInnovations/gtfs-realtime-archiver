@@ -209,9 +209,7 @@ def gtfs_schedule_ingest_sensor(
     Monitors gtfs_schedule_check materializations. When the check finds
     new feeds, this sensor submits ingest runs for those URLs.
     """
-    events = context.instance.get_latest_materialization_event(
-        dg.AssetKey("gtfs_schedule_check")
-    )
+    events = context.instance.get_latest_materialization_event(dg.AssetKey("gtfs_schedule_check"))
 
     if events is None:
         return dg.SensorResult(run_requests=[])
@@ -240,7 +238,9 @@ def gtfs_schedule_ingest_sensor(
         for pk in new_partition_keys
     ]
 
-    context.log.info(f"Submitting {len(run_requests)} schedule ingest runs (of {len(new_partition_keys)} new feeds)")
+    context.log.info(
+        f"Submitting {len(run_requests)} schedule ingest runs (of {len(new_partition_keys)} new feeds)"
+    )
 
     return dg.SensorResult(
         run_requests=run_requests,
