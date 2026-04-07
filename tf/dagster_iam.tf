@@ -46,9 +46,18 @@ resource "google_service_account_iam_member" "github_actions_can_use_dagster_run
   member             = "serviceAccount:${google_service_account.github_actions.email}"
 }
 
-# Add future project-specific grants below...
-# Examples:
-# - BigQuery dataset access
-# - Additional GCS buckets
-# - Pub/Sub topics
-# - Custom APIs
+# Run workers - access to feed auth secrets (tagged type=feed-key)
+# Needed by gtfs_schedule_check/ingest assets to download authenticated feeds
+resource "google_project_iam_member" "run_worker_feed_secrets" {
+  for_each = module.dagster.run_worker_service_account_emails
+
+  project = var.project_id
+  role    = "roles/secretmanager.secretAccessor"
+  member  = "serviceAccount:${each.value}"
+
+  condition {
+    title       = "feed-key-secrets"
+    description = "Access to secrets tagged type=feed-key"
+    expression  = "resource.matchTag('${var.project_id}/type', 'feed-key')"
+  }
+}
