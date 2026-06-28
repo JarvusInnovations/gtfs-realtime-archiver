@@ -70,9 +70,10 @@ gtfs-realtime-archiver/
 │   ├── dagster.tf          # Dagster module instantiation
 │   ├── modules/dagster/    # Dagster deployment module
 │   │   ├── main.tf         # Module locals and config
-│   │   ├── webserver.tf    # Dagster UI (Cloud Run Service)
-│   │   ├── daemon.tf       # Dagster daemon (Worker Pool)
-│   │   ├── code_server.tf  # gRPC code servers
+│   │   ├── webserver.tf    # Dagster UI (Cloud Run Service, split mode)
+│   │   ├── daemon.tf       # Dagster daemon (Worker Pool, split mode)
+│   │   ├── code_server.tf  # gRPC code servers (split mode)
+│   │   ├── consolidated.tf # Single-instance web+daemon+code (consolidated mode)
 │   │   ├── run_worker.tf   # Cloud Run Jobs for runs
 │   │   ├── iam.tf          # Service accounts and permissions
 │   │   ├── secrets.tf      # DB password secret
@@ -338,6 +339,36 @@ Each location gets:
 - Dedicated code server (gRPC)
 - Dedicated run worker job
 - Dedicated service account with specific IAM permissions
+
+**Deployment Topologies** (`deployment_mode` variable):
+
+The module supports two topologies, selected via `dagster_deployment_mode`
+(root) / `deployment_mode` (module). Default is `split`.
+
+- **`split`** (default): webserver, daemon, and code server each run as their
+  own Cloud Run resource (Service / Worker Pool / Service). The webserver scales
+  0→N and the code server is isolated so code reloads don't affect the host
+  processes. Use when you need horizontal UI scaling or multiple code locations.
+
+- **`consolidated`**: webserver (ingress) + daemon + code server run as three
+  containers in **one always-on Cloud Run Service instance** (`consolidated.tf`),
+  for a single code location. Lowest cost floor — collapses what is otherwise two
+  always-on footprints (daemon + daemon-kept-warm code server) into one. Run
+  workers are unchanged (still per-run Cloud Run Jobs).
+
+  Constraints baked into the consolidated service:
+  - `max_instance_count = 1` — the daemon must be a singleton (a second instance
+    would double-fire schedules/sensors).
+  - `cpu_idle = false` (instance-based billing) — in a request-billed Service,
+    sidecars only get CPU while the ingress handles a request, which starves the
+    always-on daemon. Always-allocated CPU is required.
+  - The code server is reached over `localhost` (`CODE_SERVER_HOST_<LOC>=localhost`,
+    port from `deploy/workspace.yaml`); no internal code-server Service is created.
+
+  Flip topologies with `dagster_deployment_mode = "consolidated"` in tfvars and
+  `tofu apply`. Switching destroys the resources of the other topology and creates
+  the active one; the database, buckets, secrets, run-worker job, and service
+  accounts are shared across both.
 
 ## Testing Container Builds
 
