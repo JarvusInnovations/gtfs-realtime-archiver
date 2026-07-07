@@ -36,15 +36,17 @@ locals {
   # Common environment variables for all Dagster components
   # Note: Database connection is via DAGSTER_POSTGRES_URL secret (includes socket path)
   # Note: Run worker job name is hardcoded in deploy/dagster.yaml (Permissive config doesn't resolve env vars)
-  common_env = {
-    GCP_PROJECT_ID         = var.project_id
-    GCP_REGION             = var.region
-    DAGSTER_HOME           = "/opt/dagster/dagster_home"
-    GCS_BUCKET_RT_PROTOBUF = var.protobuf_bucket_name
-    GCS_BUCKET_RT_PARQUET  = var.parquet_bucket_name
-    DAGSTER_LOGS_BUCKET    = local.logs_bucket_name
-    AGENCIES_SECRET_ID     = var.agencies_secret_id
-  }
+  # Consumer-domain variables (bucket names, secret IDs the app resolves itself)
+  # come in through var.extra_env — the module defines only Dagster-generic ones.
+  common_env = merge(
+    {
+      GCP_PROJECT_ID      = var.project_id
+      GCP_REGION          = var.region
+      DAGSTER_HOME        = "/opt/dagster/dagster_home"
+      DAGSTER_LOGS_BUCKET = local.logs_bucket_name
+    },
+    var.extra_env
+  )
 }
 
 # Get project data for default compute service account reference

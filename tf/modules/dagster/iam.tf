@@ -82,29 +82,32 @@ resource "google_storage_bucket_iam_member" "run_worker_logs_reader" {
   member = "serviceAccount:${each.value.email}"
 }
 
-# Protobuf bucket read access for primary SA (sensors discover feeds by listing objects)
-resource "google_storage_bucket_iam_member" "dagster_protobuf_reader" {
-  bucket = var.protobuf_bucket_name
-  role   = "roles/storage.objectViewer"
+# Consumer-declared bucket grants (var.bucket_grants).
+# Keys are the consumer's stable labels; run-worker grants are keyed
+# "<grant-label>:<code-location>" so both dimensions stay addressable.
+resource "google_storage_bucket_iam_member" "dagster_bucket" {
+  for_each = { for k, g in var.bucket_grants : k => g if g.dagster_role != null }
+
+  bucket = each.value.bucket
+  role   = each.value.dagster_role
   member = "serviceAccount:${google_service_account.dagster.email}"
 }
 
-# Protobuf bucket read access for run workers (read source data for compaction)
-resource "google_storage_bucket_iam_member" "run_worker_protobuf_reader" {
-  for_each = google_service_account.run_worker
+resource "google_storage_bucket_iam_member" "run_worker_bucket" {
+  for_each = {
+    for pair in setproduct(
+      [for k, g in var.bucket_grants : k if g.run_worker_role != null],
+      keys(var.code_locations)
+      ) : "${pair[0]}:${pair[1]}" => {
+      bucket   = var.bucket_grants[pair[0]].bucket
+      role     = var.bucket_grants[pair[0]].run_worker_role
+      location = pair[1]
+    }
+  }
 
-  bucket = var.protobuf_bucket_name
-  role   = "roles/storage.objectViewer"
-  member = "serviceAccount:${each.value.email}"
-}
-
-# Parquet bucket write access for run workers (write compacted output)
-resource "google_storage_bucket_iam_member" "run_worker_parquet_writer" {
-  for_each = google_service_account.run_worker
-
-  bucket = var.parquet_bucket_name
-  role   = "roles/storage.objectUser"
-  member = "serviceAccount:${each.value.email}"
+  bucket = each.value.bucket
+  role   = each.value.role
+  member = "serviceAccount:${google_service_account.run_worker[each.value.location].email}"
 }
 
 # Cloud SQL client role for service accounts (required for socket connections)
@@ -122,12 +125,29 @@ resource "google_project_iam_member" "run_worker_cloudsql_client" {
   member  = "serviceAccount:${each.value.email}"
 }
 
-# Secret Manager access for run workers (agencies config for feeds_metadata asset)
-resource "google_secret_manager_secret_iam_member" "run_worker_agencies_config" {
-  for_each = google_service_account.run_worker
+# Consumer-declared Secret Manager grants (var.secret_grants).
+resource "google_secret_manager_secret_iam_member" "dagster_secret" {
+  for_each = { for k, g in var.secret_grants : k => g if g.dagster }
 
-  secret_id = var.agencies_secret_id
+  secret_id = each.value.secret_id
   role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${each.value.email}"
+  member    = "serviceAccount:${google_service_account.dagster.email}"
+  project   = var.project_id
+}
+
+resource "google_secret_manager_secret_iam_member" "run_worker_secret" {
+  for_each = {
+    for pair in setproduct(
+      [for k, g in var.secret_grants : k if g.run_worker],
+      keys(var.code_locations)
+      ) : "${pair[0]}:${pair[1]}" => {
+      secret_id = var.secret_grants[pair[0]].secret_id
+      location  = pair[1]
+    }
+  }
+
+  secret_id = each.value.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.run_worker[each.value.location].email}"
   project   = var.project_id
 }

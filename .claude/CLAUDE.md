@@ -67,15 +67,17 @@ gtfs-realtime-archiver/
 │   ├── storage.tf          # GCS bucket with lifecycle
 │   ├── iam.tf              # Service account and permissions
 │   ├── cloudsql.tf         # Cloud SQL PostgreSQL instance
-│   ├── dagster.tf          # Dagster module instantiation
-│   ├── modules/dagster/    # Dagster deployment module
+│   ├── dagster.tf          # Dagster module instantiation (project wiring via extra_env/grants)
+│   ├── dagster_moved.tf    # State moves from the module's generalization (delete after applied)
+│   ├── modules/dagster/    # Dagster deployment module (generic — being extracted to a registry module)
 │   │   ├── main.tf         # Module locals and config
 │   │   ├── webserver.tf    # Dagster UI (Cloud Run Service, split mode)
 │   │   ├── daemon.tf       # Dagster daemon (Worker Pool, split mode)
 │   │   ├── code_server.tf  # gRPC code servers (split mode)
 │   │   ├── consolidated.tf # Single-instance web+daemon+code (consolidated mode)
 │   │   ├── run_worker.tf   # Cloud Run Jobs for runs
-│   │   ├── iam.tf          # Service accounts and permissions
+│   │   ├── iam.tf          # Service accounts, permissions + generic bucket/secret grants
+│   │   ├── hmac.tf         # Optional per-run-worker GCS HMAC keys (dbt-duckdb httpfs)
 │   │   ├── secrets.tf      # DB password secret
 │   │   ├── database.tf     # Database and user creation
 │   │   └── storage.tf      # Logs bucket

@@ -30,9 +30,9 @@ resource "google_cloud_run_v2_service" "consolidated" {
   location = var.region
   project  = var.project_id
 
-  # Enable IAP (Preview feature) - requires BETA launch stage
-  launch_stage = var.iap_allowed_domain != null ? "BETA" : null
-  iap_enabled  = var.iap_allowed_domain != null
+  # Cloud Run IAP is GA (forcing BETA would show as a perpetual plan diff on
+  # auto-promoted services — see webserver.tf).
+  iap_enabled = var.iap_allowed_domain != null
 
   # Allow external access to the UI
   ingress = "INGRESS_TRAFFIC_ALL"
@@ -132,7 +132,11 @@ resource "google_cloud_run_v2_service" "consolidated" {
       image      = var.webserver_image
       depends_on = ["code-server"]
 
-      command = ["dagster-webserver", "--host", "0.0.0.0", "--port", "3000"]
+      # --path-prefix mirrors webserver.tf (reverse-proxy subpath support)
+      command = concat(
+        ["dagster-webserver", "--host", "0.0.0.0", "--port", "3000"],
+        var.path_prefix != "" ? ["--path-prefix", var.path_prefix] : []
+      )
 
       volume_mounts {
         name       = "cloudsql"
@@ -180,7 +184,7 @@ resource "google_cloud_run_v2_service" "consolidated" {
 
       startup_probe {
         http_get {
-          path = "/server_info"
+          path = "${var.path_prefix}/server_info"
           port = 3000
         }
         initial_delay_seconds = 5
@@ -191,7 +195,7 @@ resource "google_cloud_run_v2_service" "consolidated" {
 
       liveness_probe {
         http_get {
-          path = "/server_info"
+          path = "${var.path_prefix}/server_info"
           port = 3000
         }
         period_seconds    = 30

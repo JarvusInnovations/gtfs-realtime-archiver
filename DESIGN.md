@@ -962,6 +962,14 @@ Note that releases deploy by running `tofu apply` with image `-var`s derived fro
 the release tag (see `.github/workflows/deploy.yaml`) — local applies must supply
 current image versions or they will roll deployed images back.
 
+The `tf/modules/dagster/` module is deliberately generic (no GTFS-specific
+variables): this project's buckets, secrets, and env are wired through the
+module's `extra_env`, `bucket_grants`, `secret_grants`, and `run_worker_secret_env`
+maps in `tf/dagster.tf`. The module also supports private-ingress + reverse-proxy
+exposure (`public_ingress`, `path_prefix`) and optional per-run-worker GCS HMAC
+keys (`enable_dbt_hmac_keys`) used by sibling deployments; it is being extracted
+to a standalone Terraform Registry module.
+
 ---
 
 ## Appendix A: Dependency Justification

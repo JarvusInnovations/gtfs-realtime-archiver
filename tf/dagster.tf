@@ -12,9 +12,36 @@ module "dagster" {
   region                    = var.region
   cloud_sql_connection_name = google_sql_database_instance.dagster.connection_name
 
-  protobuf_bucket_name = google_storage_bucket.protobuf.name
-  parquet_bucket_name  = google_storage_bucket.parquet.name
-  agencies_secret_id   = var.agencies_secret_id
+  # Consumer-domain wiring: the module is generic, this project's buckets and
+  # secrets are expressed as env + grants (see modules/dagster/variables.tf).
+  extra_env = {
+    GCS_BUCKET_RT_PROTOBUF = google_storage_bucket.protobuf.name
+    GCS_BUCKET_RT_PARQUET  = google_storage_bucket.parquet.name
+    AGENCIES_SECRET_ID     = var.agencies_secret_id
+  }
+
+  bucket_grants = {
+    # Sensors (primary SA) discover feeds by listing; run workers read source
+    # protobufs for compaction.
+    rt-protobuf = {
+      bucket          = google_storage_bucket.protobuf.name
+      dagster_role    = "roles/storage.objectViewer"
+      run_worker_role = "roles/storage.objectViewer"
+    }
+    # Run workers write compacted parquet output.
+    rt-parquet = {
+      bucket          = google_storage_bucket.parquet.name
+      run_worker_role = "roles/storage.objectUser"
+    }
+  }
+
+  secret_grants = {
+    # agencies.yaml config, read by the feeds_metadata asset in run workers.
+    agencies = {
+      secret_id  = var.agencies_secret_id
+      run_worker = true
+    }
+  }
 
   deployment_mode = var.dagster_deployment_mode
 

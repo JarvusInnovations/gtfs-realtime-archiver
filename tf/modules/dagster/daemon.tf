@@ -9,8 +9,10 @@ resource "google_cloud_run_v2_worker_pool" "daemon" {
   location = var.region
   project  = var.project_id
 
-  # Worker Pool is in BETA
-  launch_stage = "BETA"
+  # google_cloud_run_v2_worker_pool graduated to GA in 2025; Google
+  # auto-promoted deployed pools' launch_stage. Match that here so
+  # tofu doesn't try to downgrade it back to BETA.
+  launch_stage = "GA"
 
   # Prevent accidental deletion
   deletion_protection = false
