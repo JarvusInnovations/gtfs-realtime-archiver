@@ -118,17 +118,24 @@ variable "deployment_mode" {
                        locations.
       - "consolidated": webserver (ingress) + daemon + code server run as three
                        containers in ONE always-on Cloud Run Service instance.
-                       Lowest cost floor; single code location only. The instance
-                       is pinned to exactly 1 (daemon must be a singleton) and uses
-                       instance-based billing (always-allocated CPU) so the daemon
-                       sidecar is not starved between UI requests.
+                       Lowest steady-state cost floor; single code location only.
+                       Pinned to exactly 1 instance (daemon must be a singleton),
+                       always-allocated CPU so the daemon isn't starved.
+      - "on-demand":   identical single-instance topology to "consolidated" but
+                       min=0, so it scales to zero when idle and cold-starts on the
+                       next UI visit. Always-allocated CPU while up (including the
+                       ~15 min idle window) keeps the daemon reliable during a
+                       session. Best for demo / occasional-manual-run instances:
+                       pay only while in use, $0 otherwise (Cloud SQL is then the
+                       dominant remaining cost). Not for scheduled/sensor workloads
+                       — those only fire while someone has the UI open.
   EOT
   type        = string
   default     = "split"
 
   validation {
-    condition     = contains(["split", "consolidated"], var.deployment_mode)
-    error_message = "deployment_mode must be either \"split\" or \"consolidated\"."
+    condition     = contains(["split", "consolidated", "on-demand"], var.deployment_mode)
+    error_message = "deployment_mode must be one of \"split\", \"consolidated\", or \"on-demand\"."
   }
 }
 

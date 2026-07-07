@@ -1,27 +1,38 @@
-# Consolidated single-instance Dagster deployment (minimal cost floor / "rung 1").
+# Single-instance Dagster deployment: webserver (ingress), daemon, and code server
+# as three containers in ONE Cloud Run Service instance, for a single code location.
 #
-# Runs the webserver (ingress), daemon, and code server as three containers in ONE
-# always-on Cloud Run Service instance, for a single code location.
-#
-# Created only when var.deployment_mode == "consolidated". In that mode the split
-# webserver Service, daemon Worker Pool, and code-server Service are not created.
+# Serves two deployment modes that share this identical topology and differ only in
+# the scaling floor (see the scaling block below):
+#   - "consolidated": min=1, always on. Lowest steady-state cost floor.
+#   - "on-demand":    min=0, scales to zero when idle and cold-starts on the next UI
+#                     visit. Best for demo / occasional-manual-run instances — pay
+#                     only while someone is using it (plus the ~15 min Cloud Run
+#                     idle window), $0 the rest of the time.
+# When either mode is active, the split webserver Service, daemon Worker Pool, and
+# code-server Service are not created.
 #
 # Key constraints (see CLAUDE.md "Deployment Topologies"):
 #   - max_instance_count = 1: the daemon must be a singleton. A second instance
 #     would double-fire schedules and double-evaluate sensors.
-#   - cpu_idle = false (instance-based billing): in a request-billed Service,
-#     sidecars only receive CPU while the ingress container is handling a request,
-#     which would starve the always-on daemon between UI requests. Always-allocated
-#     CPU is required for the daemon to tick reliably.
+#   - cpu_idle = false (instance-based billing) in BOTH modes: a request-billed
+#     Service only gives sidecars CPU while the ingress is handling a request, which
+#     starves the daemon between UI requests. Always-allocated CPU is required for
+#     the daemon to tick reliably. This is orthogonal to min instances: on-demand
+#     still scales to zero (Cloud Run scales down on absence of requests, not CPU),
+#     and while the instance is up — including the idle window — the daemon has full
+#     CPU. So on-demand's daemon drains the run queue / launches runs reliably during
+#     the whole up-window, even if the user closes the tab right after launching.
 #   - Inter-container traffic is over localhost. The code server listens on its
 #     configured port (3030, matching deploy/workspace.yaml); the webserver and
 #     daemon reach it at CODE_SERVER_HOST_<LOC> = "localhost". No separate internal
 #     code-server Service is created, and no gRPC traffic leaves the instance.
 #   - Run workers are unaffected: they are still launched per-run as Cloud Run Jobs
-#     by the CloudRunRunLauncher (see run_worker.tf).
+#     by the CloudRunRunLauncher (see run_worker.tf). In on-demand mode this means a
+#     run keeps executing in its own Job even after the UI instance scales to zero;
+#     it writes status/logs to Postgres independently.
 
 resource "google_cloud_run_v2_service" "consolidated" {
-  count = local.is_consolidated ? 1 : 0
+  count = local.uses_single_instance ? 1 : 0
 
   # Use beta provider for IAP support (parity with the split webserver)
   provider = google-beta
@@ -44,9 +55,10 @@ resource "google_cloud_run_v2_service" "consolidated" {
   template {
     service_account = google_service_account.dagster.email
 
-    # Single always-on instance: the daemon must be unique.
+    # max=1: the daemon must be unique (double-fire otherwise).
+    # min: consolidated pins 1 (always on); on-demand sets 0 (scale to zero).
     scaling {
-      min_instance_count = 1
+      min_instance_count = local.is_ondemand ? 0 : 1
       max_instance_count = 1
     }
 

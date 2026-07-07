@@ -128,13 +128,13 @@ variable "dagster_code_server_image" {
 
 # Dagster deployment topology
 variable "dagster_deployment_mode" {
-  description = "Dagster topology: \"split\" (default, each component its own resource) or \"consolidated\" (webserver + daemon + code server in one always-on instance; lowest cost floor, single code location)."
+  description = "Dagster topology: \"split\" (default, each component its own resource), \"consolidated\" (webserver + daemon + code server in one always-on instance; lowest steady cost floor, single code location), or \"on-demand\" (same single instance but min=0 — scales to zero when idle, cold-starts on the next UI visit; best for demo / occasional-manual-run instances)."
   type        = string
   default     = "split"
 
   validation {
-    condition     = contains(["split", "consolidated"], var.dagster_deployment_mode)
-    error_message = "dagster_deployment_mode must be either \"split\" or \"consolidated\"."
+    condition     = contains(["split", "consolidated", "on-demand"], var.dagster_deployment_mode)
+    error_message = "dagster_deployment_mode must be one of \"split\", \"consolidated\", or \"on-demand\"."
   }
 }
 

@@ -74,7 +74,7 @@ gtfs-realtime-archiver/
 │   │   ├── webserver.tf    # Dagster UI (Cloud Run Service, split mode)
 │   │   ├── daemon.tf       # Dagster daemon (Worker Pool, split mode)
 │   │   ├── code_server.tf  # gRPC code servers (split mode)
-│   │   ├── consolidated.tf # Single-instance web+daemon+code (consolidated mode)
+│   │   ├── consolidated.tf # Single-instance web+daemon+code (consolidated + on-demand modes)
 │   │   ├── run_worker.tf   # Cloud Run Jobs for runs
 │   │   ├── iam.tf          # Service accounts, permissions + generic bucket/secret grants
 │   │   ├── hmac.tf         # Optional per-run-worker GCS HMAC keys (dbt-duckdb httpfs)
@@ -344,7 +344,7 @@ Each location gets:
 
 **Deployment Topologies** (`deployment_mode` variable):
 
-The module supports two topologies, selected via `dagster_deployment_mode`
+The module supports three topologies, selected via `dagster_deployment_mode`
 (root) / `deployment_mode` (module). Default is `split`.
 
 - **`split`** (default): webserver, daemon, and code server each run as their
@@ -381,6 +381,34 @@ The module supports two topologies, selected via `dagster_deployment_mode`
   is ~$105–110/mo, a wash against split. Consolidation saves money only at roughly
   ≤1.5 vCPU total; see the note on `consolidated_resources` in
   `tf/modules/dagster/variables.tf`.
+
+- **`on-demand`**: the **same single-instance topology as `consolidated`** (reuses
+  `consolidated.tf` and `consolidated_resources`) but with `min_instance_count = 0`.
+  It scales to zero when idle and cold-starts on the next UI visit. `cpu_idle` stays
+  `false`, which is the key: Cloud Run scales to zero on absence of *requests*, not
+  CPU, so while the instance is up — including the ~15 min idle window before it
+  scales down — the daemon has full CPU and reliably drains the run queue / launches
+  runs, even if the user closes the tab right after clicking Launch. A launched run
+  executes in its own Cloud Run Job and keeps going (writing status to Postgres)
+  after the UI instance scales to zero.
+
+  Use for **demo / occasional-manual-run instances**: pay only while someone is
+  using it (session + the idle window), $0 otherwise. Cloud SQL then becomes the
+  dominant remaining cost. Trade-offs:
+  - **Not for scheduled/sensor workloads** — schedules and sensors only fire while
+    someone has the UI open (the instance is at zero the rest of the time). This
+    mode assumes manual, UI-triggered runs only.
+  - Every session pays a cold start (all three containers, gated by the code
+    server's gRPC startup probe). The code server is still packed as a sidecar
+    container; an optional future optimization is loading code in-process (drop the
+    code-server container, `python_module` workspace) to shave cold-start time, at
+    the cost of prod-parity.
+  - Deferred housekeeping: run-monitoring / retries / zombie-run reaping only run
+    when the daemon is awake, i.e. on the next visit.
+
+  Set `dagster_deployment_mode = "on-demand"`. No `deploy/` changes required — it
+  works with the existing baked `dagster.yaml`/`workspace.yaml` (QueuedRunCoordinator
+  is fine, since the daemon has CPU during the up-window).
 
 **Terraform image variables move with releases — never apply with stale ones**:
 
