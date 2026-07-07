@@ -16,25 +16,11 @@ resource "google_storage_bucket" "protobuf" {
     }
   }
 
-  lifecycle_rule {
-    condition {
-      age = 30 # Move to Nearline after 30 days
-    }
-    action {
-      type          = "SetStorageClass"
-      storage_class = "NEARLINE"
-    }
-  }
-
-  lifecycle_rule {
-    condition {
-      age = 90 # Move to Coldline after 90 days
-    }
-    action {
-      type          = "SetStorageClass"
-      storage_class = "COLDLINE"
-    }
-  }
+  # NOTE: no SetStorageClass tiering here, on purpose. The bucket holds
+  # millions of tiny protobuf objects; lifecycle transitions bill a Class A
+  # operation per object at the destination class's rate, which cost ~9x the
+  # storage itself (June 2026: ~$305/mo in transition ops vs ~$34/mo storage).
+  # Objects stay STANDARD until the free age-365 delete reaps them.
 
   versioning {
     enabled = false # No versioning needed for append-only archives
