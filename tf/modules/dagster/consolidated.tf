@@ -6,7 +6,7 @@
 # Created only when var.deployment_mode == "consolidated". In that mode the split
 # webserver Service, daemon Worker Pool, and code-server Service are not created.
 #
-# Key constraints (see DESIGN.md "Deployment topologies"):
+# Key constraints (see CLAUDE.md "Deployment Topologies"):
 #   - max_instance_count = 1: the daemon must be a singleton. A second instance
 #     would double-fire schedules and double-evaluate sensors.
 #   - cpu_idle = false (instance-based billing): in a request-billed Service,
@@ -107,7 +107,9 @@ resource "google_cloud_run_v2_service" "consolidated" {
         cpu_idle = false # instance-based billing (always-allocated CPU)
       }
 
-      # gRPC startup probe - gates the webserver/daemon container start order
+      # gRPC startup probe - gates the webserver/daemon container start order.
+      # Cloud Run requires timeout_seconds <= period_seconds (matches the split
+      # code_server.tf probe); threshold 4 keeps the ~2 minute startup budget.
       startup_probe {
         grpc {
           port    = local.consolidated_location.port
@@ -115,8 +117,8 @@ resource "google_cloud_run_v2_service" "consolidated" {
         }
         initial_delay_seconds = 0
         timeout_seconds       = 30
-        period_seconds        = 10
-        failure_threshold     = 12
+        period_seconds        = 30
+        failure_threshold     = 4
       }
     }
 
@@ -246,4 +248,14 @@ resource "google_cloud_run_v2_service" "consolidated" {
   depends_on = [
     google_secret_manager_secret_iam_member.dagster_postgres_url
   ]
+
+  lifecycle {
+    # Consolidated mode co-locates exactly one code server. With more locations,
+    # only the first would be wired in while run_worker.tf still creates Jobs for
+    # all of them — fail fast instead of half-deploying.
+    precondition {
+      condition     = length(var.code_locations) == 1
+      error_message = "deployment_mode = \"consolidated\" supports exactly one code location; var.code_locations has ${length(var.code_locations)} entries. Use deployment_mode = \"split\" for multiple code locations."
+    }
+  }
 }

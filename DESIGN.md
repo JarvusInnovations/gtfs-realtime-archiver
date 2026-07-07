@@ -952,12 +952,22 @@ tofu apply -var-file=prod.tfvars
 tofu destroy -var-file=prod.tfvars
 ```
 
+The Dagster deployment supports two topologies via `dagster_deployment_mode`:
+`split` (default; each component its own Cloud Run resource) and `consolidated`
+(webserver + daemon + code server as three containers in one always-on instance —
+lowest cost floor, single code location only). Constraints and cost break-even are
+documented in "Deployment Topologies" in `.claude/CLAUDE.md`.
+
+Note that releases deploy by running `tofu apply` with image `-var`s derived from
+the release tag (see `.github/workflows/deploy.yaml`) — local applies must supply
+current image versions or they will roll deployed images back.
+
 ---
 
 ## Appendix A: Dependency Justification
 
 | Dependency | Purpose | Alternatives Considered |
-|------------|---------|------------------------|
+| ------------ | --------- | ------------------------ |
 | **httpx** | Async HTTP client | aiohttp (less ergonomic), requests (sync only) |
 | **apscheduler** | In-process job scheduling | schedule (no async), celery (overkill) |
 | **pydantic** | Data validation & settings | attrs (less features), dataclasses (no validation) |

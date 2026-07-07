@@ -370,6 +370,25 @@ The module supports two topologies, selected via `dagster_deployment_mode`
   the active one; the database, buckets, secrets, run-worker job, and service
   accounts are shared across both.
 
+  **Cost break-even**: at the default sizing (containers summing to 1 vCPU / 2Gi)
+  the consolidated instance runs ~$55/mo — vs ~$100/mo idle for the split topology
+  (always-on daemon + daemon-kept-warm code server). Sized up to 2 vCPU / 2.5Gi it
+  is ~$105–110/mo, a wash against split. Consolidation saves money only at roughly
+  ≤1.5 vCPU total; see the note on `consolidated_resources` in
+  `tf/modules/dagster/variables.tf`.
+
+**Terraform image variables move with releases — never apply with stale ones**:
+
+The release workflow (`.github/workflows/deploy.yaml`) deploys by running
+`tofu apply` with `-var` image values derived from the release tag. Terraform
+*is* the image mover, so the image fields deliberately have **no**
+`lifecycle ignore_changes` (that would silently break CI deploys). The corollary:
+a local `tofu plan`/`apply` that doesn't pass the currently-deployed image
+versions will show (and would roll back!) image "downgrades" to whatever stale
+values are in tfvars/defaults. Before any local apply, derive the image vars from
+the latest release tag (as deploy.yaml does), pass `-target` for the resources
+you're changing, or confirm the plan shows no image changes.
+
 ## Testing Container Builds
 
 **When to test locally**:
