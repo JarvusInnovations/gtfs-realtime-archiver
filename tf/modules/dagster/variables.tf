@@ -14,14 +14,69 @@ variable "cloud_sql_connection_name" {
   type        = string
 }
 
-variable "protobuf_bucket_name" {
-  description = "GCS bucket name for raw protobuf files"
-  type        = string
+# Generic consumer-domain wiring.
+# The module deliberately has no project-specific variables (bucket names,
+# API-credential secrets, etc.); consumers express those through these maps.
+
+variable "extra_env" {
+  description = "Additional plain environment variables injected into every Dagster component (webserver, daemon, code servers, run workers). Use for consumer-domain config like bucket names or secret IDs the app resolves itself."
+  type        = map(string)
+  default     = {}
 }
 
-variable "parquet_bucket_name" {
-  description = "GCS bucket name for compacted parquet files"
-  type        = string
+variable "bucket_grants" {
+  description = <<-EOT
+    GCS bucket IAM grants for the Dagster service accounts. Map key is a stable
+    label (it becomes part of the Terraform resource key — renaming it moves
+    state). Per entry:
+      - bucket:          bucket name to grant on
+      - dagster_role:    role for the primary SA (webserver/daemon/code servers),
+                         or null for no grant
+      - run_worker_role: role for each per-code-location run-worker SA, or null
+  EOT
+  type = map(object({
+    bucket          = string
+    dagster_role    = optional(string)
+    run_worker_role = optional(string)
+  }))
+  default = {}
+}
+
+variable "secret_grants" {
+  description = <<-EOT
+    Secret Manager accessor grants for the Dagster service accounts. Map key is a
+    stable label (part of the Terraform resource key). Per entry:
+      - secret_id:  Secret Manager secret ID
+      - dagster:    grant to the primary SA (default false)
+      - run_worker: grant to each run-worker SA (default true)
+  EOT
+  type = map(object({
+    secret_id  = string
+    dagster    = optional(bool, false)
+    run_worker = optional(bool, true)
+  }))
+  default = {}
+}
+
+variable "run_worker_secret_env" {
+  description = "Environment variables injected into run workers as Secret Manager references: env var name -> secret ID. The secret must also be granted via secret_grants (run_worker = true)."
+  type        = map(string)
+  default     = {}
+}
+
+variable "enable_dbt_hmac_keys" {
+  description = "Issue a GCS HMAC key per run-worker SA and expose it to run workers via Secret Manager-backed env vars (see hmac.tf). For DuckDB/dbt-duckdb httpfs writes to gs:// via the S3-compatible API."
+  type        = bool
+  default     = false
+}
+
+variable "hmac_env_names" {
+  description = "Env var names the run worker receives the HMAC credentials under (only used when enable_dbt_hmac_keys = true). Match what the consumer's profiles.yml/env_var() reads."
+  type = object({
+    key_id = optional(string, "DAGSTER_GCS_HMAC_KEY_ID")
+    secret = optional(string, "DAGSTER_GCS_HMAC_SECRET")
+  })
+  default = {}
 }
 
 # Container images
@@ -165,15 +220,24 @@ variable "labels" {
   default     = {}
 }
 
-# IAP configuration
+# Web exposure mode
+# Three patterns are supported:
+# 1. Public + IAP    — set iap_allowed_domain (+ custom_domain); webserver gets a
+#    public ingress with Google-managed IAP gating the @domain login.
+# 2. Public          — iap_allowed_domain null, public_ingress true: an allUsers
+#    invoker binding is created. Unauthenticated; opt-in only.
+# 3. Private + proxy — iap_allowed_domain null, public_ingress false; no invoker
+#    binding is created and callers invoke through Cloud Run IAM (e.g. another
+#    Cloud Run service forwarding requests with an ID token). Pair with
+#    path_prefix when the proxy mounts the UI under a subpath.
 variable "iap_allowed_domain" {
-  description = "Google Workspace domain for IAP access. Null disables IAP."
+  description = "Google Workspace domain for IAP access. Null disables IAP (see public_ingress for the non-IAP postures)."
   type        = string
   default     = null
 }
 
 variable "custom_domain" {
-  description = "Custom domain for webserver (requires DNS record)"
+  description = "Custom domain for webserver (requires DNS record). Only used when IAP is enabled."
   type        = string
   default     = null
 }
@@ -184,8 +248,26 @@ variable "project_number" {
   default     = null
 }
 
-variable "agencies_secret_id" {
-  description = "Secret Manager secret ID containing agencies.yaml configuration"
+variable "public_ingress" {
+  description = "If true and IAP is disabled, an allUsers run.invoker binding exposes the webserver publicly. If false, access happens via run.invoker IAM granted (outside the module) to a specific caller SA."
+  type        = bool
+  default     = true
+}
+
+variable "path_prefix" {
+  description = "URL path prefix the webserver serves under (passed to dagster-webserver --path-prefix). Empty string means served at root. Set to e.g. \"/dagster\" when a reverse proxy forwards a subpath."
   type        = string
-  default     = "agencies-config"
+  default     = ""
+}
+
+variable "webserver_min_instances" {
+  description = "Minimum webserver instances in split mode. 0 scales to zero (cold start on first UI hit); 1 keeps the UI warm for a small always-on memory cost."
+  type        = number
+  default     = 0
+}
+
+variable "code_server_min_instances" {
+  description = "Minimum code-server instances in split mode. The always-on daemon keeps the code server warm in practice, so 0 is usually fine; 1 makes the warmth explicit and removes sensor-tick cold starts."
+  type        = number
+  default     = 0
 }

@@ -23,9 +23,10 @@ resource "google_cloud_run_v2_service" "code_server" {
     # No VPC connector - use Cloud SQL socket mount
     # Cloud Run connects to Cloud SQL via built-in Cloud SQL Auth Proxy
 
-    # Dagster code server can only have 1 instance
+    # Dagster code server can only have 1 instance. Note the always-on daemon
+    # keeps it warm in practice regardless of the minimum (sensor gRPC polls).
     scaling {
-      min_instance_count = 0
+      min_instance_count = var.code_server_min_instances
       max_instance_count = 1
     }
 
