@@ -334,6 +334,15 @@ Required for Dagster:
 - `GCS_BUCKET_RT_PROTOBUF`: Source bucket with protobuf archives
 - `GCS_BUCKET_RT_PARQUET`: Target bucket for parquet output
 
+### Deployment topology
+
+The Cloud Run deployment supports two topologies via the `dagster_deployment_mode`
+Terraform variable: `split` (default — webserver, daemon, and code server as
+separate Cloud Run resources) and `consolidated` (all three as containers in one
+always-on instance, for the lowest cost floor with a single code location). See
+"Deployment Topologies" in `.claude/CLAUDE.md` for constraints and cost
+break-even details.
+
 ## License
 
 AGPL-3.0

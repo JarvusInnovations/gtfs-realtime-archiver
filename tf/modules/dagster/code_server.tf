@@ -2,7 +2,8 @@
 # One service per code location
 
 resource "google_cloud_run_v2_service" "code_server" {
-  for_each = var.code_locations
+  # Only created in split mode; consolidated mode runs the code server as a sidecar
+  for_each = local.is_split ? var.code_locations : {}
 
   name     = "dagster-code-server-${each.key}"
   location = var.region

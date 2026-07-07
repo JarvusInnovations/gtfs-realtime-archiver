@@ -16,6 +16,8 @@ module "dagster" {
   parquet_bucket_name  = google_storage_bucket.parquet.name
   agencies_secret_id   = var.agencies_secret_id
 
+  deployment_mode = var.dagster_deployment_mode
+
   webserver_image = var.dagster_webserver_image
   daemon_image    = var.dagster_daemon_image
 

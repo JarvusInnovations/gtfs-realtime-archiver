@@ -1,6 +1,9 @@
 # Cloud Run service for Dagster webserver (UI)
 
 resource "google_cloud_run_v2_service" "webserver" {
+  # Only created in split mode; consolidated mode uses google_cloud_run_v2_service.consolidated
+  count = local.is_split ? 1 : 0
+
   # Use beta provider for IAP support
   provider = google-beta
 
@@ -129,7 +132,7 @@ resource "google_cloud_run_v2_service_iam_member" "webserver_public_invoker" {
   count = var.iap_allowed_domain == null ? 1 : 0
 
   provider = google-beta
-  name     = google_cloud_run_v2_service.webserver.name
+  name     = local.webserver_service_name
   location = var.region
   project  = var.project_id
   role     = "roles/run.invoker"
@@ -141,7 +144,7 @@ resource "google_cloud_run_v2_service_iam_member" "webserver_iap_invoker" {
   count = var.iap_allowed_domain != null ? 1 : 0
 
   provider = google-beta
-  name     = google_cloud_run_v2_service.webserver.name
+  name     = local.webserver_service_name
   location = var.region
   project  = var.project_id
   role     = "roles/run.invoker"
@@ -155,7 +158,7 @@ resource "google_iap_web_cloud_run_service_iam_member" "webserver_domain_access"
   provider               = google-beta
   project                = var.project_number # Must use project number, not ID
   location               = var.region
-  cloud_run_service_name = google_cloud_run_v2_service.webserver.name
+  cloud_run_service_name = local.webserver_service_name
   role                   = "roles/iap.httpsResourceAccessor"
   member                 = "domain:${var.iap_allowed_domain}"
 }
@@ -173,6 +176,6 @@ resource "google_cloud_run_domain_mapping" "webserver" {
   }
 
   spec {
-    route_name = google_cloud_run_v2_service.webserver.name
+    route_name = local.webserver_service_name
   }
 }

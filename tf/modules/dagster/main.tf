@@ -12,6 +12,20 @@ locals {
     component  = "dagster"
   })
 
+  # Deployment topology toggles (see var.deployment_mode)
+  is_consolidated = var.deployment_mode == "consolidated"
+  is_split        = var.deployment_mode == "split"
+
+  # Consolidated mode co-locates a single code location. Pick the (only) entry.
+  consolidated_location_key = try(keys(var.code_locations)[0], null)
+  consolidated_location     = try(var.code_locations[local.consolidated_location_key], null)
+
+  # The Service that carries the webserver ingress, used to wire IAP, the public
+  # invoker, and the custom domain mapping in both modes. Splats + one() stay safe
+  # when the non-active resource has count = 0.
+  webserver_service_name = local.is_consolidated ? one(google_cloud_run_v2_service.consolidated[*].name) : one(google_cloud_run_v2_service.webserver[*].name)
+  webserver_service_uri  = local.is_consolidated ? one(google_cloud_run_v2_service.consolidated[*].uri) : one(google_cloud_run_v2_service.webserver[*].uri)
+
   # Use provided logs bucket or create one
   logs_bucket_name = var.logs_bucket_name != null ? var.logs_bucket_name : google_storage_bucket.logs[0].name
 

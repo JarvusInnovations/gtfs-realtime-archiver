@@ -70,9 +70,10 @@ gtfs-realtime-archiver/
 │   ├── dagster.tf          # Dagster module instantiation
 │   ├── modules/dagster/    # Dagster deployment module
 │   │   ├── main.tf         # Module locals and config
-│   │   ├── webserver.tf    # Dagster UI (Cloud Run Service)
-│   │   ├── daemon.tf       # Dagster daemon (Worker Pool)
-│   │   ├── code_server.tf  # gRPC code servers
+│   │   ├── webserver.tf    # Dagster UI (Cloud Run Service, split mode)
+│   │   ├── daemon.tf       # Dagster daemon (Worker Pool, split mode)
+│   │   ├── code_server.tf  # gRPC code servers (split mode)
+│   │   ├── consolidated.tf # Single-instance web+daemon+code (consolidated mode)
 │   │   ├── run_worker.tf   # Cloud Run Jobs for runs
 │   │   ├── iam.tf          # Service accounts and permissions
 │   │   ├── secrets.tf      # DB password secret
@@ -338,6 +339,58 @@ Each location gets:
 - Dedicated code server (gRPC)
 - Dedicated run worker job
 - Dedicated service account with specific IAM permissions
+
+**Deployment Topologies** (`deployment_mode` variable):
+
+The module supports two topologies, selected via `dagster_deployment_mode`
+(root) / `deployment_mode` (module). Default is `split`.
+
+- **`split`** (default): webserver, daemon, and code server each run as their
+  own Cloud Run resource (Service / Worker Pool / Service). The webserver scales
+  0→N and the code server is isolated so code reloads don't affect the host
+  processes. Use when you need horizontal UI scaling or multiple code locations.
+
+- **`consolidated`**: webserver (ingress) + daemon + code server run as three
+  containers in **one always-on Cloud Run Service instance** (`consolidated.tf`),
+  for a single code location. Lowest cost floor — collapses what is otherwise two
+  always-on footprints (daemon + daemon-kept-warm code server) into one. Run
+  workers are unchanged (still per-run Cloud Run Jobs).
+
+  Constraints baked into the consolidated service:
+  - `max_instance_count = 1` — the daemon must be a singleton (a second instance
+    would double-fire schedules/sensors). Caveat: unlike the split Worker Pool's
+    MANUAL scaling, a Service revision rollout can briefly run old + new instances
+    concurrently, so the daemon may transiently double-fire during deploys —
+    acceptable for idempotent schedules, worth knowing about.
+  - `cpu_idle = false` (instance-based billing) — in a request-billed Service,
+    sidecars only get CPU while the ingress handles a request, which starves the
+    always-on daemon. Always-allocated CPU is required.
+  - The code server is reached over `localhost` (`CODE_SERVER_HOST_<LOC>=localhost`,
+    port from `deploy/workspace.yaml`); no internal code-server Service is created.
+
+  Flip topologies with `dagster_deployment_mode = "consolidated"` in tfvars and
+  `tofu apply`. Switching destroys the resources of the other topology and creates
+  the active one; the database, buckets, secrets, run-worker job, and service
+  accounts are shared across both.
+
+  **Cost break-even**: at the default sizing (containers summing to 1 vCPU / 2Gi)
+  the consolidated instance runs ~$55/mo — vs ~$100/mo idle for the split topology
+  (always-on daemon + daemon-kept-warm code server). Sized up to 2 vCPU / 2.5Gi it
+  is ~$105–110/mo, a wash against split. Consolidation saves money only at roughly
+  ≤1.5 vCPU total; see the note on `consolidated_resources` in
+  `tf/modules/dagster/variables.tf`.
+
+**Terraform image variables move with releases — never apply with stale ones**:
+
+The release workflow (`.github/workflows/deploy.yaml`) deploys by running
+`tofu apply` with `-var` image values derived from the release tag. Terraform
+*is* the image mover, so the image fields deliberately have **no**
+`lifecycle ignore_changes` (that would silently break CI deploys). The corollary:
+a local `tofu plan`/`apply` that doesn't pass the currently-deployed image
+versions will show (and would roll back!) image "downgrades" to whatever stale
+values are in tfvars/defaults. Before any local apply, derive the image vars from
+the latest release tag (as deploy.yaml does), pass `-target` for the resources
+you're changing, or confirm the plan shows no image changes.
 
 ## Testing Container Builds
 
