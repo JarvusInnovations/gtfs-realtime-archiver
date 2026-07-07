@@ -22,6 +22,11 @@ variable "extra_env" {
   description = "Additional plain environment variables injected into every Dagster component (webserver, daemon, code servers, run workers). Use for consumer-domain config like bucket names or secret IDs the app resolves itself."
   type        = map(string)
   default     = {}
+
+  validation {
+    condition     = length(setintersection(keys(var.extra_env), ["GCP_PROJECT_ID", "GCP_REGION", "DAGSTER_HOME", "DAGSTER_LOGS_BUCKET"])) == 0
+    error_message = "extra_env must not override the module-managed env vars GCP_PROJECT_ID, GCP_REGION, DAGSTER_HOME, or DAGSTER_LOGS_BUCKET."
+  }
 }
 
 variable "bucket_grants" {
@@ -237,7 +242,7 @@ variable "iap_allowed_domain" {
 }
 
 variable "custom_domain" {
-  description = "Custom domain for webserver (requires DNS record). Only used when IAP is enabled."
+  description = "Custom domain for the webserver (requires DNS record). Creates a Cloud Run domain mapping whenever set, independent of IAP; pair with an ingress posture that makes the domain reachable."
   type        = string
   default     = null
 }
@@ -258,6 +263,13 @@ variable "path_prefix" {
   description = "URL path prefix the webserver serves under (passed to dagster-webserver --path-prefix). Empty string means served at root. Set to e.g. \"/dagster\" when a reverse proxy forwards a subpath."
   type        = string
   default     = ""
+
+  validation {
+    # Interpolated into Cloud Run probe paths (must start with "/") and passed
+    # to --path-prefix; a trailing slash would yield "//server_info".
+    condition     = var.path_prefix == "" || (startswith(var.path_prefix, "/") && !endswith(var.path_prefix, "/"))
+    error_message = "path_prefix must be empty, or start with \"/\" and not end with \"/\" (e.g. \"/dagster\")."
+  }
 }
 
 variable "webserver_min_instances" {
