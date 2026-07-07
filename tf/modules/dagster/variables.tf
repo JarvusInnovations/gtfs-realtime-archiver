@@ -74,7 +74,7 @@ variable "deployment_mode" {
 
 # Per-container resource limits for the consolidated deployment.
 # The instance total is the SUM across the three containers and must resolve to a
-# supported Cloud Run CPU size. Defaults sum to 1 vCPU / 2Gi.
+# supported Cloud Run CPU size. Defaults sum to 1 vCPU / 2.5Gi.
 #
 # Cost break-even (us-central1, always-allocated, no CUD): a consolidated instance
 # runs ~$55/mo at the 1 vCPU default but ~$105-110/mo at 2 vCPU / 2.5Gi — the
@@ -94,7 +94,7 @@ variable "consolidated_resources" {
   default = {
     webserver   = { cpu = "500m", memory = "512Mi" }
     code_server = { cpu = "250m", memory = "1Gi" }
-    daemon      = { cpu = "250m", memory = "512Mi" }
+    daemon      = { cpu = "250m", memory = "1Gi" } # matches split's daemon memory; 512Mi risks OOM loops
   }
 }
 

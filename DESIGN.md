@@ -967,7 +967,7 @@ current image versions or they will roll deployed images back.
 ## Appendix A: Dependency Justification
 
 | Dependency | Purpose | Alternatives Considered |
-| ------------ | --------- | ------------------------ |
+|------------|---------|------------------------|
 | **httpx** | Async HTTP client | aiohttp (less ergonomic), requests (sync only) |
 | **apscheduler** | In-process job scheduling | schedule (no async), celery (overkill) |
 | **pydantic** | Data validation & settings | attrs (less features), dataclasses (no validation) |

@@ -358,7 +358,10 @@ The module supports two topologies, selected via `dagster_deployment_mode`
 
   Constraints baked into the consolidated service:
   - `max_instance_count = 1` — the daemon must be a singleton (a second instance
-    would double-fire schedules/sensors).
+    would double-fire schedules/sensors). Caveat: unlike the split Worker Pool's
+    MANUAL scaling, a Service revision rollout can briefly run old + new instances
+    concurrently, so the daemon may transiently double-fire during deploys —
+    acceptable for idempotent schedules, worth knowing about.
   - `cpu_idle = false` (instance-based billing) — in a request-billed Service,
     sidecars only get CPU while the ingress handles a request, which starves the
     always-on daemon. Always-allocated CPU is required.

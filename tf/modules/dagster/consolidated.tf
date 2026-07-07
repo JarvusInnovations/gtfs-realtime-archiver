@@ -105,6 +105,10 @@ resource "google_cloud_run_v2_service" "consolidated" {
           memory = var.consolidated_resources.code_server.memory
         }
         cpu_idle = false # instance-based billing (always-allocated CPU)
+        # Boost bills only during startup; without it a fractional-CPU code server
+        # importing heavy definitions can blow the 120s startup-probe budget and
+        # wedge the whole instance (webserver/daemon depends_on this container).
+        startup_cpu_boost = true
       }
 
       # gRPC startup probe - gates the webserver/daemon container start order.
@@ -237,7 +241,8 @@ resource "google_cloud_run_v2_service" "consolidated" {
           cpu    = var.consolidated_resources.daemon.cpu
           memory = var.consolidated_resources.daemon.memory
         }
-        cpu_idle = false # always-allocated so the daemon ticks without UI traffic
+        cpu_idle          = false # always-allocated so the daemon ticks without UI traffic
+        startup_cpu_boost = true  # boost bills only during startup
       }
 
       # No liveness probe - dagster-daemon exposes no HTTP/TCP endpoint.
