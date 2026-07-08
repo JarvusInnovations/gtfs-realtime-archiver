@@ -8,7 +8,13 @@ Add a new transit agency to the GTFS-RT Archiver by searching for feed sources, 
 
 ### Step 1: Search Local Mobility Database Catalogs
 
-Search the local copy of the Mobility Database for GTFS-RT feeds:
+Search the local copy of the Mobility Database for GTFS-RT feeds.
+
+`.scratch/` is unversioned — if `.scratch/mobility-database-catalogs` doesn't exist yet, clone it first:
+
+```bash
+git clone --depth 1 https://github.com/MobilityData/mobility-database-catalogs .scratch/mobility-database-catalogs
+```
 
 ```bash
 # Search for agency by name (case-insensitive)
@@ -188,7 +194,7 @@ grep -E "^  - id:" agencies.yaml
 ### Common Feed Providers
 
 | Provider | Auth Type | Header/Param |
-|----------|-----------|--------------|
+| ---------- | ----------- | -------------- |
 | Azure API Management | header | `Ocp-Apim-Subscription-Key` |
 | 511.org | query | `api_key` |
 | Swiftly | header | `Authorization: Bearer {token}` |
