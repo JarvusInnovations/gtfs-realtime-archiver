@@ -5,12 +5,27 @@ data "google_project" "current" {
   project_id = var.project_id
 }
 
+# Shared-pg switchover (2026-07): Dagster metadata now lives in the
+# multi-tenant jarvus-shared-postgres instance (tenant: dagster_gtfsrt; see
+# infra-ops projects/shared-postgres). The local dagster-postgres instance
+# (PG14, EOL pressure) is retained for rollback until the cleanup PR.
+data "google_secret_manager_secret_version" "shared_pg_password" {
+  secret = "shared-pg-dagster_gtfsrt-password"
+}
+
 module "dagster" {
   source = "./modules/dagster"
 
   project_id                = var.project_id
   region                    = var.region
-  cloud_sql_connection_name = google_sql_database_instance.dagster.connection_name
+  cloud_sql_connection_name = "jarvus-shared-postgres:us-east4:shared-pg"
+
+  # External-database mode: the shared root provisions the isolated tenant
+  # database + SQL-native user; the module only composes the URL.
+  manage_database = false
+  db_name         = "dagster_gtfsrt"
+  db_user         = "dagster_gtfsrt_app"
+  db_password     = data.google_secret_manager_secret_version.shared_pg_password.secret_data
 
   # Consumer-domain wiring: the module is generic, this project's buckets and
   # secrets are expressed as env + grants (see modules/dagster/variables.tf).
@@ -67,7 +82,4 @@ module "dagster" {
     project = "gtfs-rt-archiver"
   }
 
-  depends_on = [
-    google_sql_database_instance.dagster
-  ]
 }

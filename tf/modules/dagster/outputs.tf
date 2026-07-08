@@ -50,7 +50,7 @@ output "run_worker_job_names" {
 # Database outputs
 output "database_name" {
   description = "Name of the Dagster database"
-  value       = google_sql_database.dagster.name
+  value       = coalesce(one(google_sql_database.dagster[*].name), var.db_name)
 }
 
 # Logs bucket output
