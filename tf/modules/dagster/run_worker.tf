@@ -65,6 +65,41 @@ resource "google_cloud_run_v2_job" "run_worker" {
           }
         }
 
+        # Consumer-declared secret-backed env vars (var.run_worker_secret_env).
+        # Deliberately run-worker only: code servers introspect the asset graph
+        # and shouldn't hold materialization credentials.
+        dynamic "env" {
+          for_each = var.run_worker_secret_env
+          content {
+            name = env.key
+            value_source {
+              secret_key_ref {
+                secret  = env.value
+                version = "latest"
+              }
+            }
+          }
+        }
+
+        # GCS HMAC credentials for DuckDB/dbt-duckdb httpfs writes — see hmac.tf.
+        # Env names come from var.hmac_env_names to match whatever the consumer's
+        # profiles.yml reads via env_var().
+        dynamic "env" {
+          for_each = var.enable_dbt_hmac_keys ? {
+            (var.hmac_env_names.key_id) = google_secret_manager_secret.dbt_gcs_hmac_key_id[each.key].secret_id
+            (var.hmac_env_names.secret) = google_secret_manager_secret.dbt_gcs_hmac_secret[each.key].secret_id
+          } : {}
+          content {
+            name = env.key
+            value_source {
+              secret_key_ref {
+                secret  = env.value
+                version = "latest"
+              }
+            }
+          }
+        }
+
         # Current image for Dagster to identify the code location image
         env {
           name  = "DAGSTER_CURRENT_IMAGE"
@@ -82,6 +117,9 @@ resource "google_cloud_run_v2_job" "run_worker" {
   }
 
   depends_on = [
-    google_secret_manager_secret_iam_member.run_worker_postgres_url
+    google_secret_manager_secret_iam_member.run_worker_postgres_url,
+    # Empty when enable_dbt_hmac_keys = false
+    google_secret_manager_secret_iam_member.run_worker_hmac_key_id,
+    google_secret_manager_secret_iam_member.run_worker_hmac_secret,
   ]
 }

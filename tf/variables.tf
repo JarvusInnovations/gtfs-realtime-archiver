@@ -126,6 +126,18 @@ variable "dagster_code_server_image" {
   default     = "us-central1-docker.pkg.dev/gtfs-archiver/ghcr-remote/jarvusinnovations/gtfs-realtime-archiver/dagster-code-server:latest"
 }
 
+# Dagster deployment topology
+variable "dagster_deployment_mode" {
+  description = "Dagster topology: \"split\" (default, each component its own resource) or \"consolidated\" (webserver + daemon + code server in one always-on instance; lowest cost floor, single code location)."
+  type        = string
+  default     = "split"
+
+  validation {
+    condition     = contains(["split", "consolidated"], var.dagster_deployment_mode)
+    error_message = "dagster_deployment_mode must be either \"split\" or \"consolidated\"."
+  }
+}
+
 # Dagster IAP configuration
 variable "dagster_iap_allowed_domain" {
   description = "Google Workspace domain allowed to access Dagster via IAP (e.g., 'example.com'). Set to null to disable IAP."

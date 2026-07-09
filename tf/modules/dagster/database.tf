@@ -1,5 +1,7 @@
 # Create database in the provided Cloud SQL instance
 resource "google_sql_database" "dagster" {
+  count = var.manage_database ? 1 : 0
+
   name     = var.db_name
   instance = local.cloud_sql_instance_name
   project  = var.project_id
@@ -7,6 +9,8 @@ resource "google_sql_database" "dagster" {
 
 # Create database user
 resource "google_sql_user" "dagster" {
+  count = var.manage_database ? 1 : 0
+
   name     = var.db_user
   instance = local.cloud_sql_instance_name
   password = random_password.db_password.result

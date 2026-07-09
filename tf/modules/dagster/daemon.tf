@@ -2,12 +2,17 @@
 # Worker Pools are designed for continuous background work without HTTP endpoints
 
 resource "google_cloud_run_v2_worker_pool" "daemon" {
+  # Only created in split mode; consolidated mode runs the daemon as a sidecar
+  count = local.is_split ? 1 : 0
+
   name     = "dagster-daemon"
   location = var.region
   project  = var.project_id
 
-  # Worker Pool is in BETA
-  launch_stage = "BETA"
+  # google_cloud_run_v2_worker_pool graduated to GA in 2025; Google
+  # auto-promoted deployed pools' launch_stage. Match that here so
+  # tofu doesn't try to downgrade it back to BETA.
+  launch_stage = "GA"
 
   # Prevent accidental deletion
   deletion_protection = false

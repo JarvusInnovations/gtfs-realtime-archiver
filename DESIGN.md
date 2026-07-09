@@ -952,6 +952,24 @@ tofu apply -var-file=prod.tfvars
 tofu destroy -var-file=prod.tfvars
 ```
 
+The Dagster deployment supports two topologies via `dagster_deployment_mode`:
+`split` (default; each component its own Cloud Run resource) and `consolidated`
+(webserver + daemon + code server as three containers in one always-on instance —
+lowest cost floor, single code location only). Constraints and cost break-even are
+documented in "Deployment Topologies" in `.claude/CLAUDE.md`.
+
+Note that releases deploy by running `tofu apply` with image `-var`s derived from
+the release tag (see `.github/workflows/deploy.yaml`) — local applies must supply
+current image versions or they will roll deployed images back.
+
+The `tf/modules/dagster/` module is deliberately generic (no GTFS-specific
+variables): this project's buckets, secrets, and env are wired through the
+module's `extra_env`, `bucket_grants`, `secret_grants`, and `run_worker_secret_env`
+maps in `tf/dagster.tf`. The module also supports private-ingress + reverse-proxy
+exposure (`public_ingress`, `path_prefix`) and optional per-run-worker GCS HMAC
+keys (`enable_dbt_hmac_keys`) used by sibling deployments; it is being extracted
+to a standalone Terraform Registry module.
+
 ---
 
 ## Appendix A: Dependency Justification

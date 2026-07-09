@@ -1,12 +1,17 @@
 # Webserver outputs
+output "deployment_mode" {
+  description = "Active Dagster deployment topology (split or consolidated)"
+  value       = var.deployment_mode
+}
+
 output "webserver_url" {
   description = "URL of the Dagster webserver (Cloud Run URL)"
-  value       = google_cloud_run_v2_service.webserver.uri
+  value       = local.webserver_service_uri
 }
 
 output "webserver_service_name" {
-  description = "Name of the webserver Cloud Run service"
-  value       = google_cloud_run_v2_service.webserver.name
+  description = "Name of the Cloud Run service serving the Dagster webserver"
+  value       = local.webserver_service_name
 }
 
 output "webserver_iap_url" {
@@ -45,7 +50,7 @@ output "run_worker_job_names" {
 # Database outputs
 output "database_name" {
   description = "Name of the Dagster database"
-  value       = google_sql_database.dagster.name
+  value       = coalesce(one(google_sql_database.dagster[*].name), var.db_name)
 }
 
 # Logs bucket output

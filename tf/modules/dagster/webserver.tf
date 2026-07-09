@@ -1,6 +1,9 @@
 # Cloud Run service for Dagster webserver (UI)
 
 resource "google_cloud_run_v2_service" "webserver" {
+  # Only created in split mode; consolidated mode uses google_cloud_run_v2_service.consolidated
+  count = local.is_split ? 1 : 0
+
   # Use beta provider for IAP support
   provider = google-beta
 
@@ -8,11 +11,16 @@ resource "google_cloud_run_v2_service" "webserver" {
   location = var.region
   project  = var.project_id
 
-  # Enable IAP (Preview feature) - requires BETA launch stage
-  launch_stage = var.iap_allowed_domain != null ? "BETA" : null
-  iap_enabled  = var.iap_allowed_domain != null
+  # Cloud Run IAP is GA (Google auto-promoted deployed services' launch_stage;
+  # forcing BETA here would show as a perpetual GA -> BETA plan diff).
+  iap_enabled = var.iap_allowed_domain != null
 
-  # Allow external access to the UI
+  # Ingress stays INGRESS_TRAFFIC_ALL so other Cloud Run services in the same
+  # project can reach it without a VPC connector — Cloud-Run-to-Cloud-Run
+  # traffic uses the public endpoint by default. Access control happens
+  # entirely at the IAM layer (the `allUsers` invoker binding below is only
+  # created when public_ingress = true; in private mode the consumer grants
+  # `roles/run.invoker` narrowly to a specific SA).
   ingress = "INGRESS_TRAFFIC_ALL"
 
   # Allow replacement during development
@@ -24,7 +32,7 @@ resource "google_cloud_run_v2_service" "webserver" {
     service_account = google_service_account.dagster.email
 
     scaling {
-      min_instance_count = 0
+      min_instance_count = var.webserver_min_instances
       max_instance_count = 2
     }
 
@@ -40,8 +48,13 @@ resource "google_cloud_run_v2_service" "webserver" {
       name  = "webserver"
       image = var.webserver_image
 
-      # Run Dagster webserver
-      command = ["dagster-webserver", "--host", "0.0.0.0", "--port", "3000"]
+      # Run Dagster webserver. --path-prefix lets the UI generate URLs that
+      # match what a reverse proxy forwards (e.g. /dagster). Empty string keeps
+      # the UI at root (the default).
+      command = concat(
+        ["dagster-webserver", "--host", "0.0.0.0", "--port", "3000"],
+        var.path_prefix != "" ? ["--path-prefix", var.path_prefix] : []
+      )
 
       # Mount Cloud SQL socket
       volume_mounts {
@@ -95,7 +108,7 @@ resource "google_cloud_run_v2_service" "webserver" {
       # Startup probe
       startup_probe {
         http_get {
-          path = "/server_info"
+          path = "${var.path_prefix}/server_info"
           port = 3000
         }
         initial_delay_seconds = 5
@@ -107,7 +120,7 @@ resource "google_cloud_run_v2_service" "webserver" {
       # Liveness probe
       liveness_probe {
         http_get {
-          path = "/server_info"
+          path = "${var.path_prefix}/server_info"
           port = 3000
         }
         period_seconds    = 30
@@ -122,14 +135,15 @@ resource "google_cloud_run_v2_service" "webserver" {
   ]
 }
 
-# Public access when IAP is disabled
-# SECURITY WARNING: This allows unauthenticated access to the Dagster UI.
-# Only created when var.iap_allowed_domain is null.
+# Public unauthenticated access — only when the caller asked for it explicitly
+# (public_ingress = true AND no IAP gating). In private mode the caller is
+# expected to add a `roles/run.invoker` binding for the specific service
+# account that will reach this webserver, outside the module.
 resource "google_cloud_run_v2_service_iam_member" "webserver_public_invoker" {
-  count = var.iap_allowed_domain == null ? 1 : 0
+  count = var.iap_allowed_domain == null && var.public_ingress ? 1 : 0
 
   provider = google-beta
-  name     = google_cloud_run_v2_service.webserver.name
+  name     = local.webserver_service_name
   location = var.region
   project  = var.project_id
   role     = "roles/run.invoker"
@@ -141,7 +155,7 @@ resource "google_cloud_run_v2_service_iam_member" "webserver_iap_invoker" {
   count = var.iap_allowed_domain != null ? 1 : 0
 
   provider = google-beta
-  name     = google_cloud_run_v2_service.webserver.name
+  name     = local.webserver_service_name
   location = var.region
   project  = var.project_id
   role     = "roles/run.invoker"
@@ -155,7 +169,7 @@ resource "google_iap_web_cloud_run_service_iam_member" "webserver_domain_access"
   provider               = google-beta
   project                = var.project_number # Must use project number, not ID
   location               = var.region
-  cloud_run_service_name = google_cloud_run_v2_service.webserver.name
+  cloud_run_service_name = local.webserver_service_name
   role                   = "roles/iap.httpsResourceAccessor"
   member                 = "domain:${var.iap_allowed_domain}"
 }
@@ -173,6 +187,6 @@ resource "google_cloud_run_domain_mapping" "webserver" {
   }
 
   spec {
-    route_name = google_cloud_run_v2_service.webserver.name
+    route_name = local.webserver_service_name
   }
 }
