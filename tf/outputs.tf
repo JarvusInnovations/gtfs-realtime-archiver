@@ -53,17 +53,6 @@ output "dagster_run_worker_service_account_emails" {
   value       = module.dagster.run_worker_service_account_emails
 }
 
-# Cloud SQL outputs
-output "cloudsql_instance_name" {
-  description = "Name of the Cloud SQL instance"
-  value       = google_sql_database_instance.dagster.name
-}
-
-output "cloudsql_connection_name" {
-  description = "Connection name for Cloud SQL (project:region:instance)"
-  value       = google_sql_database_instance.dagster.connection_name
-}
-
 # Dagster module outputs
 output "dagster_webserver_url" {
   description = "Cloud Run URL of the Dagster webserver"
