@@ -283,3 +283,18 @@ variable "code_server_min_instances" {
   type        = number
   default     = 0
 }
+
+# --- External database mode (shared-instance tenancy) ------------------------
+
+variable "manage_database" {
+  description = "Create the database + user in the target instance via the Admin API. Set false when the instance is externally provisioned (e.g. the jarvus-shared-postgres tenant model, which creates an isolated database + SQL-native user itself — API-created users would carry cloudsqlsuperuser and pierce tenant isolation)."
+  type        = bool
+  default     = true
+}
+
+variable "db_password" {
+  description = "Externally-provisioned password for db_user (use with manage_database = false). When null, the module generates one and manages its own user."
+  type        = string
+  sensitive   = true
+  default     = null
+}
