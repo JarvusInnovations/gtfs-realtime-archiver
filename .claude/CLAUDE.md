@@ -67,20 +67,9 @@ gtfs-realtime-archiver/
 │   ├── storage.tf          # GCS bucket with lifecycle
 │   ├── iam.tf              # Service account and permissions
 │   ├── cloudsql.tf         # Cloud SQL PostgreSQL instance
-│   ├── dagster.tf          # Dagster module instantiation (project wiring via extra_env/grants)
-│   ├── dagster_moved.tf    # State moves from the module's generalization (delete after applied)
-│   ├── modules/dagster/    # Dagster deployment module (generic — being extracted to a registry module)
-│   │   ├── main.tf         # Module locals and config
-│   │   ├── webserver.tf    # Dagster UI (Cloud Run Service, split mode)
-│   │   ├── daemon.tf       # Dagster daemon (Worker Pool, split mode)
-│   │   ├── code_server.tf  # gRPC code servers (split mode)
-│   │   ├── consolidated.tf # Single-instance web+daemon+code (consolidated mode)
-│   │   ├── run_worker.tf   # Cloud Run Jobs for runs
-│   │   ├── iam.tf          # Service accounts, permissions + generic bucket/secret grants
-│   │   ├── hmac.tf         # Optional per-run-worker GCS HMAC keys (dbt-duckdb httpfs)
-│   │   ├── secrets.tf      # DB password secret
-│   │   ├── database.tf     # Database and user creation
-│   │   └── storage.tf      # Logs bucket
+│   ├── dagster.tf          # Dagster module instantiation (project wiring via extra_env/grants);
+│   │                       # the module itself is consumed from the Terraform Registry:
+│   │                       # JarvusInnovations/dagster-cloud-run/google
 │   ├── variables.tf        # Input variables
 │   ├── outputs.tf          # Output values
 │   └── versions.tf         # Provider versions
@@ -302,7 +291,7 @@ Why run worker SA?
 - Config files use environment variable placeholders
 - Values resolved at runtime from Terraform-provided env vars
 
-**Terraform Module**: `tf/modules/dagster/`
+**Terraform Module**: `JarvusInnovations/dagster-cloud-run/google` (registry; instantiated in `tf/dagster.tf`)
 
 - Single code location (gtfsrt) by default
 - Extensible to multi-code-location via `code_locations` variable
@@ -379,8 +368,8 @@ The module supports two topologies, selected via `dagster_deployment_mode`
   the consolidated instance runs ~$55/mo — vs ~$100/mo idle for the split topology
   (always-on daemon + daemon-kept-warm code server). Sized up to 2 vCPU / 2.5Gi it
   is ~$105–110/mo, a wash against split. Consolidation saves money only at roughly
-  ≤1.5 vCPU total; see the note on `consolidated_resources` in
-  `tf/modules/dagster/variables.tf`.
+  ≤1.5 vCPU total; see the note on `consolidated_resources` in the module repo
+  (JarvusInnovations/terraform-google-dagster-cloud-run).
 
 **Terraform image variables move with releases — never apply with stale ones**:
 
