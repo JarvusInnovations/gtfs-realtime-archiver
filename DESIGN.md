@@ -17,7 +17,7 @@ Existing GTFS-RT archiver implementations suffer from:
 ### Design Goals
 
 | Goal | Description |
-|------|-------------|
+| ------ | ------------- |
 | **Simplicity** | Single container deployment, minimal moving parts |
 | **Resilience** | Graceful handling of network failures, feed outages, and transient errors |
 | **Efficiency** | Handle 500+ feeds with <1GB memory using async I/O |
@@ -59,10 +59,10 @@ Existing GTFS-RT archiver implementations suffer from:
 │  │                          │ • Hive-partitioned paths          │ │ │
 │  │                          └───────────────────────────────────┘ │ │
 │  │                                                                │ │
-│  │  ┌─────────────────┐     ┌───────────────────────────────────┐ │ │
-│  │  │  Health Server  │     │       Metrics Server              │ │ │
-│  │  │  (port 8080)    │     │       (port 9090)                 │ │ │
-│  │  └─────────────────┘     └───────────────────────────────────┘ │ │
+│  │  ┌───────────────────────────────────────────────────────────┐ │ │
+│  │  │       Health + Metrics Server (port 8080)                 │ │ │
+│  │  │       /health  •  /ready  •  /metrics                     │ │ │
+│  │  └───────────────────────────────────────────────────────────┘ │ │
 │  └────────────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────────┘
                                     │
@@ -81,7 +81,7 @@ Existing GTFS-RT archiver implementations suffer from:
 │  │  Feed Discovery │────▶│  Streaming Parquet Writer             │ │
 │  │  (scan GCS)     │     │  • Parse protobuf → PyArrow tables    │ │
 │  └─────────────────┘     │  • Batch writes (memory efficient)    │ │
-│                          │  • Snappy compression                 │ │
+│                          │  • zstd compression                   │ │
 │                          └───────────────────────────────────────┘ │
 └────────────────────────────────────────────────────────────────────┘
                                     │
@@ -115,17 +115,15 @@ Existing GTFS-RT archiver implementations suffer from:
 - Stores raw response bytes (protobuf) without parsing
 - Optional metadata sidecar files (headers, timing)
 
-#### Health Server
+#### Health/Metrics Server
 
-- HTTP endpoint at `/health` for liveness probes
-- Returns scheduler state and active job count
-- Used by Cloud Run and Kubernetes for health checks
+A single aiohttp server on `HEALTH_PORT` (default 8080) serves both concerns:
 
-#### Metrics Server
-
-- Prometheus metrics endpoint at `/metrics`
-- Exposes fetch duration, success/error counts, active feeds
+- `/health` for liveness probes — returns scheduler state and active job count
+- `/ready` for readiness probes
+- `/metrics` for Prometheus scraping — fetch duration, success/error counts, active feeds
 - Per-feed labels for granular observability
+- Used by Cloud Run and Kubernetes for health checks
 
 ---
 
@@ -133,52 +131,69 @@ Existing GTFS-RT archiver implementations suffer from:
 
 ### Feed Configuration
 
+`agencies.yaml` is a nested hierarchy: `agencies` contain either `feeds` directly, or `systems` that contain `feeds` (an agency cannot have both). Feed IDs are not written in the file — they are generated during flattening as `{agency-id}[-{system-id}]-{feed-type}` (e.g., `septa-bus-vehicle-positions`, `bart-trip-updates`).
+
 ```yaml
 # agencies.yaml
 defaults:
-  interval_seconds: 20
   timeout_seconds: 30
   retry:
     max_attempts: 3
     backoff_base: 1.0
     backoff_max: 10.0
+  intervals:                      # Per-feed-type interval defaults
+    vehicle_positions: 20
+    trip_updates: 20
+    service_alerts: 60
 
-feeds:
-  - id: septa-vehicle-positions
-    name: SEPTA Vehicle Positions
-    url: https://www3.septa.org/gtfsrt/septa-pa-us/Vehicle/rtVehiclePosition.pb
-    feed_type: vehicle_positions
-    agency: septa
-    # Uses defaults, no auth required
-
-  - id: mta-vehicles
-    name: MTA Vehicles
-    url: https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs
-    feed_type: vehicle_positions
-    agency: mta
-    auth:
-      type: header                # Auth via HTTP header
-      secret_name: mta-api-key    # Secret name in GCP Secret Manager
-      key: x-api-key              # Header name
-      # value field is optional - uses entire secret directly when omitted
-
-  - id: bart-trip-updates
-    name: BART Trip Updates
-    url: https://api.bart.gov/gtfsrt/tripupdate.aspx
-    feed_type: trip_updates
-    agency: bart
-    interval_seconds: 15
-    auth:
+agencies:
+  # Simple agency with direct feeds
+  - id: bart
+    name: BART
+    auth:                         # Agency-level auth inherited by all feeds
       type: query                 # Auth via query parameter
-      secret_name: bart-api-key
+      secret_name: bart-api-key   # Secret name in GCP Secret Manager
       key: key                    # Query parameter name
+      # value field is optional - uses entire secret directly when omitted
+    feeds:
+      - feed_type: trip_updates
+        url: https://api.bart.gov/gtfsrt/tripupdate.aspx
+        interval_seconds: 15      # Override the feed-type default
+
+  # Agency with multiple systems (e.g., bus vs rail)
+  - id: septa
+    name: SEPTA
+    systems:
+      - id: bus
+        name: Bus
+        schedule_url: https://www3.septa.org/developer/google_bus.zip
+        feeds:
+          - feed_type: vehicle_positions
+            url: https://www3.septa.org/gtfsrt/septa-pa-us/Vehicle/rtVehiclePosition.pb
+          - feed_type: trip_updates
+            url: https://www3.septa.org/gtfsrt/septa-pa-us/Trip/rtTripUpdates.pb
+      - id: rail
+        name: Regional Rail
+        schedule_url: https://www3.septa.org/developer/google_rail.zip
+        feeds:
+          - feed_type: vehicle_positions
+            url: https://www3.septa.org/gtfsrt/septarail-pa-us/Vehicle/rtVehiclePosition.pb
 ```
+
+At startup, `config.flatten_agencies()` flattens the hierarchy into a list of runtime `FeedConfig` objects, resolving inheritance:
+
+- **Auth**: feed > system > agency
+- **Interval**: feed `interval_seconds` > per-feed-type default (`defaults.intervals`)
+- **Timeout / retry**: feed > global default
+- **Schedule URLs**: system > agency
 
 ### Pydantic Models
 
+Defined in `src/gtfs_rt_archiver/models.py`. The file schema (`AgenciesFileConfig` → `AgencyConfig` → `SystemConfig` → `RealtimeFeedConfig`) mirrors the YAML above; `FeedConfig` is the flattened runtime shape produced by `config.flatten_agencies()`.
+
 ```python
-from pydantic import BaseModel, HttpUrl, Field
-from typing import Optional
+from pydantic import BaseModel, Field, HttpUrl
+from typing import Annotated
 from enum import Enum
 
 class FeedType(str, Enum):
@@ -192,32 +207,74 @@ class AuthType(str, Enum):
 
 class AuthConfig(BaseModel):
     type: AuthType
-    secret_name: str = Field(..., pattern=r"^[a-zA-Z0-9_-]+$")
+    secret_name: Annotated[str, Field(pattern=r"^[a-zA-Z0-9_-]+$")]
     key: str
     value: str | None = None  # Optional: template with ${SECRET} placeholder
     resolved_value: str | None = Field(default=None, exclude=True)
 
 class RetryConfig(BaseModel):
-    max_attempts: int = 3
-    backoff_base: float = 1.0
-    backoff_max: float = 10.0
+    max_attempts: int = Field(default=3, ge=1, le=10)
+    backoff_base: float = Field(default=1.0, ge=0.1, le=10.0)
+    backoff_max: float = Field(default=10.0, ge=1.0, le=60.0)
+
+class IntervalDefaults(BaseModel):
+    vehicle_positions: int = Field(default=20, ge=5, le=3600)
+    trip_updates: int = Field(default=20, ge=5, le=3600)
+    service_alerts: int = Field(default=60, ge=5, le=3600)
+
+class DefaultsConfig(BaseModel):
+    intervals: IntervalDefaults = Field(default_factory=IntervalDefaults)
+    timeout_seconds: int = Field(default=30, ge=1, le=120)
+    retry: RetryConfig = Field(default_factory=RetryConfig)
+
+class RealtimeFeedConfig(BaseModel):
+    """A feed as written in agencies.yaml (before flattening)."""
+    feed_type: FeedType
+    url: HttpUrl
+    name: str | None = None
+    interval_seconds: int | None = Field(default=None, ge=5, le=3600)
+    timeout_seconds: int | None = Field(default=None, ge=1, le=120)
+    retry: RetryConfig | None = None
+    auth: AuthConfig | None = None
+
+class SystemConfig(BaseModel):
+    id: Annotated[str, Field(pattern=r"^[a-z0-9-]+$")]
+    name: str
+    schedule_url: HttpUrl | None = None
+    schedule_urls: list[HttpUrl] | None = None
+    auth: AuthConfig | None = None
+    feeds: list[RealtimeFeedConfig]
+
+class AgencyConfig(BaseModel):
+    id: Annotated[str, Field(pattern=r"^[a-z0-9-]+$")]
+    name: str
+    schedule_url: HttpUrl | None = None
+    schedule_urls: list[HttpUrl] | None = None
+    auth: AuthConfig | None = None
+    feeds: list[RealtimeFeedConfig] | None = None   # Either direct feeds...
+    systems: list[SystemConfig] | None = None       # ...or systems (not both)
+
+class AgenciesFileConfig(BaseModel):
+    """Top-level schema for agencies.yaml."""
+    defaults: DefaultsConfig = Field(default_factory=DefaultsConfig)
+    agencies: list[AgencyConfig]
 
 class FeedConfig(BaseModel):
-    id: str = Field(..., pattern=r"^[a-z0-9-]+$")
+    """A single feed, flattened for runtime by config.flatten_agencies()."""
+    id: Annotated[str, Field(pattern=r"^[a-z0-9-]+$")]  # {agency}[-{system}]-{feed-type}
     name: str
     url: HttpUrl
     feed_type: FeedType
-    agency: Optional[str] = None
+    agency_id: str
+    agency_name: str
+    system_id: str | None = None
+    system_name: str | None = None
+    schedule_url: HttpUrl | None = None                 # Primary (first) schedule URL
+    schedule_urls: list[HttpUrl] = Field(default_factory=list)
     interval_seconds: int = Field(default=20, ge=5, le=3600)
     timeout_seconds: int = Field(default=30, ge=1, le=120)
     retry: RetryConfig = Field(default_factory=RetryConfig)
     auth: AuthConfig | None = None
-
-class ArchiverConfig(BaseModel):
-    bucket: str
-    max_concurrent: int = Field(default=100, ge=1, le=500)
-    defaults: FeedConfig  # Partial, used for defaults
-    feeds: list[FeedConfig]
 ```
 
 ### Storage Path Structure
@@ -295,16 +352,17 @@ gs://parquet.gtfsrt.io/
 ### Environment Variables
 
 | Variable | Description | Default |
-|----------|-------------|---------|
+| ---------- | ------------- | --------- |
 | `CONFIG_PATH` | Path to agencies.yaml | `./agencies.yaml` |
 | `GCS_BUCKET_RT_PROTOBUF` | Target GCS bucket for protobuf archives | Required |
 | `GCS_BUCKET_RT_PARQUET` | Target GCS bucket for compacted parquet files | Required (Dagster) |
 | `GCP_PROJECT_ID` | GCP project ID for Secret Manager | Required if auth used |
 | `MAX_CONCURRENT` | Max concurrent fetches | `100` |
-| `HEALTH_PORT` | Health check server port | `8080` |
-| `METRICS_PORT` | Prometheus metrics port | `9090` |
+| `HEALTH_PORT` | Health check and metrics server port | `8080` |
 | `LOG_LEVEL` | Logging level | `INFO` |
 | `LOG_FORMAT` | `json` or `text` | `json` |
+| `SHARD_INDEX` | Index of this shard (0-based) | `0` |
+| `TOTAL_SHARDS` | Total number of shards | `1` |
 | `DAGSTER_HOME` | Dagster home directory (absolute path) | Required (Dagster) |
 | `STORAGE_EMULATOR_HOST` | Fake GCS server URL for local dev | - |
 
@@ -385,7 +443,7 @@ async def fetch_feed(client: httpx.AsyncClient, feed: FeedConfig) -> FetchResult
 ### Failure Categories
 
 | Category | Behavior | Example |
-|----------|----------|---------|
+| ---------- | ---------- | --------- |
 | **Transient network** | Retry with backoff | Connection reset, DNS timeout |
 | **Slow response** | Retry with backoff | Request timeout |
 | **Auth failure** | Log error, skip feed | 401/403 response |
@@ -508,18 +566,16 @@ logger.error(
 GET /health
 
 {
+  "version": "dev",
   "status": "healthy",
+  "uptime_seconds": 3600.0,
   "scheduler": {
     "running": true,
-    "jobs_scheduled": 45,
-    "jobs_pending": 2
+    "jobs_scheduled": 45
   },
   "feeds": {
-    "total": 45,
-    "active": 45,
-    "erroring": 2
-  },
-  "uptime_seconds": 3600
+    "total": 45
+  }
 }
 ```
 
@@ -612,7 +668,7 @@ resource "google_cloud_run_v2_service" "archiver" {
 ### Scaling Strategy
 
 | Feed Count | Instances | Configuration |
-|------------|-----------|---------------|
+| ------------ | ----------- | --------------- |
 | 1-100 | 1 | Single instance, 100 concurrent |
 | 100-300 | 1-2 | Increase max_concurrent or add instance |
 | 300-500 | 2-3 | Shard feeds across instances |
@@ -621,14 +677,15 @@ resource "google_cloud_run_v2_service" "archiver" {
 #### Sharding Implementation
 
 ```python
-# When SHARD_INDEX and TOTAL_SHARDS are set
-shard_index = int(os.environ.get("SHARD_INDEX", 0))
-total_shards = int(os.environ.get("TOTAL_SHARDS", 1))
+# When SHARD_INDEX and TOTAL_SHARDS are set (see scheduler.py)
+def should_handle_feed(feed: FeedConfig, shard_index: int, total_shards: int) -> bool:
+    if total_shards <= 1:
+        return True
+    # MD5 for deterministic hashing across processes (Python's hash() is randomized)
+    feed_hash = int(hashlib.md5(feed.id.encode()).hexdigest(), 16)
+    return feed_hash % total_shards == shard_index
 
-def should_handle_feed(feed: FeedConfig) -> bool:
-    return hash(feed.id) % total_shards == shard_index
-
-active_feeds = [f for f in all_feeds if should_handle_feed(f)]
+active_feeds = [f for f in all_feeds if should_handle_feed(f, shard_index, total_shards)]
 ```
 
 ---
@@ -640,7 +697,7 @@ The Dagster pipeline compacts raw protobuf archives into daily Parquet files for
 ### Design Decisions
 
 | Decision | Rationale |
-|----------|-----------|
+| ---------- | ----------- |
 | **Daily partitions** | Medium feed count (~100s) makes daily batches practical without excessive memory usage |
 | **Runtime feed discovery** | Scan GCS for `base64url=` directories instead of maintaining a feed registry |
 | **Streaming parquet writer** | Process feeds in batches to limit memory usage (vs. accumulating all records) |
@@ -649,7 +706,7 @@ The Dagster pipeline compacts raw protobuf archives into daily Parquet files for
 ### Assets
 
 | Asset | Description | Denormalization |
-|-------|-------------|-----------------|
+| ------- | ------------- | ----------------- |
 | `vehicle_positions_parquet` | Vehicle positions for a day | One row per vehicle position update |
 | `trip_updates_parquet` | Trip updates for a day | One row per stop_time_update (or base record if none) |
 | `service_alerts_parquet` | Service alerts for a day | One row per informed_entity (or base record if none) |
@@ -719,54 +776,77 @@ uv run dg launch --assets vehicle_positions_parquet --partition 2026-01-01
 ```
 gtfs-realtime-archiver/
 ├── .github/
-│   └── workflows/
-│       ├── ci.yaml                 # Lint, test, typecheck, Dagster validation
-│       └── deploy.yaml             # Container build + push
-├── .dagster_home/                  # Dagster configuration
-│   └── dagster.yaml
+│   └── workflows/                  # CI/CD (lint, test, build, push, pages)
+├── .dagster_home/                  # Local Dagster configuration
 ├── .tool-versions                  # asdf version pinning
 ├── tf/
-│   ├── main.tf                     # Cloud Run service
+│   ├── main.tf                     # Cloud Run service (archiver)
 │   ├── storage.tf                  # GCS buckets (protobuf + parquet)
-│   ├── dns.tf                      # DNS records for custom bucket domains
-│   ├── iam.tf                      # Service account
-│   ├── secrets.tf                  # Secret Manager
+│   ├── iam.tf                      # Archiver service account
+│   ├── dagster.tf                  # Dagster module instantiation (registry module)
+│   ├── dagster_iam.tf              # Project-specific Dagster IAM grants
+│   ├── artifact_registry.tf        # GHCR remote repository proxy
+│   ├── bigquery.tf                 # BigQuery datasets and external tables
+│   ├── dns.tf                      # DNS records for gtfsrt.io services
+│   ├── tags.tf                     # Secret tags for feed API key access
+│   ├── wif.tf                      # Workload Identity Federation (GitHub Actions)
 │   ├── variables.tf                # Input variables
 │   ├── outputs.tf                  # Output values
 │   └── versions.tf                 # Provider versions
+├── deploy/                         # Dagster deployment configs (baked into images)
+│   ├── dagster.yaml
+│   └── workspace.yaml
+├── site/                           # Static site for gtfsrt.io (GitHub Pages)
 ├── src/
 │   ├── gtfs_rt_archiver/           # Archiver service
 │   │   ├── __init__.py
 │   │   ├── __main__.py             # Entry point
-│   │   ├── config.py               # Settings and feed loading
+│   │   ├── config.py               # Settings, feed loading and flattening
 │   │   ├── models.py               # Pydantic models
-│   │   ├── scheduler.py            # APScheduler setup
+│   │   ├── scheduler.py            # APScheduler setup (+ sharding)
 │   │   ├── fetcher.py              # HTTP fetch logic
 │   │   ├── storage.py              # GCS upload
+│   │   ├── secrets.py              # Secret Manager integration
 │   │   ├── metrics.py              # Prometheus metrics
-│   │   └── health.py               # Health check server
+│   │   ├── logging.py              # Structlog configuration
+│   │   └── health.py               # Health/metrics HTTP server
 │   └── dagster_pipeline/           # Data processing pipeline
 │       ├── __init__.py
 │       ├── definitions.py          # Dagster definitions entry point
 │       └── defs/
 │           ├── __init__.py
+│           ├── partitions.py       # Partition definitions
+│           ├── schedules.py        # Compaction schedules
+│           ├── sensors.py          # Sensors
+│           ├── resources/          # GCS and Secret Manager resources
 │           └── assets/
 │               ├── __init__.py
-│               └── compaction.py   # Protobuf → Parquet compaction assets
+│               ├── compaction.py   # Protobuf → Parquet compaction assets
+│               ├── schemas.py      # PyArrow schemas for feed types
+│               ├── feeds_metadata.py  # Agency/feed config → Parquet
+│               ├── inventory.py    # Bucket inventory for gtfsrt.io site
+│               └── schedule.py     # GTFS Schedule ingestion assets
 ├── tests/
 │   ├── __init__.py
 │   ├── conftest.py                 # Pytest fixtures (archiver)
 │   ├── test_config.py
 │   ├── test_fetcher.py
+│   ├── test_health.py
+│   ├── test_main.py
+│   ├── test_models.py
+│   ├── test_scheduler.py
+│   ├── test_secrets.py
 │   ├── test_storage.py
-│   ├── test_integration.py
 │   └── dagster/                    # Dagster pipeline tests
 │       ├── __init__.py
 │       ├── conftest.py             # Dagster test fixtures
-│       └── test_compaction.py      # Tests for extraction functions
-├── agencies.yaml                   # Agency configuration
+│       ├── test_compaction.py      # Tests for extraction functions
+│       └── test_partitions.py      # Partition helper tests
+├── agencies.example.yaml           # Example agency configuration
 ├── .env.example                    # Environment variables template
-├── Dockerfile
+├── Dockerfile                      # Archiver container build
+├── Containerfile.dagster           # Dagster images (webserver, daemon, code-server)
+├── docker-compose.yml              # Local dev stack
 ├── pyproject.toml                  # Project metadata (uv-managed)
 ├── uv.lock                         # Dependency lockfile
 ├── DESIGN.md                       # This document
@@ -778,12 +858,13 @@ gtfs-realtime-archiver/
 The project uses component-specific dependency groups in `pyproject.toml`:
 
 | Group | Purpose |
-|-------|---------|
+| ------- | --------- |
 | `archiver` | Runtime deps for gtfs_rt_archiver |
 | `dev-archiver` | Test deps for gtfs_rt_archiver |
 | `dagster` | Runtime deps for dagster_pipeline |
 | `dev-dagster` | Dev tools for dagster_pipeline |
-| `dev` | Aggregate group (all of the above + mypy, ruff) |
+| `dagster-deploy` | Deps for Dagster Cloud Run deployment |
+| `dev` | Aggregate group (archiver, dev-archiver, dagster, dev-dagster + mypy, ruff) |
 
 Install specific groups with `uv sync --only-group <name>` or all dev deps with `uv sync`.
 
@@ -905,7 +986,7 @@ uv add --dev ruff mypy
 uv add --dev respx  # For mocking httpx
 
 # Run locally
-uv run python -m archiver
+uv run python -m gtfs_rt_archiver
 
 # Run tests
 uv run pytest
@@ -930,7 +1011,6 @@ docker run \
   -e GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json \
   -e GCS_BUCKET_RT_PROTOBUF=my-test-bucket \
   -p 8080:8080 \
-  -p 9090:9090 \
   gtfs-rt-archiver
 ```
 
@@ -975,7 +1055,7 @@ documented in the module repo
 ## Appendix A: Dependency Justification
 
 | Dependency | Purpose | Alternatives Considered |
-|------------|---------|------------------------|
+| ------------ | --------- | ------------------------ |
 | **httpx** | Async HTTP client | aiohttp (less ergonomic), requests (sync only) |
 | **apscheduler** | In-process job scheduling | schedule (no async), celery (overkill) |
 | **pydantic** | Data validation & settings | attrs (less features), dataclasses (no validation) |
