@@ -206,7 +206,9 @@ rt_routes = {e.trip_update.trip.route_id for e in feed.entity if e.HasField("tri
 # endswith() tolerates feeds nested in a subfolder inside the zip
 zf = zipfile.ZipFile(".scratch/gtfs.zip")
 def sched_ids(filename, column):
-    name = next(n for n in zf.namelist() if n.endswith(filename))
+    name = next((n for n in zf.namelist() if n.endswith(filename)), None)
+    if name is None:
+        raise SystemExit(f"FAIL: {filename} missing from schedule zip")
     return {r[column] for r in csv.DictReader(io.TextIOWrapper(zf.open(name), encoding="utf-8-sig"))}
 
 sched_trips = sched_ids("trips.txt", "trip_id")
@@ -247,7 +249,9 @@ feed.ParseFromString(open(".scratch/vehiclepositions.pb", "rb").read())
 rt_routes = {e.vehicle.trip.route_id for e in feed.entity if e.HasField("vehicle")} - {""}
 
 zf = zipfile.ZipFile(".scratch/gtfs.zip")
-name = next(n for n in zf.namelist() if n.endswith("routes.txt"))
+name = next((n for n in zf.namelist() if n.endswith("routes.txt")), None)
+if name is None:
+    raise SystemExit("FAIL: routes.txt missing from schedule zip")
 sched_routes = {r["route_id"] for r in csv.DictReader(io.TextIOWrapper(zf.open(name), encoding="utf-8-sig"))}
 
 print(f"VP route IDs: {len(rt_routes)}; in schedule: "
@@ -354,8 +358,9 @@ for f in flat:
 EOF
 ```
 
-This must print `OK` and list your new feed IDs (`{agency-id}-{feed-type}`)
-with the expected intervals and auth. A Pydantic validation error means the
+This must print `OK` and list your new feed IDs
+(`{agency-id}[-{system-id}]-{feed-type}` — the system segment appears only
+for agencies using `systems:`) with the expected intervals and auth. A Pydantic validation error means the
 YAML structure is wrong — fix it before finishing.
 
 ### Step 8: Final Checklist
