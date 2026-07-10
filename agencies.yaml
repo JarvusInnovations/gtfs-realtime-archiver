@@ -303,3 +303,64 @@ agencies:
         url: http://nycferry.connexionz.net/rtt/public/utility/gtfsrealtime.aspx/tripupdate
       - feed_type: service_alerts
         url: http://nycferry.connexionz.net/rtt/public/utility/gtfsrealtime.aspx/alert
+
+  # "wrta" is also Worcester (MA) RTA — id disambiguated to Youngstown
+  - id: wrta-youngstown
+    name: Western Reserve Transit Authority (Youngstown)
+    schedule_url: https://myvalleystops.wrtaonline.com/InfoPoint/gtfs-zip.ashx
+    feeds:
+      - feed_type: vehicle_positions
+        url: https://myvalleystops.wrtaonline.com/infopoint/GTFS-Realtime.ashx?Type=VehiclePosition
+      - feed_type: trip_updates
+        url: https://myvalleystops.wrtaonline.com/infopoint/GTFS-Realtime.ashx?Type=TripUpdate
+      - feed_type: service_alerts
+        url: https://myvalleystops.wrtaonline.com/infopoint/GTFS-Realtime.ashx?Type=Alert
+
+  # Unified feed set covers bus + rail (no per-mode split)
+  - id: gcrta
+    name: Greater Cleveland RTA
+    schedule_url: https://www.riderta.com/sites/default/files/gtfs/latest/google_transit.zip
+    feeds:
+      - feed_type: vehicle_positions
+        url: https://gtfs-rt.gcrta.vontascloud.com/TMGTFSRealTimeWebService/Vehicle/VehiclePositions.pb
+      - feed_type: trip_updates
+        url: https://gtfs-rt.gcrta.vontascloud.com/TMGTFSRealTimeWebService/TripUpdate/TripUpdates.pb
+      - feed_type: service_alerts
+        url: https://gtfs-rt.gcrta.vontascloud.com/TMGTFSRealTimeWebService/Alert/Alerts.pb
+
+  - id: citybus-lafayette
+    name: CityBus of Greater Lafayette
+    schedule_url: https://bus.gocitybus.com/GTFSRT/citybus-lafayette-in-us.zip
+    feeds:
+      - feed_type: vehicle_positions
+        url: https://bus.gocitybus.com/GTFSRT/GTFS_VehiclePositions.pb
+      - feed_type: trip_updates
+        url: https://bus.gocitybus.com/GTFSRT/GTFS_TripUpdates.pb
+      - feed_type: service_alerts
+        url: https://bus.gocitybus.com/GTFSRT/GTFS_ServiceAlerts.pb
+
+  # RT endpoints are undocumented first-party (GMV Syncromatics conventional
+  # paths); VP and SA declare gtfs_realtime_version "1.0", TU declares "2.0"
+  - id: bcrta
+    name: Butler County RTA
+    schedule_url: https://www.buztrakr.com/gtfs
+    feeds:
+      - feed_type: vehicle_positions
+        url: https://www.buztrakr.com/gtfs-rt/vehiclepositions
+      - feed_type: trip_updates
+        url: https://www.buztrakr.com/gtfs-rt/tripupdates
+      - feed_type: service_alerts
+        url: https://www.buztrakr.com/gtfs-rt/alerts
+
+  # RT endpoints are undocumented first-party (Clever Devices BusTime paths,
+  # unauthenticated; the BusTime JSON API is separate and key-gated)
+  - id: dayton-rta
+    name: Greater Dayton RTA
+    schedule_url: https://proc.greaterdaytonrta.org/gtfs/google_transit.zip
+    feeds:
+      - feed_type: vehicle_positions
+        url: https://ridetime.greaterdaytonrta.org/gtfsrt/vehicles
+      - feed_type: trip_updates
+        url: https://ridetime.greaterdaytonrta.org/gtfsrt/trips
+      - feed_type: service_alerts
+        url: https://ridetime.greaterdaytonrta.org/gtfsrt/alerts
