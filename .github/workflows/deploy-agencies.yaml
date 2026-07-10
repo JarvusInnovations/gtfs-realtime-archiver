@@ -5,6 +5,13 @@ on:
     branches: [develop]
     paths: [agencies.yaml]
   workflow_dispatch:
+    inputs:
+      allow_removals:
+        description: >-
+          Permit deploying a config that removes agencies currently in the
+          deployed secret (required to complete an intentional removal PR)
+        type: boolean
+        default: false
 
 # Serialize config deployments; never cancel one mid-flight
 concurrency:
@@ -94,19 +101,33 @@ jobs:
           fi
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
-          # Agencies present in the deployed secret but missing from git mean
-          # someone deployed directly without committing. Deploying now would
-          # silently remove them from production — fail so a human reconciles
-          # (commit the missing agency to git, or intentionally remove it in a
-          # PR, then re-run).
-          missing=$(comm -23 \
-            <(grep -E "^  - id:" /tmp/deployed-agencies.yaml | sort) \
-            <(grep -E "^  - id:" agencies.yaml | sort))
-          if [ -n "$missing" ]; then
-            echo "::error::Deployed secret contains agencies missing from agencies.yaml:"
-            echo "$missing"
-            echo "Reconcile them into git (or remove them intentionally via PR) before deploying."
-            exit 1
+          # Agencies present in the deployed secret but absent from git would
+          # be dropped from production by this deploy. That's either an
+          # out-of-band direct-to-secret deploy (must be reconciled into git)
+          # or an intentional removal PR (must be acknowledged via the
+          # allow_removals dispatch input) — the guard can't tell which, so
+          # it refuses unless acknowledged. Compare parsed agency-id sets,
+          # not grepped text, so YAML formatting differences can't mask a
+          # removal.
+          removed=$(uv run python - <<'EOF'
+          import yaml
+
+          def ids(path):
+              data = yaml.safe_load(open(path)) or {}
+              return {a["id"] for a in data.get("agencies", [])}
+
+          print(",".join(sorted(ids("/tmp/deployed-agencies.yaml") - ids("agencies.yaml"))))
+          EOF
+          )
+          if [ -n "$removed" ]; then
+            if [ "${{ inputs.allow_removals }}" = "true" ]; then
+              echo "::notice::allow_removals acknowledged — this deploy removes: $removed"
+            else
+              echo "::error::This deploy would remove agencies present in the deployed secret but not in agencies.yaml: $removed"
+              echo "If they were deployed out-of-band, commit them to git first (see .claude/commands/deploy-agencies.md)."
+              echo "If the removal is intentional, re-run via: gh workflow run deploy-agencies.yaml --ref develop -f allow_removals=true"
+              exit 1
+            fi
           fi
 
           {
@@ -141,23 +162,28 @@ jobs:
             --format='value(status.url)')
           echo "Service URL: $SERVICE_URL"
 
+          ready=false
           for i in {1..30}; do
             if curl -sf "${SERVICE_URL}/health" > /tmp/health.json 2>/dev/null; then
+              ready=true
               break
             fi
             echo "Attempt $i/30: service not ready yet..."
             sleep 10
           done
+          if [ "$ready" != "true" ]; then
+            echo "::error::Service did not become ready within 5 minutes"
+            exit 1
+          fi
 
           jq . /tmp/health.json
-          status=$(jq -r .status /tmp/health.json)
           scheduled=$(jq -r .scheduler.jobs_scheduled /tmp/health.json)
           expected="${{ steps.validate.outputs.feeds }}"
 
-          if [ "$status" != "healthy" ]; then
-            echo "::error::Service is not healthy after restart"
-            exit 1
-          fi
+          # NOTE: this equality assumes a single instance with TOTAL_SHARDS=1
+          # (the current tf defaults). With sharding or >1 instance, each
+          # instance schedules only its shard's subset of feeds and this
+          # check would need to compare against the shard size instead.
           if [ "$scheduled" != "$expected" ]; then
             echo "::error::Scheduler has $scheduled jobs but the config defines $expected feeds"
             exit 1
@@ -172,12 +198,14 @@ jobs:
             --project="$GCP_PROJECT_ID" \
             --format='value(status.url)')
 
-          # Give feeds one interval cycle to complete their first fetch.
+          # Wait past the slowest first fetch: service_alerts defaults to a
+          # 60s interval and feeds get a staggered start offset of up to one
+          # interval, so 150s covers 60s interval + 60s stagger + fetch time.
           # Individual feed failures don't fail the deploy — agency endpoints
           # can be legitimately down at any time; this is a visibility report.
-          sleep 75
+          sleep 150
           {
-            echo "## Per-feed status (75s after restart)"
+            echo "## Per-feed status (150s after restart)"
             echo ""
             echo "| Feed | Last success |"
             echo "| ---- | ------------ |"

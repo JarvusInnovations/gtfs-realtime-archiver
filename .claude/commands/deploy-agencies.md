@@ -18,10 +18,17 @@ So the normal flow is: open a PR changing `agencies.yaml`, merge to
 `develop`, and watch the "Deploy Agencies" run
 (`gh run watch $(gh run list --workflow=deploy-agencies.yaml --limit 1 --json databaseId --jq '.[0].databaseId')`).
 
-**The CI run fails intentionally on drift** — if the deployed secret contains
-agencies missing from git (someone deployed directly), CI aborts rather than
-silently removing them from production. Reconcile by committing the missing
-agencies to git (or removing them deliberately in a PR), then re-run.
+**The CI run fails intentionally whenever a deploy would remove agencies**
+that are in the deployed secret but not in git. The guard can't distinguish
+the two causes, so handle by cause:
+
+- **Out-of-band drift** (someone deployed directly to the secret without
+  committing): commit the missing agencies to git, merge, and the next run
+  proceeds.
+- **Intentional removal** (a merged PR deletes an agency): the push-triggered
+  run will fail — that's the acknowledgment gate, not a bug. Complete the
+  removal with:
+  `gh workflow run deploy-agencies.yaml --ref develop -f allow_removals=true`
 
 Use the manual workflow below when CI can't: emergency config pushes that
 can't wait for a PR, rollbacks, or interactive drift reconciliation.
