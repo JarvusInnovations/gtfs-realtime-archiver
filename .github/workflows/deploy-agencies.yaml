@@ -94,31 +94,35 @@ jobs:
             --secret="$SECRET_ID" \
             --project="$GCP_PROJECT_ID" > /tmp/deployed-agencies.yaml
 
-          if cmp -s /tmp/deployed-agencies.yaml agencies.yaml; then
-            echo "Deployed configuration is identical; nothing to deploy."
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "changed=true" >> "$GITHUB_OUTPUT"
-
+          # Compare parsed YAML, not raw bytes/grepped text: formatting-only
+          # differences (whitespace, key order) aren't worth a new revision,
+          # and formatting can't be allowed to mask a removed agency.
           # Agencies present in the deployed secret but absent from git would
-          # be dropped from production by this deploy. That's either an
-          # out-of-band direct-to-secret deploy (must be reconciled into git)
-          # or an intentional removal PR (must be acknowledged via the
-          # allow_removals dispatch input) — the guard can't tell which, so
-          # it refuses unless acknowledged. Compare parsed agency-id sets,
-          # not grepped text, so YAML formatting differences can't mask a
-          # removal.
-          removed=$(uv run python - <<'EOF'
+          # be dropped from production by this deploy — either out-of-band
+          # drift (must be reconciled into git) or an intentional removal PR
+          # (must be acknowledged via the allow_removals dispatch input); the
+          # guard can't tell which, so it refuses unless acknowledged.
+          uv run python - <<'EOF' > /tmp/drift.out
           import yaml
 
-          def ids(path):
-              data = yaml.safe_load(open(path)) or {}
-              return {a["id"] for a in data.get("agencies", [])}
+          deployed = yaml.safe_load(open("/tmp/deployed-agencies.yaml")) or {}
+          local = yaml.safe_load(open("agencies.yaml")) or {}
 
-          print(",".join(sorted(ids("/tmp/deployed-agencies.yaml") - ids("agencies.yaml"))))
+          print(f"changed={'true' if deployed != local else 'false'}")
+
+          deployed_ids = {a["id"] for a in deployed.get("agencies", [])}
+          local_ids = {a["id"] for a in local.get("agencies", [])}
+          print("removed=" + ",".join(sorted(deployed_ids - local_ids)))
           EOF
-          )
+          cat /tmp/drift.out >> "$GITHUB_OUTPUT"
+          changed=$(grep '^changed=' /tmp/drift.out | cut -d= -f2)
+          removed=$(grep '^removed=' /tmp/drift.out | cut -d= -f2-)
+
+          if [ "$changed" != "true" ]; then
+            echo "Deployed configuration is semantically identical; nothing to deploy."
+            exit 0
+          fi
+
           if [ -n "$removed" ]; then
             if [ "${{ inputs.allow_removals }}" = "true" ]; then
               echo "::notice::allow_removals acknowledged — this deploy removes: $removed"
@@ -147,11 +151,13 @@ jobs:
       - name: Restart archiver service
         if: steps.drift.outputs.changed == 'true'
         run: |
-          # Secret volumes are cached per revision; force a new revision
+          # Secret volumes are cached per revision; force a new revision.
+          # run_id-run_attempt is strictly monotonic, so no two runs can
+          # collide on the same value the way same-second timestamps could.
           gcloud run services update "$SERVICE_NAME" \
             --region="$GCP_REGION" \
             --project="$GCP_PROJECT_ID" \
-            --update-env-vars="DEPLOY_TIMESTAMP=$(date +%s)"
+            --update-env-vars="DEPLOY_TIMESTAMP=${{ github.run_id }}-${{ github.run_attempt }}"
 
       - name: Verify deployment
         if: steps.drift.outputs.changed == 'true'
@@ -162,33 +168,30 @@ jobs:
             --format='value(status.url)')
           echo "Service URL: $SERVICE_URL"
 
-          ready=false
-          for i in {1..30}; do
-            if curl -sf "${SERVICE_URL}/health" > /tmp/health.json 2>/dev/null; then
-              ready=true
-              break
-            fi
-            echo "Attempt $i/30: service not ready yet..."
-            sleep 10
-          done
-          if [ "$ready" != "true" ]; then
-            echo "::error::Service did not become ready within 5 minutes"
-            exit 1
-          fi
-
-          jq . /tmp/health.json
-          scheduled=$(jq -r .scheduler.jobs_scheduled /tmp/health.json)
           expected="${{ steps.validate.outputs.feeds }}"
 
+          # /health returns 200 as soon as the HTTP server is up, which is
+          # BEFORE the scheduler finishes adding jobs (and the Cloud Run
+          # startup probe is also /health, so traffic can arrive in that
+          # window). Readiness therefore means "scheduler reports the
+          # expected job count", not "first 200" — a low or missing count is
+          # treated as not-ready-yet and polled again.
           # NOTE: this equality assumes a single instance with TOTAL_SHARDS=1
           # (the current tf defaults). With sharding or >1 instance, each
           # instance schedules only its shard's subset of feeds and this
           # check would need to compare against the shard size instead.
-          if [ "$scheduled" != "$expected" ]; then
-            echo "::error::Scheduler has $scheduled jobs but the config defines $expected feeds"
-            exit 1
-          fi
-          echo "Healthy with $scheduled/$expected feeds scheduled."
+          scheduled=""
+          for i in {1..30}; do
+            scheduled=$(curl -sf "${SERVICE_URL}/health" | jq -r '.scheduler.jobs_scheduled // empty' 2>/dev/null || true)
+            if [ "$scheduled" = "$expected" ]; then
+              echo "Healthy with $scheduled/$expected feeds scheduled."
+              exit 0
+            fi
+            echo "Attempt $i/30: jobs_scheduled=${scheduled:-n/a}, want $expected..."
+            sleep 10
+          done
+          echo "::error::Scheduler did not reach $expected scheduled feeds within 5 minutes (last seen: ${scheduled:-n/a})"
+          exit 1
 
       - name: Report per-feed status
         if: steps.drift.outputs.changed == 'true'
@@ -204,16 +207,17 @@ jobs:
           # Individual feed failures don't fail the deploy — agency endpoints
           # can be legitimately down at any time; this is a visibility report.
           sleep 150
+          # Single snapshot so the table and the warning agree
+          curl -s "${SERVICE_URL}/health/feeds" > /tmp/feeds.json
           {
             echo "## Per-feed status (150s after restart)"
             echo ""
             echo "| Feed | Last success |"
             echo "| ---- | ------------ |"
-            curl -s "${SERVICE_URL}/health/feeds" | jq -r \
-              '.[] | "| \(.feed_id) | \(if .last_success_seconds_ago == null then "none yet ⚠️" else "\(.last_success_seconds_ago)s ago" end) |"'
+            jq -r '.[] | "| \(.feed_id) | \(if .last_success_seconds_ago == null then "none yet ⚠️" else "\(.last_success_seconds_ago)s ago" end) |"' /tmp/feeds.json
           } >> "$GITHUB_STEP_SUMMARY"
 
-          never=$(curl -s "${SERVICE_URL}/health/feeds" | jq -r '[.[] | select(.last_success_seconds_ago == null)] | length')
+          never=$(jq -r '[.[] | select(.last_success_seconds_ago == null)] | length' /tmp/feeds.json)
           if [ "$never" != "0" ]; then
             echo "::warning::$never feed(s) have not completed a successful fetch yet — check the summary table"
           fi
