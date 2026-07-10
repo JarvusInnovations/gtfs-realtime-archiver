@@ -44,7 +44,7 @@ GTFS-RT Archiver is a single-container Python service designed to:
 │        ↓                                │
 │  Parse protobuf → PyArrow tables        │
 │        ↓                                │
-│  Write Parquet (Snappy compression)     │
+│  Write Parquet (zstd compression)       │
 └─────────────────────────────────────────┘
            ↓
     GCS: parquet.gtfsrt.io
@@ -177,7 +177,7 @@ data/
 ### Environment Variables
 
 | Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
+| ---------- | ---------- | --------- | ------------- |
 | `GCS_BUCKET_RT_PROTOBUF` | Yes | - | GCS bucket for raw protobuf archives |
 | `GCS_BUCKET_RT_PARQUET` | Dagster | - | GCS bucket for compacted parquet files |
 | `GCP_PROJECT_ID` | If auth used | - | GCP project ID for Secret Manager |
@@ -301,7 +301,7 @@ The Dagster pipeline compacts raw protobuf archives into daily Parquet files for
 ### Assets
 
 | Asset | Description |
-|-------|-------------|
+| ------- | ------------- |
 | `vehicle_positions_parquet` | Vehicle position records for a day |
 | `trip_updates_parquet` | Trip update records (denormalized by stop_time_update) |
 | `service_alerts_parquet` | Service alert records (denormalized by informed_entity) |

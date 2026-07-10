@@ -64,12 +64,17 @@ gtfs-realtime-archiver/
 │   └── __init__.py
 ├── tf/                     # OpenTofu/Terraform for Cloud Run
 │   ├── main.tf             # Cloud Run service (archiver)
-│   ├── storage.tf          # GCS bucket with lifecycle
-│   ├── iam.tf              # Service account and permissions
-│   ├── cloudsql.tf         # Cloud SQL PostgreSQL instance
+│   ├── storage.tf          # GCS buckets with lifecycle
+│   ├── iam.tf              # Archiver service account and permissions
 │   ├── dagster.tf          # Dagster module instantiation (project wiring via extra_env/grants);
 │   │                       # the module itself is consumed from the Terraform Registry:
 │   │                       # JarvusInnovations/dagster-cloud-run/google
+│   ├── dagster_iam.tf      # Project-specific IAM grants for Dagster service accounts
+│   ├── artifact_registry.tf # Remote repository proxying GHCR images for Cloud Run
+│   ├── bigquery.tf         # BigQuery datasets and external tables over parquet
+│   ├── dns.tf              # DNS records for gtfsrt.io services
+│   ├── tags.tf             # Secret tag key/value for feed API key access
+│   ├── wif.tf              # Workload Identity Federation for GitHub Actions
 │   ├── variables.tf        # Input variables
 │   ├── outputs.tf          # Output values
 │   └── versions.tf         # Provider versions

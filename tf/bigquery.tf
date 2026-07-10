@@ -157,8 +157,7 @@ resource "google_bigquery_table" "service_alerts" {
 # --- GTFS Schedule tables ---
 # Schedule data is stored as exploded parquet per feed version.
 # Each table uses autodetect since GTFS columns are all strings.
-
-# --- GTFS Schedule tables ---
+#
 # One external table per GTFS file type. Single wildcard matches across
 # both base64url and _feed_digest path levels. AUTO hive partitioning
 # detects both partition keys from the prefix.
