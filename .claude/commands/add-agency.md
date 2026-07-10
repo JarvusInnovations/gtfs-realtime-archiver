@@ -115,12 +115,15 @@ A valid GTFS-RT protobuf response should:
 # Check status, following redirects
 curl -sL -o /dev/null -w "%{http_code}" "https://example.com/gtfs.zip"
 
-# Verify zip magic bytes (should start with "PK")
-curl -sL "https://example.com/gtfs.zip" | head -c 4 | xxd
-
-# Or download and confirm required GTFS files are present
+# Download once, then verify zip magic bytes (should start with "PK")
 curl -sL -o .scratch/gtfs.zip "https://example.com/gtfs.zip"
-unzip -l .scratch/gtfs.zip | grep -E "stops.txt|trips.txt|stop_times.txt"
+head -c 4 .scratch/gtfs.zip | xxd
+
+# Confirm required GTFS files are present
+unzip -l .scratch/gtfs.zip | grep -E "stops\.txt|trips\.txt|stop_times\.txt"
+
+# Clean up when done
+rm .scratch/gtfs.zip
 ```
 
 A valid GTFS schedule response should:
@@ -193,7 +196,7 @@ Add the agency to `agencies.yaml`:
 - Valid at agency level or system level; use `schedule_urls` (a list) when multiple zips apply
 - Downloads reuse the agency's `auth` config, so a schedule behind the same API gateway as the RT feeds needs no extra setup
 - Ingestion is automatic: a daily `gtfs_schedule_check` Dagster asset fingerprints every configured schedule URL and registers new ones as dynamic partitions
-- `gtfs_schedule_ingest` then writes new versions as exploded parquet — no deploy steps beyond `/deploy-agencies`
+- A sensor watching those check results then launches `gtfs_schedule_ingest`, which writes new versions as exploded parquet — no deploy steps beyond `/deploy-agencies`
 
 **Auth types:**
 
