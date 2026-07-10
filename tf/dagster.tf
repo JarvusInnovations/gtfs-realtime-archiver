@@ -14,7 +14,11 @@ data "google_secret_manager_secret_version" "shared_pg_password" {
 }
 
 module "dagster" {
-  source = "./modules/dagster"
+  # Extracted to the Terraform Registry (JarvusInnovations/terraform-google-dagster-cloud-run).
+  # Explicit registry host: bare sources resolve against registry.opentofu.org for
+  # tofu, where the module isn't listed yet.
+  source  = "registry.terraform.io/JarvusInnovations/dagster-cloud-run/google"
+  version = "0.3.1"
 
   project_id                = var.project_id
   region                    = var.region
