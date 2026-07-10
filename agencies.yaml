@@ -304,6 +304,17 @@ agencies:
       - feed_type: service_alerts
         url: http://nycferry.connexionz.net/rtt/public/utility/gtfsrealtime.aspx/alert
 
+  - id: cats
+    name: Charlotte Area Transit System
+    schedule_url: https://gtfsrealtime.ridetransit.org/GTFSStatic/api/GTFSDownload/GTFS.zip
+    feeds:
+      - feed_type: vehicle_positions
+        url: https://gtfsrealtime.ridetransit.org/GTFSRealTime/Vehicle/VehiclePositions.pb
+      - feed_type: trip_updates
+        url: https://gtfsrealtime.ridetransit.org/GTFSRealTime/TripUpdate/Tripupdates.pb
+      - feed_type: service_alerts
+        url: https://gtfsrealtime.ridetransit.org/GTFSRealTime/Alerts/Alerts.pb
+
   # "wrta" is also Worcester (MA) RTA — id disambiguated to Youngstown
   - id: wrta-youngstown
     name: Western Reserve Transit Authority (Youngstown)
