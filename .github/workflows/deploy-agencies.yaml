@@ -1,0 +1,191 @@
+name: Deploy Agencies
+
+on:
+  push:
+    branches: [develop]
+    paths: [agencies.yaml]
+  workflow_dispatch:
+
+# Serialize config deployments; never cancel one mid-flight
+concurrency:
+  group: deploy-agencies
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: gtfs-archiver
+  GCP_REGION: us-central1
+  SERVICE_NAME: gtfs-rt-archiver
+  SECRET_ID: agencies-config
+
+jobs:
+  deploy-agencies:
+    name: Deploy Agencies Configuration
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup ASDF
+        uses: asdf-vm/actions/setup@v4
+
+      - name: Restore ASDF tools from cache
+        id: asdf-tools-cache
+        uses: actions/cache@v5
+        with:
+          key: asdf-tools-${{ hashFiles('.tool-versions') }}
+          restore-keys: |
+            asdf-tools-
+          path: |
+            ${{ env.ASDF_DIR }}/plugins
+            ${{ env.ASDF_DIR }}/installs
+
+      - name: Install ASDF tools on cache miss
+        if: ${{ steps.asdf-tools-cache.outputs.cache-hit != 'true' }}
+        uses: asdf-vm/actions/install@v4
+
+      - name: Reshim ASDF tools
+        shell: bash
+        run: asdf reshim
+
+      - name: Install dependencies
+        run: uv sync --frozen --dev
+
+      - name: Validate configuration against models
+        id: validate
+        run: |
+          uv run python - <<'EOF' | tee /tmp/validate.out
+          import yaml
+          from gtfs_rt_archiver.models import AgenciesFileConfig
+          from gtfs_rt_archiver.config import flatten_agencies
+
+          parsed = AgenciesFileConfig.model_validate(yaml.safe_load(open("agencies.yaml")))
+          flat = flatten_agencies(parsed)
+          ids = [a.id for a in parsed.agencies]
+          assert len(ids) == len(set(ids)), "duplicate agency ids"
+          print(f"agencies={len(parsed.agencies)}")
+          print(f"feeds={len(flat)}")
+          EOF
+          grep -E "^(agencies|feeds)=" /tmp/validate.out >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/${{ vars.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github-actions/providers/github-provider
+          service_account: github-actions-deploy@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Check for drift against deployed configuration
+        id: drift
+        run: |
+          gcloud secrets versions access latest \
+            --secret="$SECRET_ID" \
+            --project="$GCP_PROJECT_ID" > /tmp/deployed-agencies.yaml
+
+          if cmp -s /tmp/deployed-agencies.yaml agencies.yaml; then
+            echo "Deployed configuration is identical; nothing to deploy."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+          # Agencies present in the deployed secret but missing from git mean
+          # someone deployed directly without committing. Deploying now would
+          # silently remove them from production — fail so a human reconciles
+          # (commit the missing agency to git, or intentionally remove it in a
+          # PR, then re-run).
+          missing=$(comm -23 \
+            <(grep -E "^  - id:" /tmp/deployed-agencies.yaml | sort) \
+            <(grep -E "^  - id:" agencies.yaml | sort))
+          if [ -n "$missing" ]; then
+            echo "::error::Deployed secret contains agencies missing from agencies.yaml:"
+            echo "$missing"
+            echo "Reconcile them into git (or remove them intentionally via PR) before deploying."
+            exit 1
+          fi
+
+          {
+            echo "## Configuration diff (deployed → local)"
+            echo '```diff'
+            diff -u /tmp/deployed-agencies.yaml agencies.yaml || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Update secret
+        if: steps.drift.outputs.changed == 'true'
+        run: |
+          gcloud secrets versions add "$SECRET_ID" \
+            --project="$GCP_PROJECT_ID" \
+            --data-file=agencies.yaml
+
+      - name: Restart archiver service
+        if: steps.drift.outputs.changed == 'true'
+        run: |
+          # Secret volumes are cached per revision; force a new revision
+          gcloud run services update "$SERVICE_NAME" \
+            --region="$GCP_REGION" \
+            --project="$GCP_PROJECT_ID" \
+            --update-env-vars="DEPLOY_TIMESTAMP=$(date +%s)"
+
+      - name: Verify deployment
+        if: steps.drift.outputs.changed == 'true'
+        run: |
+          SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" \
+            --region="$GCP_REGION" \
+            --project="$GCP_PROJECT_ID" \
+            --format='value(status.url)')
+          echo "Service URL: $SERVICE_URL"
+
+          for i in {1..30}; do
+            if curl -sf "${SERVICE_URL}/health" > /tmp/health.json 2>/dev/null; then
+              break
+            fi
+            echo "Attempt $i/30: service not ready yet..."
+            sleep 10
+          done
+
+          jq . /tmp/health.json
+          status=$(jq -r .status /tmp/health.json)
+          scheduled=$(jq -r .scheduler.jobs_scheduled /tmp/health.json)
+          expected="${{ steps.validate.outputs.feeds }}"
+
+          if [ "$status" != "healthy" ]; then
+            echo "::error::Service is not healthy after restart"
+            exit 1
+          fi
+          if [ "$scheduled" != "$expected" ]; then
+            echo "::error::Scheduler has $scheduled jobs but the config defines $expected feeds"
+            exit 1
+          fi
+          echo "Healthy with $scheduled/$expected feeds scheduled."
+
+      - name: Report per-feed status
+        if: steps.drift.outputs.changed == 'true'
+        run: |
+          SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" \
+            --region="$GCP_REGION" \
+            --project="$GCP_PROJECT_ID" \
+            --format='value(status.url)')
+
+          # Give feeds one interval cycle to complete their first fetch.
+          # Individual feed failures don't fail the deploy — agency endpoints
+          # can be legitimately down at any time; this is a visibility report.
+          sleep 75
+          {
+            echo "## Per-feed status (75s after restart)"
+            echo ""
+            echo "| Feed | Last success |"
+            echo "| ---- | ------------ |"
+            curl -s "${SERVICE_URL}/health/feeds" | jq -r \
+              '.[] | "| \(.feed_id) | \(if .last_success_seconds_ago == null then "none yet ⚠️" else "\(.last_success_seconds_ago)s ago" end) |"'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          never=$(curl -s "${SERVICE_URL}/health/feeds" | jq -r '[.[] | select(.last_success_seconds_ago == null)] | length')
+          if [ "$never" != "0" ]; then
+            echo "::warning::$never feed(s) have not completed a successful fetch yet — check the summary table"
+          fi

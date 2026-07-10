@@ -35,7 +35,7 @@ See [DESIGN.md](../DESIGN.md) for detailed technical specifications.
 
 ```
 gtfs-realtime-archiver/
-├── .github/workflows/      # CI/CD (lint, test, build, push, pages)
+├── .github/workflows/      # CI/CD (lint, test, build, push, pages, agency config deploy)
 ├── .claude/                # AI assistant guidelines (this directory)
 ├── .dagster_home/          # Dagster configuration
 ├── site/                   # Static site for gtfsrt.io (GitHub Pages)

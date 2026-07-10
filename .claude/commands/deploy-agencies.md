@@ -4,7 +4,29 @@ Deploy changes from local `agencies.yaml` to the production GTFS-RT archiver ser
 
 **Optional filter:** $ARGUMENTS
 
-## Workflow
+## Preferred Path: CI Deployment
+
+Agency config deploys are automated via
+`.github/workflows/deploy-agencies.yaml`: any push to `develop` that touches
+`agencies.yaml` (i.e. merging an agency PR) validates the config against the
+Pydantic models, checks for drift against the deployed secret, pushes a new
+secret version, restarts the archiver, and verifies health — the same steps
+as the manual workflow below. It can also be run on demand via
+`gh workflow run deploy-agencies.yaml --ref develop`.
+
+So the normal flow is: open a PR changing `agencies.yaml`, merge to
+`develop`, and watch the "Deploy Agencies" run
+(`gh run watch $(gh run list --workflow=deploy-agencies.yaml --limit 1 --json databaseId --jq '.[0].databaseId')`).
+
+**The CI run fails intentionally on drift** — if the deployed secret contains
+agencies missing from git (someone deployed directly), CI aborts rather than
+silently removing them from production. Reconcile by committing the missing
+agencies to git (or removing them deliberately in a PR), then re-run.
+
+Use the manual workflow below when CI can't: emergency config pushes that
+can't wait for a PR, rollbacks, or interactive drift reconciliation.
+
+## Manual Workflow
 
 ### Step 1: Fetch Currently Deployed Configuration
 
@@ -199,7 +221,7 @@ gcloud run services update gtfs-rt-archiver \
 ## Reference
 
 | Setting | Value |
-|---------|-------|
+| --------- | ------- |
 | Secret ID | `agencies-config` |
 | Project | `gtfs-archiver` |
 | Service | `gtfs-rt-archiver` |
