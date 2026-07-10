@@ -145,11 +145,13 @@ curl -s "https://example.com/feed.pb" | head -c 100 | xxd | head -5
 A valid GTFS-RT protobuf response must:
 
 - Return HTTP 200
-- Start with header bytes `0a0d 0a03 322e 30` (GTFS-RT version "2.0" header).
-  Some vendors still declare version "1.0", giving `0a0d 0a03 312e 30` — that
-  is also acceptable (the archiver stores raw bytes and does not enforce a
-  version). Anything else — HTML (`3c` / `<`), JSON (`7b` / `{`), empty body —
-  is a failure.
+- Be a protobuf `FeedMessage`: the body starts with `0a` and a header-length
+  byte (commonly `0d`, but it varies with which optional header fields are
+  present), followed by `0a 03` and the version string. The reliable signature
+  is `0a03 322e 30` ("2.0") — or `0a03 312e 30` ("1.0", which some vendors
+  still declare and is also acceptable; the archiver stores raw bytes and does
+  not enforce a version) — within the first few bytes. Anything else — HTML
+  (`3c` / `<`), JSON (`7b` / `{`), empty body — is a failure.
 
 A response that fails these checks disqualifies that URL. Do not add it; go
 back to Steps 1-3 for a better candidate.
@@ -161,15 +163,16 @@ back to Steps 1-3 for a better candidate.
 curl -sL -o /dev/null -w "%{http_code}" "https://example.com/gtfs.zip"
 
 # Download once, then verify zip magic bytes (should start with "PK")
+mkdir -p .scratch
 curl -sL -o .scratch/gtfs.zip "https://example.com/gtfs.zip"
 head -c 4 .scratch/gtfs.zip | xxd
 
 # Confirm required GTFS files are present
 unzip -l .scratch/gtfs.zip | grep -E "stops\.txt|trips\.txt|stop_times\.txt"
-
-# Clean up when done
-rm .scratch/gtfs.zip
 ```
+
+Keep `.scratch/gtfs.zip` — the alignment check below reuses it (cleanup comes
+at the end of this step).
 
 A valid GTFS schedule response should:
 
@@ -187,9 +190,9 @@ wrong (or badly stale) schedule is a silent data-quality bug: both URLs return
 actually resolve against the schedule zip:
 
 ```bash
-# Download both inputs once (add auth flags if required)
+# Download the trip updates feed (add auth flags if required);
+# .scratch/gtfs.zip is still present from the schedule check above
 curl -sL -o .scratch/tripupdates.pb "https://example.com/tripupdates.pb"
-curl -sL -o .scratch/gtfs.zip "https://example.com/gtfs.zip"
 
 uv run python - <<'EOF'
 import csv, io, zipfile
@@ -200,17 +203,20 @@ feed.ParseFromString(open(".scratch/tripupdates.pb", "rb").read())
 rt_trips = {e.trip_update.trip.trip_id for e in feed.entity if e.HasField("trip_update")} - {""}
 rt_routes = {e.trip_update.trip.route_id for e in feed.entity if e.HasField("trip_update")} - {""}
 
+# endswith() tolerates feeds nested in a subfolder inside the zip
 zf = zipfile.ZipFile(".scratch/gtfs.zip")
-sched_trips = {r["trip_id"] for r in csv.DictReader(io.TextIOWrapper(zf.open("trips.txt"), encoding="utf-8-sig"))}
-sched_routes = {r["route_id"] for r in csv.DictReader(io.TextIOWrapper(zf.open("routes.txt"), encoding="utf-8-sig"))}
+def sched_ids(filename, column):
+    name = next(n for n in zf.namelist() if n.endswith(filename))
+    return {r[column] for r in csv.DictReader(io.TextIOWrapper(zf.open(name), encoding="utf-8-sig"))}
+
+sched_trips = sched_ids("trips.txt", "trip_id")
+sched_routes = sched_ids("routes.txt", "route_id")
 
 print(f"RT trip IDs: {len(rt_trips)}; in schedule: "
       f"{len(rt_trips & sched_trips) / len(rt_trips):.0%}" if rt_trips else "RT trip IDs: 0 (empty feed)")
 print(f"RT route IDs: {len(rt_routes)}; in schedule: "
       f"{len(rt_routes & sched_routes) / len(rt_routes):.0%}" if rt_routes else "RT route IDs: 0")
 EOF
-
-rm .scratch/tripupdates.pb .scratch/gtfs.zip
 ```
 
 Interpreting the result:
@@ -223,8 +229,37 @@ Interpreting the result:
   `agencies.yaml`.
 - **RT trip IDs: 0** → the feed is likely just empty right now (overnight /
   no service). Re-run during the agency's service hours before concluding
-  anything; as a secondary signal, compare vehicle-position `route_id`s
-  against `routes.txt` instead.
+  anything; as a secondary signal, run the vehicle-positions fallback below.
+
+**Vehicle-positions fallback** — for VP-only agencies (no trip_updates feed)
+or an empty trip_updates feed, compare VP route IDs against `routes.txt`
+instead (same ≥90% bar):
+
+```bash
+curl -sL -o .scratch/vehiclepositions.pb "https://example.com/vehiclepositions.pb"
+
+uv run python - <<'EOF'
+import csv, io, zipfile
+from google.transit import gtfs_realtime_pb2
+
+feed = gtfs_realtime_pb2.FeedMessage()
+feed.ParseFromString(open(".scratch/vehiclepositions.pb", "rb").read())
+rt_routes = {e.vehicle.trip.route_id for e in feed.entity if e.HasField("vehicle")} - {""}
+
+zf = zipfile.ZipFile(".scratch/gtfs.zip")
+name = next(n for n in zf.namelist() if n.endswith("routes.txt"))
+sched_routes = {r["route_id"] for r in csv.DictReader(io.TextIOWrapper(zf.open(name), encoding="utf-8-sig"))}
+
+print(f"VP route IDs: {len(rt_routes)}; in schedule: "
+      f"{len(rt_routes & sched_routes) / len(rt_routes):.0%}" if rt_routes else "VP route IDs: 0 (empty feed)")
+EOF
+```
+
+Clean up when done:
+
+```bash
+rm -f .scratch/tripupdates.pb .scratch/vehiclepositions.pb .scratch/gtfs.zip
+```
 
 ### Step 5: Set Up API Keys (if required)
 
