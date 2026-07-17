@@ -31,13 +31,36 @@ See [DESIGN.md](../DESIGN.md) for detailed technical specifications.
 
 **Rule**: If a commit changes functionality, structure, or configuration, update relevant documentation in the same commit.
 
+## Spec-driven development (specops)
+
+This project uses spec-driven development via the **specops** skill (vendored at
+`.agents/skills/specops/`), which carries the full methodology — invoke it (it
+triggers on "spec", "plan", starting a feature, etc.) before planning or building.
+
+- **`plans/` is the planning system — not your built-in plan mode.** Every chunk of
+  work lands as a file in `plans/` that freezes to `done` as the durable record of
+  what got built. Don't let an ephemeral plan substitute for it, and don't skip it
+  for "small" changes.
+- **`specs/` does not exist yet** — adoption pathway is tracked in issue #87. Until
+  it lands, plans carry intent on their own and DESIGN.md remains the (drift-prone)
+  reference. Once `specs/` exists: specs lead — before changing behavior, change the
+  spec, then bring code into conformance.
+- **A spec change ripples to its plans.** After editing a spec, review the plans that
+  implement it (`grep -l '<spec-path>' plans/*.md`) and offer to update them.
+
+Query the plan DAG: `.agents/skills/specops/scripts/specops next` (what to work on
+next) and `.agents/skills/specops/scripts/specops dag` (graph). The
+`/audit-spec-drift` command is not wired up yet (part of #87).
+
 ## Repository Layout
 
 ```
 gtfs-realtime-archiver/
 ├── .github/workflows/      # CI/CD (lint, test, build, push, pages, agency config deploy)
+├── .agents/skills/         # Vendored agent skills (specops; managed via `npx skills`)
 ├── .claude/                # AI assistant guidelines (this directory)
 ├── .dagster_home/          # Dagster configuration
+├── plans/                  # SpecOps plan protocol: work-in-flight tracking (see plans/README.md)
 ├── site/                   # Static site for gtfsrt.io (GitHub Pages)
 │   ├── index.html          # Single-page site
 │   ├── style.css           # Styles
@@ -83,6 +106,7 @@ gtfs-realtime-archiver/
 │   └── workspace.yaml      # Workspace config with env var placeholders
 ├── pyproject.toml          # Project config, dependencies, tool settings
 ├── uv.lock                 # Dependency lockfile
+├── skills-lock.json        # Agent skills lockfile (`npx skills` sources + hashes)
 ├── Dockerfile              # Multi-stage container build (archiver)
 ├── Containerfile.dagster   # Multi-target build (webserver, daemon, code-server)
 ├── agencies.example.yaml   # Example agency configuration
