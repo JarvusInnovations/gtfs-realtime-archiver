@@ -44,6 +44,11 @@ prefixes; the dashboard's dropdown handles display filtering.
 use `--output` to extract somewhere else without destroying the previous
 extract. Don't run two extracts against the same output concurrently.
 
+**Manual deep inspection**: `unpack.py --pb <raw .pb path>` (the dashboard's
+dropped-files table generates the command per row) downloads five consecutive
+snapshots, parses them to JSON, and extracts the matching parquet rows to
+`.scratch/inspect/` for side-by-side review.
+
 ## Notes
 
 - `data/` is gitignored; no extracted data is ever committed.

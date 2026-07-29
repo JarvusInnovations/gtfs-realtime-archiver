@@ -76,3 +76,6 @@ tf/*.tfplan
 tf/.terraform.lock.hcl
 *.tfvars
 !*.tfvars.example
+
+# Local inspection output (unpack.py)
+.scratch/

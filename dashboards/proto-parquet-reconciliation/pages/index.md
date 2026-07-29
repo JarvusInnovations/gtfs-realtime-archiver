@@ -200,7 +200,8 @@ select
     name,
     size_bytes,
     response_code,
-    label
+    label,
+    'uv run --script dashboards/proto-parquet-reconciliation/unpack.py --pb ''' || name || '''' as unpack
 from archiver.dropped_files
 where ('${inputs.agency.value}' = '%' or coalesce(agency_id, '(unmapped)') = '${inputs.agency.value}')
     and ('${inputs.feed_type.value}' = '%' or feed_type = '${inputs.feed_type.value}')
@@ -211,6 +212,24 @@ order by date, name
 <Details title="Per-file detail (excluding legitimately-empty feeds)">
     <DataTable data={dropped_detail} rows=50 emptySet=pass emptyMessage="Nothing beyond legitimately-empty feeds"/>
 </Details>
+
+### Manual inspection
+
+To eyeball raw contents against the compacted parquet for any file above, copy
+its `unpack` command and run it from the repo root (requires ADC). It downloads
+five consecutive snapshots centered on that file, parses each to JSON, pulls
+the matching parquet rows (row-group-pruned, not the whole file), and writes
+everything to `.scratch/inspect/` for side-by-side review:
+
+```bash
+uv run --script dashboards/proto-parquet-reconciliation/unpack.py \
+    --pb 'trip_updates/date=2026-07-06/hour=.../base64url=.../<timestamp>.pb'
+```
+
+Output per window: raw `.pb` files, parsed `.json` (or `.PARSE_ERROR.txt` with
+byte-level detail), `.meta.json` fetch sidecars, and `parquet_rows.csv` filtered
+to those five source files — plus a terminal summary of entities-per-snapshot
+vs parquet-rows-per-snapshot.
 
 ### Unmapped feeds
 
