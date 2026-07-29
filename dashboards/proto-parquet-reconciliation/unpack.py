@@ -130,10 +130,26 @@ def main() -> int:
     pq_path = f"{PARQUET_BUCKET}/{ft}/date={d}/base64url={b64}/data.parquet"
     try:
         rows = pq.read_table(pq_path, filesystem=fs, filters=[("source_file", "in", window)])
-        pacsv.write_csv(rows, outdir / "parquet_rows.csv")
         per_file = {}
         for sf in rows.column("source_file").to_pylist():
             per_file[sf] = per_file.get(sf, 0) + 1
+        # Slim the CSV for human (and editor) consumption: the constant
+        # feed_url and the ~150-char source_file path repeated per row double
+        # the file size, and VS Code stops colorizing files above 20MB.
+        import pyarrow.compute as pc
+
+        slim = {}
+        for col_name in rows.column_names:
+            if col_name == "feed_url":
+                continue
+            col = rows.column(col_name)
+            if col_name == "source_file":
+                slim["snapshot"] = pc.replace_substring_regex(col, r"^.*/", "")
+            else:
+                slim[col_name] = col
+        import pyarrow as pa
+
+        pacsv.write_csv(pa.table(slim), outdir / "parquet_rows.csv")
     except FileNotFoundError:
         rows = None
         per_file = {}
