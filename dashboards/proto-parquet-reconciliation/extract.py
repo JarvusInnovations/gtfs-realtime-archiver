@@ -171,7 +171,13 @@ def read_source_files(fs, path: str) -> set[str]:
     import pyarrow.compute as pc
 
     table = pq.read_table(f"{PARQUET_BUCKET}/{path}", columns=["source_file"], filesystem=fs)
-    return set(pc.unique(table.column("source_file").combine_chunks()).to_pylist())
+    # Dedupe per chunk: never concatenates, so the 2GB int32-offset limit on
+    # `string` arrays can't overflow no matter how large the column is. The
+    # per-chunk unique output is tiny (one value per contributing .pb file).
+    sources: set[str] = set()
+    for chunk in table.column("source_file").chunks:
+        sources.update(pc.unique(chunk).to_pylist())
+    return sources
 
 
 def classify_drop(client, bucket, feed_type: str, pb_name: str, size_bytes: int):
