@@ -144,9 +144,22 @@ own footer read failed, are labeled distinctly. The `remediate` column is the
 paste-ready re-materialization command (`date|feed` multi-partition key):
 compaction rewrites the whole partition from raw, so one run recovers anything
 still within raw retention — but note it runs *local* code against
-*production* buckets under your ADC, the feed dimension is dynamic (the key
-must already be registered in Dagster), and it cannot recover `parse_failure`
+*production* buckets under your ADC, and it cannot recover `parse_failure`
 files whose bytes were bad at fetch time.
+
+If it fails with `DagsterInvalidSubsetError … containing the passed partition
+key`, your **local** Dagster instance hasn't registered that feed's dynamic
+partition key (production registers keys via `feed_discovery_sensor`; your
+`.dagster_home` has its own registry). Register it once, then re-run — the
+partition set is `{feed_type}_feeds` and the key is the part after `|`:
+
+```bash
+uv run python -c "
+import dagster as dg
+i = dg.DagsterInstance.get()
+i.add_dynamic_partitions('<feed_type>_feeds', ['<key-after-the-pipe>'])
+"
+```
 
 ```sql missing_partitions
 select
