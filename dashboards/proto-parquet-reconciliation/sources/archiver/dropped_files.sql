@@ -11,5 +11,7 @@ select
     d.content_length,
     d.label
 from dropped_files d
-left join feeds f using (base64url)
+left join feeds f
+    on f.base64url = d.base64url
+    and (f.feed_type = d.feed_type or f.feed_type is null)
 order by d.date, d.name

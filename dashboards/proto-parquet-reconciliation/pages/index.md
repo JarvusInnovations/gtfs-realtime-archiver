@@ -44,8 +44,8 @@ select
     hour,
     sum(pb_count) as pb_count
 from archiver.proto_files_hourly
-where coalesce(agency_id, '(unmapped)') like '${inputs.agency.value}'
-    and feed_type like '${inputs.feed_type.value}'
+where ('${inputs.agency.value}' = '%' or coalesce(agency_id, '(unmapped)') = '${inputs.agency.value}')
+    and ('${inputs.feed_type.value}' = '%' or feed_type = '${inputs.feed_type.value}')
 group by all
 order by date, hour
 ```
@@ -70,8 +70,8 @@ select
     sum(pb_count) as pb_count,
     sum(row_count) as row_count
 from archiver.daily_comparison
-where coalesce(agency_id, '(unmapped)') like '${inputs.agency.value}'
-    and feed_type like '${inputs.feed_type.value}'
+where ('${inputs.agency.value}' = '%' or coalesce(agency_id, '(unmapped)') = '${inputs.agency.value}')
+    and ('${inputs.feed_type.value}' = '%' or feed_type = '${inputs.feed_type.value}')
 group by all
 order by date
 ```
@@ -95,11 +95,11 @@ feed-content changes.
 ```sql rows_per_proto
 select
     date,
-    system_name || ' · ' || feed_type as series,
+    coalesce(system_name, base64url) || ' · ' || feed_type as series,
     rows_per_proto
 from archiver.daily_comparison
-where coalesce(agency_id, '(unmapped)') like '${inputs.agency.value}'
-    and feed_type like '${inputs.feed_type.value}'
+where ('${inputs.agency.value}' = '%' or coalesce(agency_id, '(unmapped)') = '${inputs.agency.value}')
+    and ('${inputs.feed_type.value}' = '%' or feed_type = '${inputs.feed_type.value}')
     and rows_per_proto is not null
 order by date
 ```
@@ -130,22 +130,21 @@ select
     row_count,
     case when in_reconcilable_window then 'MISSING' else 'out of window' end as status
 from archiver.daily_comparison
-where coalesce(agency_id, '(unmapped)') like '${inputs.agency.value}'
-    and feed_type like '${inputs.feed_type.value}'
+where ('${inputs.agency.value}' = '%' or coalesce(agency_id, '(unmapped)') = '${inputs.agency.value}')
+    and ('${inputs.feed_type.value}' = '%' or feed_type = '${inputs.feed_type.value}')
     and pb_count > 0
     and coalesce(row_count, 0) = 0
 order by in_reconcilable_window desc, date, feed_type
 ```
 
-<DataTable data={missing_partitions} rows=25 emptySet=pass emptyMessage="No missing partitions in this window 🎉">
-    <Column id=status contentType=colorscale colorScale={['#dc2626','#d2c6ac']}/>
-</DataTable>
+<DataTable data={missing_partitions} rows=25 emptySet=pass emptyMessage="No missing partitions in this window 🎉"/>
 
 ### Probable drops during compaction
 
-Partitions where row groups fall short of non-empty `.pb` files — one row group
-is written per successfully-parsed non-empty file, so the shortfall approximates
-dropped files (heuristic; the labeled table below is the exact answer).
+Partitions where row groups fall short of *contentful* `.pb` files (bigger than
+a header-only message) — one row group is written per successfully-parsed
+non-empty file, so the shortfall approximates dropped files (heuristic; the
+labeled table below is the exact answer).
 
 ```sql short_partitions
 select
@@ -153,15 +152,15 @@ select
     date,
     agency_name,
     system_name,
-    pb_nonzero_count,
+    pb_contentful_count,
     num_row_groups,
-    pb_nonzero_count - num_row_groups as shortfall,
+    pb_contentful_count - num_row_groups as shortfall,
     row_count
 from archiver.daily_comparison
-where coalesce(agency_id, '(unmapped)') like '${inputs.agency.value}'
-    and feed_type like '${inputs.feed_type.value}'
+where ('${inputs.agency.value}' = '%' or coalesce(agency_id, '(unmapped)') = '${inputs.agency.value}')
+    and ('${inputs.feed_type.value}' = '%' or feed_type = '${inputs.feed_type.value}')
     and row_count > 0
-    and num_row_groups < pb_nonzero_count
+    and num_row_groups < pb_contentful_count
 order by shortfall desc
 ```
 
@@ -180,8 +179,8 @@ select
     min(size_bytes) as min_bytes,
     max(size_bytes) as max_bytes
 from archiver.dropped_files
-where coalesce(agency_id, '(unmapped)') like '${inputs.agency.value}'
-    and feed_type like '${inputs.feed_type.value}'
+where ('${inputs.agency.value}' = '%' or coalesce(agency_id, '(unmapped)') = '${inputs.agency.value}')
+    and ('${inputs.feed_type.value}' = '%' or feed_type = '${inputs.feed_type.value}')
 group by all
 order by files desc
 ```
@@ -198,8 +197,8 @@ select
     response_code,
     label
 from archiver.dropped_files
-where coalesce(agency_id, '(unmapped)') like '${inputs.agency.value}'
-    and feed_type like '${inputs.feed_type.value}'
+where ('${inputs.agency.value}' = '%' or coalesce(agency_id, '(unmapped)') = '${inputs.agency.value}')
+    and ('${inputs.feed_type.value}' = '%' or feed_type = '${inputs.feed_type.value}')
     and label not in ('legitimately_empty_feed')
 order by date, name
 ```

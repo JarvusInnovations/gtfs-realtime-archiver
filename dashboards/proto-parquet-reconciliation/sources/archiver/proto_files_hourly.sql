@@ -8,6 +8,12 @@ select
     f.system_name,
     p.pb_count,
     p.meta_count,
-    p.zero_byte_count
+    p.zero_byte_count,
+    p.header_only_count
 from proto_files_hourly p
-left join feeds f using (base64url)
+-- feeds.parquet is one row per (url, feed_type); joining on base64url alone
+-- would fan out if a URL were ever reused across feed types. Unmapped feeds
+-- carry NULL feed_type, hence the OR branch.
+left join feeds f
+    on f.base64url = p.base64url
+    and (f.feed_type = p.feed_type or f.feed_type is null)

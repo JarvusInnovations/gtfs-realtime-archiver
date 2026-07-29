@@ -37,8 +37,12 @@ Re-run `npm run sources` after every extract — Evidence snapshots sources at
 build time.
 
 `extract.py --help` documents the flags (`--agency`, `--feed-type`, `--start`,
-`--end`). `--agency` limits *extraction cost* via exact server-side prefixes; the
-dashboard's dropdown handles display filtering.
+`--end`, `--output`). `--agency` limits *extraction cost* via exact server-side
+prefixes; the dashboard's dropdown handles display filtering.
+
+**Each run overwrites its output DB** (default `data/reconciliation.duckdb`) —
+use `--output` to extract somewhere else without destroying the previous
+extract. Don't run two extracts against the same output concurrently.
 
 ## Notes
 

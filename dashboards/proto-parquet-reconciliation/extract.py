@@ -26,7 +26,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -51,6 +53,40 @@ ENTITY_FIELDS = {
     "service_alerts": "alert",
 }
 
+# A .pb at or below this size is a header-only FeedMessage: it physically
+# cannot contain an entity, so it's labeled legitimately_empty_feed straight
+# from the listing's size_bytes — no download needed. (Observed empty SEPTA
+# feeds are 15 bytes; the smallest message with one entity is well above 20.)
+HEADER_ONLY_MAX = 20
+
+# Ported from inventory.py's _RT_PATTERN so the two definitions of a valid RT
+# parquet path can't drift (this script can't import from src/).
+_RT_PATTERN = re.compile(
+    r"^(?P<feed_type>[^/]+)/date=(?P<date>\d{4}-\d{2}-\d{2})"
+    r"/base64url=(?P<base64url>[A-Za-z0-9_-]+)/data\.parquet$"
+)
+
+# The reconcilable window, buffered at both edges (see the plan): older than
+# ~358 days raw objects may be partially reaped; newer than 2 full days
+# compaction may not have finished.
+WINDOW_OLD_DAYS = 358
+WINDOW_NEW_DAYS = 2
+
+
+def with_retries(fn, attempts: int = 3):
+    """Retry a worker function on transient errors with linear backoff."""
+
+    def wrapped(*a, **k):
+        for i in range(attempts):
+            try:
+                return fn(*a, **k)
+            except Exception:
+                if i == attempts - 1:
+                    raise
+                time.sleep(1 + 2 * i)
+
+    return wrapped
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -65,7 +101,13 @@ def parse_args() -> argparse.Namespace:
         help="Limit to one feed type (prunes whole top-level prefixes)",
     )
     parser.add_argument("--start", help="First date, YYYY-MM-DD (default: 14 days ago)")
-    parser.add_argument("--end", help="Last date, YYYY-MM-DD (default: yesterday)")
+    parser.add_argument("--end", help="Last date, YYYY-MM-DD (default: yesterday, UTC)")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=DB_PATH,
+        help=f"Output DuckDB path (default: {DB_PATH}). Each run overwrites it.",
+    )
     return parser.parse_args()
 
 
@@ -145,14 +187,10 @@ def list_parquet_partitions(client, task):
     rows = []
     prefix = f"{ft}/date={d}/"
     for blob in client.list_blobs(PARQUET_BUCKET, prefix=prefix):
-        name = blob.name
-        if not name.endswith("data.parquet"):
+        match = _RT_PATTERN.match(blob.name)
+        if not match:
             continue
-        try:
-            b64 = name.split("base64url=")[1].split("/")[0]
-        except IndexError:
-            continue
-        rows.append((ft, d, b64, name, blob.size or 0))
+        rows.append((ft, d, match.group("base64url"), blob.name, blob.size or 0))
     return rows
 
 
@@ -201,6 +239,13 @@ def classify_drop(client, bucket, feed_type: str, pb_name: str, size_bytes: int)
     from google.protobuf.message import DecodeError
     from google.transit import gtfs_realtime_pb2
 
+    # Size short-circuits: no downloads needed for the two cheap-and-certain
+    # cases, which are also by far the most common.
+    if size_bytes == 0:
+        return None, None, "never_valid_empty_body"
+    if size_bytes <= HEADER_ONLY_MAX:
+        return None, None, "legitimately_empty_feed"
+
     meta_name = pb_name.rsplit(".", 1)[0] + ".meta"
     response_code = None
     content_length = None
@@ -209,22 +254,21 @@ def classify_drop(client, bucket, feed_type: str, pb_name: str, size_bytes: int)
         response_code = meta.get("response_code")
         content_length = meta.get("content_length")
     except Exception:
-        pass
+        pass  # missing sidecar or transient error: fields stay NULL
 
-    if size_bytes == 0:
-        label = "never_valid_empty_body"
-    else:
-        try:
-            content = bucket.blob(pb_name).download_as_bytes()
-            feed = gtfs_realtime_pb2.FeedMessage()
-            feed.ParseFromString(content)
-            entity_field = ENTITY_FIELDS[feed_type]
-            n_entities = sum(1 for e in feed.entity if e.HasField(entity_field))
-            label = "legitimately_empty_feed" if n_entities == 0 else "unexplained_drop"
-        except DecodeError:
-            label = "parse_failure"
-        except Exception:
-            label = "unreadable"
+    try:
+        content = bucket.blob(pb_name).download_as_bytes()
+        feed = gtfs_realtime_pb2.FeedMessage()
+        feed.ParseFromString(content)
+        entity_field = ENTITY_FIELDS[feed_type]
+        n_entities = sum(1 for e in feed.entity if e.HasField(entity_field))
+        label = "legitimately_empty_feed" if n_entities == 0 else "unexplained_drop"
+    except (DecodeError, ValueError):
+        # Matches compaction.py's own except: what the pipeline calls a parse
+        # failure, we call a parse failure.
+        label = "parse_failure"
+    except Exception:
+        label = "unreadable"
 
     return response_code, content_length, label
 
@@ -232,7 +276,8 @@ def classify_drop(client, bucket, feed_type: str, pb_name: str, size_bytes: int)
 def main() -> int:
     args = parse_args()
 
-    end = date.fromisoformat(args.end) if args.end else date.today() - timedelta(days=1)
+    today_utc = datetime.now(timezone.utc).date()  # partitions are UTC-keyed
+    end = date.fromisoformat(args.end) if args.end else today_utc - timedelta(days=1)
     start = date.fromisoformat(args.start) if args.start else end - timedelta(days=13)
     if start > end:
         print(f"--start {start} is after --end {end}", file=sys.stderr)
@@ -243,6 +288,12 @@ def main() -> int:
     from google.cloud import storage  # deferred: slow import
 
     client = storage.Client()
+    # The shared requests session defaults to a 10-connection pool; below
+    # LIST_WORKERS threads that means connection churn, not throughput.
+    from requests.adapters import HTTPAdapter
+
+    adapter = HTTPAdapter(pool_connections=LIST_WORKERS, pool_maxsize=LIST_WORKERS)
+    client._http.mount("https://", adapter)  # private API; temporary tooling
     import gcsfs
 
     fs = gcsfs.GCSFileSystem()
@@ -265,18 +316,20 @@ def main() -> int:
         print(f"  --agency {args.agency}: {len(agency_b64s)} feeds")
 
     # 2. Raw side ----------------------------------------------------------
+    # Discovery pass only in agency mode: a full-range object listing walks
+    # the same hour prefixes anyway, so the delimiter pass would be ~1000
+    # redundant calls per 14-day run. In agency mode it's what keeps
+    # unmapped-feed detection alive (the exact-prefix fan-out is otherwise
+    # blind to feeds not derived from feeds.parquet).
     hours = hour_prefixes(feed_types, dates)
-    print(f"Discovery pass: {len(hours)} hour prefixes (delimiter listing)")
-    discovered: list[tuple[str, str, int, str]] = []  # (ft, date, hour, b64)
-    with ThreadPoolExecutor(LIST_WORKERS) as pool:
-        for found in pool.map(lambda t: discover_feeds_in_hour(client, t), hours):
-            discovered.extend(found)
-    discovered_b64s = {b64 for _, _, _, b64 in discovered}
-    print(f"  {len(discovered_b64s)} distinct feeds present in raw bucket")
-
-    # Object listings: exact per-feed prefixes in agency mode, whole hour
-    # prefixes otherwise.
+    list_raw = with_retries(lambda t: list_raw_objects(client, t))
     if agency_b64s is not None:
+        print(f"Discovery pass: {len(hours)} hour prefixes (delimiter listing)")
+        discovered: list[tuple[str, str, int, str]] = []  # (ft, date, hour, b64)
+        discover = with_retries(lambda t: discover_feeds_in_hour(client, t))
+        with ThreadPoolExecutor(LIST_WORKERS) as pool:
+            for found in pool.map(discover, hours):
+                discovered.extend(found)
         discovered_set = set(discovered)
         list_tasks = [
             (ft, d, h, f"{prefix}base64url={b64}/", b64)
@@ -289,19 +342,35 @@ def main() -> int:
     print(f"Object listing: {len(list_tasks)} prefixes")
     raw_files: list[tuple] = []
     with ThreadPoolExecutor(LIST_WORKERS) as pool:
-        for rows in pool.map(lambda t: list_raw_objects(client, t), list_tasks):
+        for rows in pool.map(list_raw, list_tasks):
             raw_files.extend(rows)
     print(f"  {len(raw_files)} raw objects listed")
+
+    if agency_b64s is None:
+        # Full-range mode: presence falls out of the object listing directly.
+        discovered = sorted({(ft, d, h, b64) for (ft, d, h, b64, _n, _s) in raw_files})
+    discovered_b64s = {b64 for _, _, _, b64 in discovered}
+    print(f"  {len(discovered_b64s)} distinct feeds present in raw bucket")
 
     # 3. Parquet side (windowed by construction) ---------------------------
     pq_tasks = [(ft, d) for ft in feed_types for d in dates]
     print(f"Parquet listing: {len(pq_tasks)} date prefixes")
+    list_pq = with_retries(lambda t: list_parquet_partitions(client, t))
     pq_objects: list[tuple] = []
     with ThreadPoolExecutor(LIST_WORKERS) as pool:
-        for rows in pool.map(lambda t: list_parquet_partitions(client, t), pq_tasks):
+        for rows in pool.map(list_pq, pq_tasks):
             pq_objects.extend(rows)
 
-    # Footer reads: scope to selected feeds in agency mode.
+    # Footer reads: scope to selected feeds in agency mode. A footer that
+    # still fails after retries becomes a sentinel row (path kept, counts
+    # NULL) rather than killing the run.
+    def safe_footer(path: str):
+        try:
+            return with_retries(read_footer)(fs, path)
+        except Exception as e:
+            print(f"  WARNING: footer read failed for {path}: {e}", file=sys.stderr)
+            return None, None
+
     selected = agency_b64s if agency_b64s is not None else None
     footer_targets = [
         (ft, d, b64, path, size)
@@ -311,7 +380,7 @@ def main() -> int:
     print(f"Footer reads: {len(footer_targets)} partitions")
     parquet_daily: list[tuple] = []
     with ThreadPoolExecutor(LIST_WORKERS) as pool:
-        footers = pool.map(lambda t: read_footer(fs, t[3]), footer_targets)
+        footers = pool.map(lambda t: safe_footer(t[3]), footer_targets)
         for (ft, d, b64, path, size), (rows, groups) in zip(footer_targets, footers):
             parquet_daily.append((ft, d, b64, rows, size, groups, path))
 
@@ -324,57 +393,85 @@ def main() -> int:
         parquet_daily.append((ft, d, b64, None, None, None, None))
 
     # 4. Discrepancy escalation --------------------------------------------
+    # Per-partition pb stats in one pass (total and "contentful": bigger than
+    # a header-only message, so capable of producing a row group).
     pb_counts: dict[tuple, int] = {}
+    contentful_counts: dict[tuple, int] = {}
     for ft, d, h, b64, name, size in raw_files:
         if name.endswith(".pb"):
-            pb_counts[(ft, d, b64)] = pb_counts.get((ft, d, b64), 0) + 1
+            key = (ft, d, b64)
+            pb_counts[key] = pb_counts.get(key, 0) + 1
+            if size > HEADER_ONLY_MAX:
+                contentful_counts[key] = contentful_counts.get(key, 0) + 1
 
+    # Escalation only makes sense inside the reconcilable window (outside it,
+    # discrepancies are expected: compaction hasn't run / raw was reaped), and
+    # only for partitions where a parquet exists — when nothing was written,
+    # the missing-partition row IS the signal, and per-file attribution would
+    # just re-download the whole partition to prove it.
+    window_lo = (today_utc - timedelta(days=WINDOW_OLD_DAYS)).isoformat()
+    window_hi = (today_utc - timedelta(days=WINDOW_NEW_DAYS)).isoformat()
     flagged = []
     for ft, d, b64, rows, size, groups, path in parquet_daily:
-        pb_n = pb_counts.get((ft, d, b64), 0)
-        if pb_n == 0:
+        if path is None or not (window_lo <= d <= window_hi):
             continue
-        if rows is None or rows == 0 or (groups is not None and groups < pb_n):
+        contentful_n = contentful_counts.get((ft, d, b64), 0)
+        if rows == 0 or (rows is not None and groups is not None and groups < contentful_n):
             flagged.append((ft, d, b64, path))
-    print(f"Escalation: {len(flagged)} flagged partitions")
+    print(f"Escalation: {len(flagged)} flagged partitions (window {window_lo}..{window_hi})")
 
     parquet_source_files: list[tuple] = []
     dropped: list[tuple] = []
     protobuf_bucket = client.bucket(PROTOBUF_BUCKET)
+    flagged_keys = {(ft, d, b64) for (ft, d, b64, _p) in flagged}
     raw_pb_by_partition: dict[tuple, list[tuple[str, int]]] = {}
     for ft, d, h, b64, name, size in raw_files:
-        if name.endswith(".pb"):
+        if name.endswith(".pb") and (ft, d, b64) in flagged_keys:
             raw_pb_by_partition.setdefault((ft, d, b64), []).append((name, size))
 
-    # Parallel source_file column reads (one per flagged partition with a
-    # parquet), then parallel per-file classification — both were serial in the
-    # first cut, which ground silently for tens of minutes on multi-week runs.
-    with_path = [(ft, d, b64, path) for (ft, d, b64, path) in flagged if path is not None]
-    print(f"  reading source_file column for {len(with_path)} partitions")
+    # Parallel source_file column reads, then parallel per-file
+    # classification. A column read that fails after retries skips that
+    # partition's attribution (with a warning) instead of killing the run.
+    print(f"  reading source_file column for {len(flagged)} partitions")
     source_sets: dict[tuple, set[str]] = {}
-    # Capped below LIST_WORKERS: each read holds a whole column in memory
-    # (tens of millions of values for a big trip_updates partition).
+
+    def safe_sources(path: str):
+        try:
+            return with_retries(read_source_files)(fs, path)
+        except Exception as e:
+            print(f"  WARNING: source_file read failed for {path}: {e}", file=sys.stderr)
+            return None
+
+    # Capped below LIST_WORKERS: each read holds a whole column in memory.
     with ThreadPoolExecutor(8) as pool:
         for (ft, d, b64, path), sources in zip(
-            with_path, pool.map(lambda t: read_source_files(fs, t[3]), with_path)
+            flagged, pool.map(lambda t: safe_sources(t[3]), flagged)
         ):
+            if sources is None:
+                continue
             source_sets[(ft, d, b64)] = sources
             for s in sorted(sources):
                 parquet_source_files.append((ft, d, b64, s))
 
     candidates: list[tuple] = []
     for ft, d, b64, path in flagged:
-        sources = source_sets.get((ft, d, b64), set())
+        sources = source_sets.get((ft, d, b64))
+        if sources is None:  # column read failed: no attribution possible
+            continue
         for name, size in sorted(raw_pb_by_partition.get((ft, d, b64), [])):
             if name not in sources:
                 candidates.append((ft, d, b64, name, size))
     print(f"  classifying {len(candidates)} dropped .pb files")
 
+    def safe_classify(c):
+        try:
+            return with_retries(classify_drop)(client, protobuf_bucket, c[0], c[3], c[4])
+        except Exception:
+            return None, None, "error"
+
     done = 0
     with ThreadPoolExecutor(LIST_WORKERS) as pool:
-        results = pool.map(
-            lambda c: classify_drop(client, protobuf_bucket, c[0], c[3], c[4]), candidates
-        )
+        results = pool.map(safe_classify, candidates)
         for (ft, d, b64, name, size), (code, clen, label) in zip(candidates, results):
             dropped.append((ft, d, b64, name, size, code, clen, label))
             done += 1
@@ -383,33 +480,56 @@ def main() -> int:
     print(f"  {len(dropped)} dropped .pb files classified")
 
     # 5. Write DuckDB -------------------------------------------------------
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    DB_PATH.unlink(missing_ok=True)
-    con = duckdb.connect(str(DB_PATH))
+    out_path: Path = args.output
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.unlink(missing_ok=True)
+    con = duckdb.connect(str(out_path))
 
     con.register("feeds_arrow", feeds)
     con.execute("CREATE TABLE feeds AS SELECT * FROM feeds_arrow")
-    # Unmapped feeds: present in GCS, absent from feeds.parquet.
+    # Unmapped feeds: present in GCS, absent from feeds.parquet. Named columns
+    # so this can't silently shift if fetch_feeds()'s column list changes.
     for b64 in sorted(discovered_b64s - set(feeds_by_b64)):
         con.execute(
-            "INSERT INTO feeds VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [b64, None, None, "(unmapped)", "(unmapped)", None, None],
+            "INSERT INTO feeds (base64url, agency_id, agency_name) VALUES (?, ?, ?)",
+            [b64, "(unmapped)", "(unmapped)"],
+        )
+
+    # Arrow ingestion, not executemany: row-at-a-time inserts on millions of
+    # rows would add whole minutes and hold nothing DuckDB can't take in bulk.
+    if raw_files:
+        cols = list(zip(*raw_files))
+        raw_tbl = pa.table(
+            {
+                "feed_type": pa.array(cols[0], pa.string()),
+                "date": pa.array(cols[1], pa.string()),
+                "hour": pa.array(cols[2], pa.int8()),
+                "base64url": pa.array(cols[3], pa.string()),
+                "name": pa.array(cols[4], pa.string()),
+                "size_bytes": pa.array(cols[5], pa.int64()),
+            }
+        )
+        con.register("raw_files_arrow", raw_tbl)
+        con.execute(
+            """CREATE TABLE raw_files AS
+            SELECT feed_type, CAST(date AS DATE) AS date, hour, base64url, name, size_bytes
+            FROM raw_files_arrow"""
+        )
+    else:
+        con.execute(
+            """CREATE TABLE raw_files (
+                feed_type VARCHAR, date DATE, hour TINYINT, base64url VARCHAR,
+                name VARCHAR, size_bytes BIGINT)"""
         )
 
     con.execute(
-        """CREATE TABLE raw_files (
-            feed_type VARCHAR, date DATE, hour TINYINT, base64url VARCHAR,
-            name VARCHAR, size_bytes BIGINT)"""
-    )
-    if raw_files:
-        con.executemany("INSERT INTO raw_files VALUES (?, ?, ?, ?, ?, ?)", raw_files)
-
-    con.execute(
-        """CREATE TABLE proto_files_hourly AS
+        f"""CREATE TABLE proto_files_hourly AS
         SELECT feed_type, date, hour, base64url,
                count(*) FILTER (name LIKE '%.pb') AS pb_count,
                count(*) FILTER (name LIKE '%.meta') AS meta_count,
-               count(*) FILTER (name LIKE '%.pb' AND size_bytes = 0) AS zero_byte_count
+               count(*) FILTER (name LIKE '%.pb' AND size_bytes = 0) AS zero_byte_count,
+               count(*) FILTER (name LIKE '%.pb' AND size_bytes > 0
+                                AND size_bytes <= {HEADER_ONLY_MAX}) AS header_only_count
         FROM raw_files GROUP BY ALL"""
     )
 
@@ -421,13 +541,26 @@ def main() -> int:
     if parquet_daily:
         con.executemany("INSERT INTO parquet_daily VALUES (?, ?, ?, ?, ?, ?, ?)", parquet_daily)
 
-    con.execute(
-        """CREATE TABLE parquet_source_files (
-            feed_type VARCHAR, date DATE, base64url VARCHAR, source_file VARCHAR)"""
-    )
     if parquet_source_files:
-        con.executemany(
-            "INSERT INTO parquet_source_files VALUES (?, ?, ?, ?)", parquet_source_files
+        cols = list(zip(*parquet_source_files))
+        psf_tbl = pa.table(
+            {
+                "feed_type": pa.array(cols[0], pa.string()),
+                "date": pa.array(cols[1], pa.string()),
+                "base64url": pa.array(cols[2], pa.string()),
+                "source_file": pa.array(cols[3], pa.string()),
+            }
+        )
+        con.register("psf_arrow", psf_tbl)
+        con.execute(
+            """CREATE TABLE parquet_source_files AS
+            SELECT feed_type, CAST(date AS DATE) AS date, base64url, source_file
+            FROM psf_arrow"""
+        )
+    else:
+        con.execute(
+            """CREATE TABLE parquet_source_files (
+                feed_type VARCHAR, date DATE, base64url VARCHAR, source_file VARCHAR)"""
         )
 
     con.execute(
@@ -453,7 +586,7 @@ def main() -> int:
     )
 
     con.close()
-    print(f"Wrote {DB_PATH}")
+    print(f"Wrote {out_path}")
     return 0
 
 
