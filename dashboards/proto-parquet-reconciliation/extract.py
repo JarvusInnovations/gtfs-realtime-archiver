@@ -163,9 +163,15 @@ def read_footer(fs, path: str):
 
 
 def read_source_files(fs, path: str) -> set[str]:
-    """Distinct source_file values from one parquet (single-column read)."""
+    """Distinct source_file values from one parquet (single-column read).
+
+    unique() runs Arrow-side: the column arrives dictionary-encoded, so this
+    avoids materializing tens of millions of Python strings for big partitions.
+    """
+    import pyarrow.compute as pc
+
     table = pq.read_table(f"{PARQUET_BUCKET}/{path}", columns=["source_file"], filesystem=fs)
-    return set(table.column("source_file").to_pylist())
+    return set(pc.unique(table.column("source_file").combine_chunks()).to_pylist())
 
 
 def classify_drop(client, bucket, feed_type: str, pb_name: str, size_bytes: int):
@@ -323,17 +329,40 @@ def main() -> int:
         if name.endswith(".pb"):
             raw_pb_by_partition.setdefault((ft, d, b64), []).append((name, size))
 
-    for ft, d, b64, path in flagged:
-        sources: set[str] = set()
-        if path is not None:
-            sources = read_source_files(fs, path)
+    # Parallel source_file column reads (one per flagged partition with a
+    # parquet), then parallel per-file classification — both were serial in the
+    # first cut, which ground silently for tens of minutes on multi-week runs.
+    with_path = [(ft, d, b64, path) for (ft, d, b64, path) in flagged if path is not None]
+    print(f"  reading source_file column for {len(with_path)} partitions")
+    source_sets: dict[tuple, set[str]] = {}
+    # Capped below LIST_WORKERS: each read holds a whole column in memory
+    # (tens of millions of values for a big trip_updates partition).
+    with ThreadPoolExecutor(8) as pool:
+        for (ft, d, b64, path), sources in zip(
+            with_path, pool.map(lambda t: read_source_files(fs, t[3]), with_path)
+        ):
+            source_sets[(ft, d, b64)] = sources
             for s in sorted(sources):
                 parquet_source_files.append((ft, d, b64, s))
+
+    candidates: list[tuple] = []
+    for ft, d, b64, path in flagged:
+        sources = source_sets.get((ft, d, b64), set())
         for name, size in sorted(raw_pb_by_partition.get((ft, d, b64), [])):
-            if name in sources:
-                continue
-            code, clen, label = classify_drop(client, protobuf_bucket, ft, name, size)
+            if name not in sources:
+                candidates.append((ft, d, b64, name, size))
+    print(f"  classifying {len(candidates)} dropped .pb files")
+
+    done = 0
+    with ThreadPoolExecutor(LIST_WORKERS) as pool:
+        results = pool.map(
+            lambda c: classify_drop(client, protobuf_bucket, c[0], c[3], c[4]), candidates
+        )
+        for (ft, d, b64, name, size), (code, clen, label) in zip(candidates, results):
             dropped.append((ft, d, b64, name, size, code, clen, label))
+            done += 1
+            if done % 1000 == 0:
+                print(f"    {done}/{len(candidates)}")
     print(f"  {len(dropped)} dropped .pb files classified")
 
     # 5. Write DuckDB -------------------------------------------------------
