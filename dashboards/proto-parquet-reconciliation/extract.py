@@ -418,7 +418,12 @@ def main() -> int:
         contentful_n = contentful_counts.get((ft, d, b64), 0)
         if rows == 0 or (rows is not None and groups is not None and groups < contentful_n):
             flagged.append((ft, d, b64, path))
-    print(f"Escalation: {len(flagged)} flagged partitions (window {window_lo}..{window_hi})")
+    eff_lo = max(window_lo, start.isoformat())
+    eff_hi = min(window_hi, end.isoformat())
+    print(
+        f"Escalation: {len(flagged)} flagged partitions "
+        f"(reconcilable dates in this run: {eff_lo}..{eff_hi})"
+    )
 
     parquet_source_files: list[tuple] = []
     dropped: list[tuple] = []
