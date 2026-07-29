@@ -67,7 +67,7 @@ left join archiver.proto_files_hourly p
     and ('${inputs.agency.value}' = '%' or coalesce(p.agency_id, '(unmapped)') = '${inputs.agency.value}')
     and ('${inputs.feed_type.value}' = '%' or p.feed_type = '${inputs.feed_type.value}')
 group by all
-order by date, hour
+order by 1, 2
 ```
 
 <Heatmap
