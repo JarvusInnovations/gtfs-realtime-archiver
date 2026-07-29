@@ -179,7 +179,38 @@ where ('${inputs.agency.value}' = '%' or coalesce(agency_id, '(unmapped)') = '${
 order by in_reconcilable_window desc, date, feed_type
 ```
 
-<DataTable data={missing_partitions} rows=25 emptySet=pass emptyMessage="No missing partitions in this window 🎉"/>
+<DataTable data={missing_partitions} rows=25 emptySet=pass emptyMessage="No missing partitions in this window 🎉">
+    <Column id=feed_type/>
+    <Column id=date/>
+    <Column id=agency_name/>
+    <Column id=system_name/>
+    <Column id=pb_count/>
+    <Column id=pb_contentful_count/>
+    <Column id=row_count/>
+    <Column id=status/>
+    <Column id=remediate wrap=true/>
+</DataTable>
+
+```sql remediate_commands
+select remediate
+from ${missing_partitions}
+where remediate is not null
+order by date, feed_type
+```
+
+{#if remediate_commands.length > 0}
+
+<Details title="Copy-ready remediation commands">
+
+{#each remediate_commands as row}
+
+- `{row.remediate}`
+
+{/each}
+
+</Details>
+
+{/if}
 
 ### Probable drops during compaction
 
