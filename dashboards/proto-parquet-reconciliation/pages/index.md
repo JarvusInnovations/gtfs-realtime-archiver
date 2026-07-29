@@ -147,13 +147,22 @@ still within raw retention — but note it runs *local* code against
 *production* buckets under your ADC, and it cannot recover `parse_failure`
 files whose bytes were bad at fetch time.
 
-The command has two halves. The first registers the feed's dynamic partition
-key in your **local** Dagster instance (production gets keys from
-`feed_discovery_sensor`, but your `.dagster_home` has its own registry, and a
-launch against an unregistered key fails with `DagsterInvalidSubsetError`) —
-it loads `.env` itself and is idempotent, so it's safe when the key already
-exists. The second is the `dg launch`. Run from the repo root with a
-populated `.env` (see `.env.example`).
+**Preferred: remediate via the production Dagster UI** —
+[dagster.gtfsrt.io](https://dagster.gtfsrt.io) → Assets → `{feed_type}_parquet`
+→ Materialize → pick the date and feed partition from the row. The prod
+instance already has the feed's dynamic partition key registered, and the run
+executes as a Cloud Run Job under the run-worker SA with production env baked
+in.
+
+The `remediate` command is the local alternative. Its two halves: the first
+registers the feed's dynamic partition key in your **local** Dagster instance
+(production gets keys from `feed_discovery_sensor`; your `.dagster_home` has
+its own registry, and a launch against an unregistered key fails with
+`DagsterInvalidSubsetError`) — it loads `.env` itself and is idempotent. The
+second is the `dg launch`. Caution: both halves inherit your `.env` — if it's
+configured for docker-compose local dev (`STORAGE_EMULATOR_HOST`, `rt-protobuf`
+bucket names), the launch will target the emulator, not production. Check
+`.env` against `.env.example`'s production values first.
 
 ```sql missing_partitions
 with base as (
