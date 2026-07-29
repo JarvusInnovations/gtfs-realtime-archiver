@@ -19,7 +19,8 @@ Plan: [`plans/proto-parquet-reconciliation-dashboard.md`](../../plans/proto-parq
 
 - **uv** (runs the extract script; deps are declared inline via PEP 723 — the
   repo's root `pyproject.toml`/`uv.lock` are not touched)
-- **Node ≥18** (pinned in the repo's `.tool-versions`)
+- **Node ≥20** (`.tool-versions` pins 22.x; Evidence needs ≥18 but the vendored
+  specops CLI needs ≥20)
 
 ## Usage
 
@@ -48,6 +49,17 @@ extract. Don't run two extracts against the same output concurrently.
 dropped-files table generates the command per row) downloads five consecutive
 snapshots, parses them to JSON, and extracts the matching parquet rows to
 `.scratch/inspect/` for side-by-side review.
+
+## Resource notes
+
+- An all-agencies multi-week extract holds several million listing tuples in
+  memory (~1–2GB peak) — prefer `--agency` or shorter windows on small machines.
+- Listing-stage failures are deliberately fatal after retries (a partial listing
+  would produce *wrong* reconciliation, not just incomplete), while
+  footer/column/classify failures degrade to warnings and sentinel rows.
+- The `typescript ^5.9.0` entry in `package.json` overrides is load-bearing —
+  npm resolves TypeScript 7 otherwise, which Evidence's pinned svelte2tsx 0.7.4
+  rejects as a peer dep — don't remove it.
 
 ## Notes
 

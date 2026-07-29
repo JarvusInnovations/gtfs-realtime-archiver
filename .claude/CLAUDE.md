@@ -64,6 +64,7 @@ gtfs-realtime-archiver/
 ├── dashboards/             # Temporary local analysis dashboards (not deployed, outside CI lint/type paths)
 │   └── proto-parquet-reconciliation/  # Evidence dashboard: raw .pb counts vs parquet rows
 │       ├── extract.py      # PEP 723 uv script: GCS → data/reconciliation.duckdb
+│       ├── unpack.py       # PEP 723 uv script: manual proto-vs-parquet inspection to .scratch/
 │       ├── sources/        # Evidence duckdb source queries
 │       └── pages/          # The dashboard page
 ├── site/                   # Static site for gtfsrt.io (GitHub Pages)
@@ -165,6 +166,7 @@ This project uses **Conventional Commits** with components:
 - `ci` - GitHub Actions workflows
 - `docker` - Dockerfile and container
 - `site` - Static site (gtfsrt.io)
+- `dashboards` - Temporary analysis dashboards
 - `claude` - AI assistant documentation
 
 **Format**: `type(component): description`
@@ -274,11 +276,13 @@ uv run dg list defs
 uv run dg check defs
 
 # Launch a run for specific assets with partition
-uv run dg launch --assets vehicle_positions_parquet --partition 2026-01-01
+uv run dg launch --assets vehicle_positions_parquet --partition "2026-01-01|gtfs.example.com/feed"
 
 # Launch all assets for a partition
-uv run dg launch --partition 2026-01-01
+uv run dg launch --partition "2026-01-01|gtfs.example.com/feed"
 ```
+
+Partition keys are `date|feed`, where `feed` is the scheme-stripped feed URL (`~` prefix for `http`); the feed dimension is dynamic, so the key must already be registered.
 
 **Environment Setup**:
 

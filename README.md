@@ -322,9 +322,11 @@ uv run dg list defs
 # Validate definitions load correctly
 uv run dg check defs
 
-# Manually materialize an asset for a specific date
-uv run dg launch --assets vehicle_positions_parquet --partition 2026-01-01
+# Manually materialize an asset for a specific date and feed
+uv run dg launch --assets vehicle_positions_parquet --partition "2026-01-01|gtfs.example.com/feed"
 ```
+
+Partition keys are `date|feed`, where `feed` is the scheme-stripped feed URL (`~` prefix for `http`); the feed dimension is dynamic, so the key must already be registered.
 
 ### Environment
 

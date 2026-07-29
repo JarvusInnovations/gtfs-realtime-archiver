@@ -12,7 +12,7 @@
   },
   "engines": {
     "npm": ">=7.0.0",
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "type": "module",
   "dependencies": {
@@ -21,9 +21,7 @@
     "@evidence-dev/evidence": "^40.1.8"
   },
   "overrides": {
-    "jsonwebtoken": "9.0.0",
     "trim@<0.0.3": ">0.0.3",
-    "axios": "^1.7.4",
     "typescript": "^5.9.0"
   }
 }
