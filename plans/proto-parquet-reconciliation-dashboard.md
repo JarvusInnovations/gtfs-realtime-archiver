@@ -298,9 +298,13 @@ Also in this stage:
 
 (Populated at closeout.)
 
-- Tracked as: hardening issue to be written at closeout, informed by what the
-  temporary version teaches us — centered on **what the pipeline should record so
-  this validation becomes cheap and continuous**. Candidates already visible:
+- Issue [#92](https://github.com/JarvusInnovations/gtfs-realtime-archiver/issues/92) —
+  hardening: pipeline-side recording (compaction manifest, fetch-side truncation
+  detection, per-day inventory), asset checks + Cloud Monitoring alerting,
+  invariant tests in `tests/`, and the record/alert/explore/forensics layering
+  that decides where each piece lives. Written mid-plan (not at closeout) once
+  real usage had produced the findings it needed. Superseded candidates list
+  kept below for the record:
   - Compaction writes a per-feed × date **manifest** alongside `data.parquet`
     (files_listed, files_parsed, files_dropped + reasons, records_written). Today
     those numbers exist only as Dagster materialization metadata
