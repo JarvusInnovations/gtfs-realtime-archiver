@@ -1,0 +1,15 @@
+# Evidence build artifacts
+.evidence/template
+.evidence/meta
+.evidence/customization
+.svelte-kit
+build
+node_modules
+static/data
+*.options.yaml
+
+# Extract output — never commit data
+data/
+
+.DS_Store
+.env

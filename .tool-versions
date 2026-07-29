@@ -1,3 +1,4 @@
 python 3.12.12
 uv 0.9.21
 opentofu 1.8.8
+nodejs 22.22.3

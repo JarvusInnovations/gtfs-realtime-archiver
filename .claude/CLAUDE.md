@@ -61,6 +61,11 @@ gtfs-realtime-archiver/
 ├── .claude/                # AI assistant guidelines (this directory)
 ├── .dagster_home/          # Dagster configuration
 ├── plans/                  # SpecOps plan protocol: work-in-flight tracking (see plans/README.md)
+├── dashboards/             # Temporary local analysis dashboards (not deployed, outside CI lint/type paths)
+│   └── proto-parquet-reconciliation/  # Evidence dashboard: raw .pb counts vs parquet rows
+│       ├── extract.py      # PEP 723 uv script: GCS → data/reconciliation.duckdb
+│       ├── sources/        # Evidence duckdb source queries
+│       └── pages/          # The dashboard page
 ├── site/                   # Static site for gtfsrt.io (GitHub Pages)
 │   ├── index.html          # Single-page site
 │   ├── style.css           # Styles

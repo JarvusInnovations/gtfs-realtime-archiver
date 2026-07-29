@@ -1,0 +1,8 @@
+name: archiver
+type: duckdb
+options:
+  # Resolved relative to this sources/ directory; the extract script writes
+  # data/reconciliation.duckdb at the dashboard root. Opened read-only by
+  # Evidence, so re-running extract.py while `npm run dev` is up is safe —
+  # but remember to re-run `npm run sources` to pick up new data.
+  filename: ../../data/reconciliation.duckdb

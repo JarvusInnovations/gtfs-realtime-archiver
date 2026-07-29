@@ -343,6 +343,17 @@ always-on instance, for the lowest cost floor with a single code location). See
 "Deployment Topologies" in `.claude/CLAUDE.md` for constraints and cost
 break-even details.
 
+## Dashboards
+
+`dashboards/` holds temporary local analysis dashboards. Currently:
+
+- **`proto-parquet-reconciliation/`** — an [Evidence](https://evidence.dev)
+  dashboard validating the protobuf → parquet compaction pipeline (raw `.pb`
+  counts vs parquet row counts, missing partitions, dropped-file classification).
+  See its [README](dashboards/proto-parquet-reconciliation/README.md) for the
+  two-command extract-and-serve flow. Requires ADC with read access to the raw
+  protobuf bucket.
+
 ## License
 
 AGPL-3.0
