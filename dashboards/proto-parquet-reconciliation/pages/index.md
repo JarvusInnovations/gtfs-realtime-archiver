@@ -17,35 +17,55 @@ Dates outside the buffered reconcilable window (older than ~358 days or newer
 than 2 full days ago) are annotated, not trusted — see the plan for why.
 
 ```sql agencies
-select distinct agency_id, agency_name
-from archiver.feeds
-where agency_id is not null
-order by agency_id
+-- scoped to feeds present in this extract, so picking an agency the extract
+-- never listed (e.g. under --agency) can't render as a false all-clear
+select distinct f.agency_id, f.agency_name
+from archiver.feeds f
+where f.agency_id is not null
+    and f.base64url in (select base64url from archiver.proto_files_hourly)
+order by f.agency_id
+```
+
+```sql feed_types
+select distinct feed_type from archiver.proto_files_hourly order by 1
 ```
 
 <Dropdown data={agencies} name=agency value=agency_id label=agency_name title="Agency">
     <DropdownOption value="%" valueLabel="All agencies"/>
 </Dropdown>
 
-<Dropdown name=feed_type title="Feed type">
+<Dropdown data={feed_types} name=feed_type value=feed_type title="Feed type">
     <DropdownOption value="%" valueLabel="All feed types"/>
-    <DropdownOption value="vehicle_positions"/>
-    <DropdownOption value="trip_updates"/>
-    <DropdownOption value="service_alerts"/>
 </Dropdown>
 
 ## Hourly archiver coverage
 
-Raw `.pb` files archived per hour (UTC). Gaps jump out as missing cells.
+Raw `.pb` files archived per hour (UTC), over a complete date × hour spine —
+a zero cell means the archiver wrote nothing that hour, including days-long
+total outages (which would otherwise silently drop off the axis).
 
 ```sql hourly
+with dates as (
+    select unnest(generate_series(
+        (select start_date::date from archiver.extract_meta),
+        (select end_date::date from archiver.extract_meta),
+        interval 1 day
+    ))::date as date
+),
+
+hours as (select unnest(generate_series(0, 23, 1)) as hour)
+
 select
-    strftime(date, '%Y-%m-%d') as date,
-    hour,
-    sum(pb_count) as pb_count
-from archiver.proto_files_hourly
-where ('${inputs.agency.value}' = '%' or coalesce(agency_id, '(unmapped)') = '${inputs.agency.value}')
-    and ('${inputs.feed_type.value}' = '%' or feed_type = '${inputs.feed_type.value}')
+    strftime(d.date, '%Y-%m-%d') as date,
+    h.hour,
+    coalesce(sum(p.pb_count), 0) as pb_count
+from dates d
+cross join hours h
+left join archiver.proto_files_hourly p
+    on p.date = d.date
+    and p.hour = h.hour
+    and ('${inputs.agency.value}' = '%' or coalesce(p.agency_id, '(unmapped)') = '${inputs.agency.value}')
+    and ('${inputs.feed_type.value}' = '%' or p.feed_type = '${inputs.feed_type.value}')
 group by all
 order by date, hour
 ```
@@ -116,12 +136,17 @@ order by date
 
 ### Missing partitions (#77)
 
-Raw `.pb` files exist but the daily parquet is missing or empty. Rows outside
-the reconcilable window are expected noise (compaction hasn't run yet, or raw
-data has been reaped) and are labeled. The `remediate` column is the exact
-re-materialization command — compaction rewrites the whole partition from raw,
-so one run recovers everything still within raw retention. (It cannot recover
-`parse_failure` files: those bytes were bad at fetch time.)
+*Contentful* raw `.pb` files exist but the daily parquet is missing. Feed-days
+whose files are all zero-byte/header-only are excluded — compaction correctly
+writes nothing for those (an always-quiet service_alerts feed is healthy, not
+missing). Rows outside the reconcilable window, and rows where the extract's
+own footer read failed, are labeled distinctly. The `remediate` column is the
+paste-ready re-materialization command (`date|feed` multi-partition key):
+compaction rewrites the whole partition from raw, so one run recovers anything
+still within raw retention — but note it runs *local* code against
+*production* buckets under your ADC, the feed dimension is dynamic (the key
+must already be registered in Dagster), and it cannot recover `parse_failure`
+files whose bytes were bad at fetch time.
 
 ```sql missing_partitions
 select
@@ -130,14 +155,26 @@ select
     agency_name,
     system_name,
     pb_count,
+    pb_contentful_count,
     row_count,
-    case when in_reconcilable_window then 'MISSING' else 'out of window' end as status,
-    'uv run dg launch --assets ' || feed_type || '_parquet --partition '
-        || strftime(date, '%Y-%m-%d') as remediate
+    case
+        when parquet_path is not null and row_count is null then 'footer read failed'
+        when in_reconcilable_window then 'MISSING'
+        else 'out of window'
+    end as status,
+    case
+        when in_reconcilable_window and parquet_path is null and url is not null then
+            'uv run dg launch --assets ' || feed_type || '_parquet --partition '''
+            || strftime(date, '%Y-%m-%d') || '|'
+            || case
+                when starts_with(url, 'http://') then '~' || substr(url, 8)
+                else regexp_replace(url, '^https://', '')
+            end || ''''
+    end as remediate
 from archiver.daily_comparison
 where ('${inputs.agency.value}' = '%' or coalesce(agency_id, '(unmapped)') = '${inputs.agency.value}')
     and ('${inputs.feed_type.value}' = '%' or feed_type = '${inputs.feed_type.value}')
-    and pb_count > 0
+    and pb_contentful_count > 0
     and coalesce(row_count, 0) = 0
 order by in_reconcilable_window desc, date, feed_type
 ```
@@ -149,7 +186,9 @@ order by in_reconcilable_window desc, date, feed_type
 Partitions where row groups fall short of *contentful* `.pb` files (bigger than
 a header-only message) — one row group is written per successfully-parsed
 non-empty file, so the shortfall approximates dropped files (heuristic; the
-labeled table below is the exact answer).
+labeled table below is the exact answer). Restricted to the reconcilable
+window, matching the extract's escalation — an out-of-window shortfall would
+have a by-construction-empty explanation below.
 
 ```sql short_partitions
 select
@@ -166,6 +205,7 @@ where ('${inputs.agency.value}' = '%' or coalesce(agency_id, '(unmapped)') = '${
     and ('${inputs.feed_type.value}' = '%' or feed_type = '${inputs.feed_type.value}')
     and row_count > 0
     and num_row_groups < pb_contentful_count
+    and in_reconcilable_window
 order by shortfall desc
 ```
 
@@ -200,6 +240,7 @@ select
     name,
     size_bytes,
     response_code,
+    content_length,
     label,
     'uv run --script dashboards/proto-parquet-reconciliation/unpack.py --pb ''' || name || '''' as unpack
 from archiver.dropped_files

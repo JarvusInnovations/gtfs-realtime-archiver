@@ -114,7 +114,9 @@ def main() -> int:
                 json_format.MessageToJson(feed, preserving_proto_field_name=True)
             )
             summary.append((base, len(content), f"parses OK, {n_entities} entities", marker))
-        except DecodeError as e:
+        # (DecodeError, ValueError) matches compaction.py's parse-failure set —
+        # a ValueError file is exactly what this tool gets pointed at.
+        except (DecodeError, ValueError) as e:
             (outdir / (base + ".PARSE_ERROR.txt")).write_text(
                 f"DecodeError: {e}\n\nsize: {len(content)} bytes"
                 f" ({len(content) / 4096:.2f} x 4096)\n"

@@ -24,6 +24,7 @@ Requires ADC with read access to the raw protobuf bucket:
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import re
@@ -53,10 +54,13 @@ ENTITY_FIELDS = {
     "service_alerts": "alert",
 }
 
-# A .pb at or below this size is a header-only FeedMessage: it physically
-# cannot contain an entity, so it's labeled legitimately_empty_feed straight
-# from the listing's size_bytes — no download needed. (Observed empty SEPTA
-# feeds are 15 bytes; the smallest message with one entity is well above 20.)
+# A .pb at or below this size is almost certainly a header-only FeedMessage
+# (observed empty SEPTA feeds are 15 bytes; the smallest message carrying one
+# entity is ~21 bytes, so the margin is thin — a full header is 15 bytes and a
+# minimal entity adds 6). Used only for the cheap aggregate counts
+# (header_only_count, contentful_counts); classification always parses the
+# actual bytes, so a truncated sub-20-byte write still surfaces as
+# parse_failure rather than being assumed empty.
 HEADER_ONLY_MAX = 20
 
 # Ported from inventory.py's _RT_PATTERN so the two definitions of a valid RT
@@ -107,6 +111,13 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=DB_PATH,
         help=f"Output DuckDB path (default: {DB_PATH}). Each run overwrites it.",
+    )
+    parser.add_argument(
+        "--max-classify",
+        type=int,
+        default=1000,
+        help="Per-partition cap on dropped-file classification downloads; "
+        "truncation is logged (default 1000)",
     )
     return parser.parse_args()
 
@@ -164,6 +175,13 @@ def discover_feeds_in_hour(client, task):
     return found
 
 
+# Intern parsed base64url values: in full-range mode every object would
+# otherwise allocate its own ~120-char copy of one of ~71 distinct strings —
+# noticeable (~1GB) across millions of listed objects. dict.setdefault is
+# GIL-atomic, so sharing across listing threads is safe.
+_B64_CACHE: dict[str, str] = {}
+
+
 def list_raw_objects(client, task):
     """Full object listing (name + size) under one prefix."""
     ft, d, h, prefix, b64 = task
@@ -174,9 +192,10 @@ def list_raw_objects(client, task):
         if b64_val is None:
             # Parse base64url from the path: .../base64url={b64}/{ts}.{ext}
             try:
-                b64_val = name.split("base64url=")[1].split("/")[0]
+                parsed = name.split("base64url=")[1].split("/")[0]
             except IndexError:
                 continue
+            b64_val = _B64_CACHE.setdefault(parsed, parsed)
         rows.append((ft, d, h, b64_val, name, blob.size or 0))
     return rows
 
@@ -239,12 +258,13 @@ def classify_drop(client, bucket, feed_type: str, pb_name: str, size_bytes: int)
     from google.protobuf.message import DecodeError
     from google.transit import gtfs_realtime_pb2
 
-    # Size short-circuits: no downloads needed for the two cheap-and-certain
-    # cases, which are also by far the most common.
+    # Only the zero-byte case skips the download — nothing to parse. Small
+    # files are NOT assumed empty: parsing a 15-byte body costs almost nothing
+    # by this stage (the candidate set is confined to flagged partitions) and
+    # turns "assumed fine" into "verified fine" — truncated tiny writes are
+    # exactly the failure class this tool exists to catch.
     if size_bytes == 0:
         return None, None, "never_valid_empty_body"
-    if size_bytes <= HEADER_ONLY_MAX:
-        return None, None, "legitimately_empty_feed"
 
     meta_name = pb_name.rsplit(".", 1)[0] + ".meta"
     response_code = None
@@ -256,8 +276,8 @@ def classify_drop(client, bucket, feed_type: str, pb_name: str, size_bytes: int)
     except Exception:
         pass  # missing sidecar or transient error: fields stay NULL
 
+    content = bucket.blob(pb_name).download_as_bytes()
     try:
-        content = bucket.blob(pb_name).download_as_bytes()
         feed = gtfs_realtime_pb2.FeedMessage()
         feed.ParseFromString(content)
         entity_field = ENTITY_FIELDS[feed_type]
@@ -265,10 +285,10 @@ def classify_drop(client, bucket, feed_type: str, pb_name: str, size_bytes: int)
         label = "legitimately_empty_feed" if n_entities == 0 else "unexplained_drop"
     except (DecodeError, ValueError):
         # Matches compaction.py's own except: what the pipeline calls a parse
-        # failure, we call a parse failure.
+        # failure, we call a parse failure. No bare except here — transient
+        # download errors must propagate so with_retries can retry them;
+        # safe_classify labels terminal failures "error".
         label = "parse_failure"
-    except Exception:
-        label = "unreadable"
 
     return response_code, content_length, label
 
@@ -301,14 +321,15 @@ def main() -> int:
     # 1. Feed dimension ----------------------------------------------------
     print(f"Fetching {FEEDS_PARQUET_URL}")
     feeds = fetch_feeds()
-    feeds_by_b64 = {r["base64url"]: r for r in feeds.to_pylist()}
+    feeds_rows = feeds.to_pylist()
+    feeds_by_b64 = {r["base64url"]: r for r in feeds_rows}
     print(f"  {feeds.num_rows} feeds in feeds.parquet")
 
     agency_b64s: set[str] | None = None
     if args.agency:
-        agency_b64s = {r["base64url"] for r in feeds.to_pylist() if r["agency_id"] == args.agency}
+        agency_b64s = {r["base64url"] for r in feeds_rows if r["agency_id"] == args.agency}
         if not agency_b64s:
-            known = sorted({r["agency_id"] for r in feeds.to_pylist()})
+            known = sorted({r["agency_id"] for r in feeds_rows})
             print(
                 f"No feeds for agency '{args.agency}'. Known: {', '.join(known)}", file=sys.stderr
             )
@@ -393,16 +414,13 @@ def main() -> int:
         parquet_daily.append((ft, d, b64, None, None, None, None))
 
     # 4. Discrepancy escalation --------------------------------------------
-    # Per-partition pb stats in one pass (total and "contentful": bigger than
-    # a header-only message, so capable of producing a row group).
-    pb_counts: dict[tuple, int] = {}
+    # Per-partition "contentful" pb count (bigger than a header-only message,
+    # so capable of producing a row group).
     contentful_counts: dict[tuple, int] = {}
     for ft, d, h, b64, name, size in raw_files:
-        if name.endswith(".pb"):
+        if name.endswith(".pb") and size > HEADER_ONLY_MAX:
             key = (ft, d, b64)
-            pb_counts[key] = pb_counts.get(key, 0) + 1
-            if size > HEADER_ONLY_MAX:
-                contentful_counts[key] = contentful_counts.get(key, 0) + 1
+            contentful_counts[key] = contentful_counts.get(key, 0) + 1
 
     # Escalation only makes sense inside the reconcilable window (outside it,
     # discrepancies are expected: compaction hasn't run / raw was reaped), and
@@ -416,6 +434,9 @@ def main() -> int:
         if path is None or not (window_lo <= d <= window_hi):
             continue
         contentful_n = contentful_counts.get((ft, d, b64), 0)
+        # rows == 0 is belt-and-braces: compaction never uploads a 0-row
+        # parquet (writer stays None), so only the shortfall branch fires in
+        # practice.
         if rows == 0 or (rows is not None and groups is not None and groups < contentful_n):
             flagged.append((ft, d, b64, path))
     eff_lo = max(window_lo, start.isoformat())
@@ -425,7 +446,6 @@ def main() -> int:
         f"(reconcilable dates in this run: {eff_lo}..{eff_hi})"
     )
 
-    parquet_source_files: list[tuple] = []
     dropped: list[tuple] = []
     protobuf_bucket = client.bucket(PROTOBUF_BUCKET)
     flagged_keys = {(ft, d, b64) for (ft, d, b64, _p) in flagged}
@@ -455,17 +475,26 @@ def main() -> int:
             if sources is None:
                 continue
             source_sets[(ft, d, b64)] = sources
-            for s in sorted(sources):
-                parquet_source_files.append((ft, d, b64, s))
 
     candidates: list[tuple] = []
+    skipped_classify = 0
     for ft, d, b64, path in flagged:
         sources = source_sets.get((ft, d, b64))
         if sources is None:  # column read failed: no attribution possible
             continue
-        for name, size in sorted(raw_pb_by_partition.get((ft, d, b64), [])):
-            if name not in sources:
-                candidates.append((ft, d, b64, name, size))
+        part = [
+            (ft, d, b64, name, size)
+            for name, size in sorted(raw_pb_by_partition.get((ft, d, b64), []))
+            if name not in sources
+        ]
+        if len(part) > args.max_classify:
+            print(
+                f"  NOTE: {ft}/{d}/{b64[:16]}…: classifying {args.max_classify} "
+                f"of {len(part)} dropped files (--max-classify cap)"
+            )
+            skipped_classify += len(part) - args.max_classify
+            part = part[: args.max_classify]
+        candidates.extend(part)
     print(f"  classifying {len(candidates)} dropped .pb files")
 
     def safe_classify(c):
@@ -488,16 +517,26 @@ def main() -> int:
     out_path: Path = args.output
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.unlink(missing_ok=True)
+    # An orphaned WAL from an interrupted run would otherwise be replayed
+    # into the fresh database.
+    out_path.with_name(out_path.name + ".wal").unlink(missing_ok=True)
     con = duckdb.connect(str(out_path))
 
     con.register("feeds_arrow", feeds)
     con.execute("CREATE TABLE feeds AS SELECT * FROM feeds_arrow")
     # Unmapped feeds: present in GCS, absent from feeds.parquet. Named columns
     # so this can't silently shift if fetch_feeds()'s column list changes.
+    # The decoded URL makes the finding actionable (same decode as
+    # compaction.decode_base64url).
     for b64 in sorted(discovered_b64s - set(feeds_by_b64)):
+        padded = b64 + "=" * (4 - len(b64) % 4) if len(b64) % 4 else b64
+        try:
+            url = base64.urlsafe_b64decode(padded).decode("utf-8")
+        except Exception:
+            url = None
         con.execute(
-            "INSERT INTO feeds (base64url, agency_id, agency_name) VALUES (?, ?, ?)",
-            [b64, "(unmapped)", "(unmapped)"],
+            "INSERT INTO feeds (base64url, url, agency_id, agency_name) VALUES (?, ?, ?, ?)",
+            [b64, url, "(unmapped)", "(unmapped)"],
         )
 
     # Arrow ingestion, not executemany: row-at-a-time inserts on millions of
@@ -546,28 +585,6 @@ def main() -> int:
     if parquet_daily:
         con.executemany("INSERT INTO parquet_daily VALUES (?, ?, ?, ?, ?, ?, ?)", parquet_daily)
 
-    if parquet_source_files:
-        cols = list(zip(*parquet_source_files))
-        psf_tbl = pa.table(
-            {
-                "feed_type": pa.array(cols[0], pa.string()),
-                "date": pa.array(cols[1], pa.string()),
-                "base64url": pa.array(cols[2], pa.string()),
-                "source_file": pa.array(cols[3], pa.string()),
-            }
-        )
-        con.register("psf_arrow", psf_tbl)
-        con.execute(
-            """CREATE TABLE parquet_source_files AS
-            SELECT feed_type, CAST(date AS DATE) AS date, base64url, source_file
-            FROM psf_arrow"""
-        )
-    else:
-        con.execute(
-            """CREATE TABLE parquet_source_files (
-                feed_type VARCHAR, date DATE, base64url VARCHAR, source_file VARCHAR)"""
-        )
-
     con.execute(
         """CREATE TABLE dropped_files (
             feed_type VARCHAR, date DATE, base64url VARCHAR, name VARCHAR,
@@ -577,16 +594,22 @@ def main() -> int:
     if dropped:
         con.executemany("INSERT INTO dropped_files VALUES (?, ?, ?, ?, ?, ?, ?, ?)", dropped)
 
+    # window_*_days ride along so the SQL layer derives the reconcilable
+    # window from the run instead of restating the constants (drift there
+    # would mean the dashboard annotates partitions the extract never
+    # escalated).
     con.execute(
         """CREATE TABLE extract_meta AS SELECT
             ? AS start_date, ? AS end_date, ? AS agency, ? AS feed_type,
-            ? AS extracted_at""",
+            ? AS extracted_at, ? AS window_old_days, ? AS window_new_days""",
         [
             start.isoformat(),
             end.isoformat(),
             args.agency,
             args.feed_type,
             datetime.now(timezone.utc).isoformat(),
+            WINDOW_OLD_DAYS,
+            WINDOW_NEW_DAYS,
         ],
     )
 
