@@ -314,3 +314,9 @@ Also in this stage:
   - Publish per-day inventory: `inventory.py` computes per-file row counts, then
     aggregates them away to `date_min`/`date_max`/`total_records` per feed.
   - Dagster asset checks over the manifest; hosted dashboard.
+  - Fetch-side truncation detection (found live by this dashboard, 2026-07-29:
+    three SEPTA trip_updates `.pb` truncated at exact 4096-byte multiples with
+    response_code 200): `.meta` records `content_length = len(received)`, not
+    the server's `Content-Length` header, so truncation is invisible in
+    metadata, and parse outcomes exist only as Dagster log warnings. Record the
+    header value and/or a `parse_ok` flag in `.meta` at fetch time.

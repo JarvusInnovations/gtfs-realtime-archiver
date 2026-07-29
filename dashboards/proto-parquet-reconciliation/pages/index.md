@@ -118,7 +118,10 @@ order by date
 
 Raw `.pb` files exist but the daily parquet is missing or empty. Rows outside
 the reconcilable window are expected noise (compaction hasn't run yet, or raw
-data has been reaped) and are labeled.
+data has been reaped) and are labeled. The `remediate` column is the exact
+re-materialization command — compaction rewrites the whole partition from raw,
+so one run recovers everything still within raw retention. (It cannot recover
+`parse_failure` files: those bytes were bad at fetch time.)
 
 ```sql missing_partitions
 select
@@ -128,7 +131,9 @@ select
     system_name,
     pb_count,
     row_count,
-    case when in_reconcilable_window then 'MISSING' else 'out of window' end as status
+    case when in_reconcilable_window then 'MISSING' else 'out of window' end as status,
+    'uv run dg launch --assets ' || feed_type || '_parquet --partition '
+        || strftime(date, '%Y-%m-%d') as remediate
 from archiver.daily_comparison
 where ('${inputs.agency.value}' = '%' or coalesce(agency_id, '(unmapped)') = '${inputs.agency.value}')
     and ('${inputs.feed_type.value}' = '%' or feed_type = '${inputs.feed_type.value}')
