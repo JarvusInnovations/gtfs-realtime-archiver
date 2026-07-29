@@ -147,21 +147,25 @@ still within raw retention — but note it runs *local* code against
 *production* buckets under your ADC, and it cannot recover `parse_failure`
 files whose bytes were bad at fetch time.
 
-If it fails with `DagsterInvalidSubsetError … containing the passed partition
-key`, your **local** Dagster instance hasn't registered that feed's dynamic
-partition key (production registers keys via `feed_discovery_sensor`; your
-`.dagster_home` has its own registry). Register it once, then re-run — the
-partition set is `{feed_type}_feeds` and the key is the part after `|`:
-
-```bash
-uv run python -c "
-import dagster as dg
-i = dg.DagsterInstance.get()
-i.add_dynamic_partitions('<feed_type>_feeds', ['<key-after-the-pipe>'])
-"
-```
+The command has two halves. The first registers the feed's dynamic partition
+key in your **local** Dagster instance (production gets keys from
+`feed_discovery_sensor`, but your `.dagster_home` has its own registry, and a
+launch against an unregistered key fails with `DagsterInvalidSubsetError`) —
+it loads `.env` itself and is idempotent, so it's safe when the key already
+exists. The second is the `dg launch`. Run from the repo root with a
+populated `.env` (see `.env.example`).
 
 ```sql missing_partitions
+with base as (
+    select
+        *,
+        case
+            when starts_with(url, 'http://') then '~' || substr(url, 8)
+            else regexp_replace(url, '^https://', '')
+        end as feed_key
+    from archiver.daily_comparison
+)
+
 select
     feed_type,
     date,
@@ -176,15 +180,15 @@ select
         else 'out of window'
     end as status,
     case
-        when in_reconcilable_window and parquet_path is null and url is not null then
-            'uv run dg launch --assets ' || feed_type || '_parquet --partition '''
-            || strftime(date, '%Y-%m-%d') || '|'
-            || case
-                when starts_with(url, 'http://') then '~' || substr(url, 8)
-                else regexp_replace(url, '^https://', '')
-            end || ''''
+        when in_reconcilable_window and parquet_path is null and feed_key is not null then
+            'uv run python -c "from dotenv import load_dotenv; load_dotenv(); '
+            || 'import dagster as dg; dg.DagsterInstance.get().add_dynamic_partitions('''
+            || feed_type || '_feeds'', ['''
+            || feed_key || '''])" && uv run dg launch --assets '
+            || feed_type || '_parquet --partition '''
+            || strftime(date, '%Y-%m-%d') || '|' || feed_key || ''''
     end as remediate
-from archiver.daily_comparison
+from base
 where ('${inputs.agency.value}' = '%' or coalesce(agency_id, '(unmapped)') = '${inputs.agency.value}')
     and ('${inputs.feed_type.value}' = '%' or feed_type = '${inputs.feed_type.value}')
     and pb_contentful_count > 0
