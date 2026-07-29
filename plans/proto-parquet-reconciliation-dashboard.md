@@ -92,8 +92,10 @@ no dashboard deps enter the main project. Requires ADC with read access to the *
 (private); the same ADC identity covers the parquet footer reads — one credential
 story for both sides.
 
-Listing the raw bucket is the dominant cost (~600k objects/day across all feeds),
-so the CLI flags cut it **server-side**, not client-side:
+Listing the raw bucket is the dominant cost — ~600k objects/day across all feeds,
+counting both `.pb` and `.meta` sidecars (every fetch writes a pair, so ~300k
+fetches/day; listing both suffixes is deliberate, since `proto_files_hourly`
+records `meta_count`) — so the CLI flags cut it **server-side**, not client-side:
 
 - `--feed-type` prunes at the top of the path (`{feed_type}/date=…`) — whole
   prefixes skipped.
@@ -107,6 +109,12 @@ so the CLI flags cut it **server-side**, not client-side:
 - All listings — agency-filtered or full-range — fan out over the same unit,
   (feed_type, date, hour[, base64url]) prefixes, via a thread pool (~32 workers);
   listing is I/O-bound pagination and parallelizes cleanly.
+- Regardless of filters, each hour prefix is first listed with `delimiter="/"`,
+  which returns only the distinct `base64url=…/` sub-prefixes (no object names,
+  ~one page each) — the complete set of feeds actually present in GCS. This keeps
+  unmapped-feed detection working even in `--agency` mode, where the exact-prefix
+  fan-out is otherwise structurally blind to feeds it didn't derive from
+  feeds.parquet. Cost: ~24 × 3 × days extra near-empty calls.
 
 Default date range: last 14 days. All agencies × 14 days ≈ 8.4M objects ≈ 8–9k
 list pages ≈ 5–10 min with the fan-out (unmeasured estimate — the first validation
@@ -116,24 +124,36 @@ run calibrates it); full history is a batch job, not interactive.
    `feeds(base64url, url, feed_type, agency_id, agency_name, system_id, system_name)`.
    Feeds found in GCS but absent from feeds.parquet appear as `(unmapped)` rather
    than being dropped — an unmapped feed is itself a finding.
-2. **Raw side**: list as above (names only); parse `hour=` and `base64url=` from
-   paths. →
-   `proto_files_hourly(feed_type, date, hour, base64url, pb_count, meta_count)`.
-3. **Parquet side**: one listing pass over the parquet bucket gives existence and
-   `size_bytes` for every partition in a single pagination (path regex copied from
-   `inventory.py`'s `_RT_PATTERN` — a PEP 723 script can't import from `src/`, and
-   copying the shape keeps the two definitions of a valid RT parquet path from
-   drifting). Footers via `gcsfs` + `pyarrow.parquet.read_metadata` (~8KB range
-   read, same mechanism as `inventory.py`) only for objects that exist. Partitions
-   expected from the raw side but absent → row of nulls (missing-partition signal,
-   don't skip). → `parquet_daily(feed_type, date, base64url, row_count,
-   size_bytes, num_row_groups)`.
+2. **Raw side**: list as above, capturing `size_bytes` per object (`list_blobs`
+   returns it at no extra cost). Persist per-file rows →
+   `raw_files(feed_type, date, hour, base64url, name, size_bytes)` — a few
+   million rows is nothing for DuckDB, and the step-4 anti-join needs the names —
+   and aggregate → `proto_files_hourly(feed_type, date, hour, base64url,
+   pb_count, meta_count, zero_byte_count)`. Zero/implausibly-tiny `.pb` sizes
+   separate the "never-valid HTTP-200 garbage" class without downloading
+   anything.
+3. **Parquet side**: list `{feed_type}/date={date}/` prefixes for the requested
+   window only (same constructed-prefix approach, 3 feed_types × days calls) —
+   existence and `size_bytes` per partition, **windowed by construction**. An
+   unwindowed full-bucket pass would join every parquet date ever against a
+   14-day raw side and manufacture "rows but no protos" discrepancies for the
+   entire backlog. Path parsing copies the shape of `inventory.py`'s
+   `_RT_PATTERN` (a PEP 723 script can't import from `src/`; copying the regex
+   keeps the two definitions of a valid RT parquet path from drifting). Footers
+   via `gcsfs` + `pyarrow.parquet.read_metadata` (~8KB range read, same mechanism
+   as `inventory.py`) only for objects that exist. Partitions expected from the
+   raw side but absent → row of nulls (missing-partition signal, don't skip). →
+   `parquet_daily(feed_type, date, base64url, row_count, size_bytes,
+   num_row_groups)`.
 4. **Discrepancy escalation**: for the feed × dates the cheap signals flag
    (missing/zero-row parquet, or `num_row_groups` below the pb count), read the
    parquet's `source_file` column (`SELECT DISTINCT source_file`) and anti-join
-   against the raw listing → `parquet_source_files(feed_type, date, base64url,
+   against `raw_files` → `parquet_source_files(feed_type, date, base64url,
    source_file)` — naming exactly which `.pb` files never made it into the
-   parquet.
+   parquet. For the anti-joined files only (a handful of GETs, not 600k), fetch
+   the sibling `.meta`'s `response_code` / `content_length` and combine with
+   `size_bytes` from `raw_files` to **label each drop automatically**: parse
+   failure, never-valid fetch, or legitimately-empty feed.
 5. Write all tables to `data/reconciliation.duckdb` (overwrite per run).
 
 **Why `num_row_groups` + `source_file`**: compaction writes one row group per
@@ -145,9 +165,13 @@ yields zero records (a legitimately empty feed) also produces no row group — a
 different failure mode than a parse drop. The **exact** answer comes from the
 non-nullable `source_file` column every RT schema carries (`schemas.py`): a
 distinct-count matches contributing `.pb` files precisely, and the anti-join
-(step 4) names the dropped files, turning each candidate into a two-minute manual
-check (download, parse) instead of an unresolvable label. Strategy: footer
-heuristic for the broad scan, `source_file` column reads only on discrepancy rows.
+(step 4) names the dropped files, with `.meta` + size classification labeling each
+one automatically. Helpfully, the drop space is bounded: the only silent-drop
+paths in `compact_single_feed` are the parse-failure `continue`
+(`compaction.py:524`) and the zero-record `continue` (`:513`) — a failed download
+raises and fails the whole partition — so a short parquet has exactly two
+explanations. Strategy: footer heuristic for the broad scan, `source_file` column
+reads only on discrepancy rows.
 
 ### Stage 2 — Evidence project
 
@@ -175,12 +199,17 @@ materialize the three tables plus a pre-joined `daily_comparison`.
      anti-joined `.pb` names from `parquet_source_files` listed per candidate
    - feeds in raw bucket but `(unmapped)` in feeds.parquet
 
-   Discrepancy queries restrict to the **reconcilable window** at both edges:
-   exclude (or annotate) dates older than the raw bucket's 365-day retention (raw
-   objects age out while parquet persists — false discrepancies in a full-history
-   run), and dates newer than the last completed compaction — compaction runs at
-   02:00 UTC for the *previous* day (`schedules.py`), so today (and yesterday,
-   before ~02:00 UTC) always has raw files and legitimately no parquet yet.
+   Discrepancy queries restrict to the **reconcilable window**, with buffers at
+   both edges rather than exact boundaries:
+
+   - **Old edge**: exclude/annotate dates older than ~358 days, not exactly 365 —
+     GCS lifecycle deletion is asynchronous and per-object, so days near the
+     boundary can be *partially* reaped, reading as fake mid-day archiver gaps.
+   - **New edge**: exclude/annotate dates less than 2 full days old — compaction
+     *starts* at 02:00 UTC for the previous day (`schedules.py`) and can run for
+     hours on busy feeds, so a same-morning extract would flag yesterday as
+     missing while compaction is mid-run. Document an override for anyone
+     deliberately reconciling up to the edge.
 
 ### Stage 3 — Runner & docs
 
@@ -196,8 +225,9 @@ Re-run `npm run sources` after every extract — Evidence snapshots sources at b
 
 Also in this stage:
 
-- Pin `nodejs` in `.tool-versions` (Evidence needs Node ≥18; the repo currently
-  pins python/uv/opentofu only).
+- Pin `nodejs` in `.tool-versions` at a current LTS (22.x): Evidence needs ≥18
+  and the vendored specops CLI needs ≥20, so one pin satisfies both (the repo
+  currently pins python/uv/opentofu only).
 - Update `README.md` and `.claude/CLAUDE.md`'s Repository Layout for the new
   top-level `dashboards/` directory, in the same commit that adds it.
 - `extract.py` deliberately sits outside CI's `ruff check src/ tests/` /
@@ -213,13 +243,15 @@ Also in this stage:
       files that parse to ≥1 record (validates the parse-drop heuristic itself)
 - [ ] For at least one flagged discrepancy, the `source_file` anti-join names
       specific `.pb` files, spot-checked by downloading and parsing one
-- [ ] Extract for all agencies × 14 days completes in interactive time (≲15 min)
-- [ ] Single-agency extract over 14 days completes in ≲2 min — listing cost scales
-      with the agency's feeds (exact constructed prefixes), not the whole archive
-- [ ] Every discrepancy view restricts to the reconcilable window (older than raw
-      retention and newer than the last completed compaction excluded/annotated)
-- [ ] No Evidence source SQL or page component reads anything outside
-      `data/reconciliation.duckdb` (the never-fetches principle, enforced)
+- [ ] Measured runtimes for all-agencies × 14 days and single-agency × 14 days
+      recorded in Notes — the interactive-use *targets* (≲15 min / ≲2 min) live in
+      Risks, because an unmeasured estimate can't be a pass/fail criterion
+- [ ] Every discrepancy view restricts to the buffered reconcilable window
+      (~358-day retention edge, 2-day compaction edge — excluded or annotated)
+- [ ] Never-fetches principle checked mechanically: grep of `sources/` and
+      `pages/` query blocks for `gs://`, `http(s)://`, `read_parquet`, `read_csv`
+      finds no remote data access (empty result pasted into Notes at closeout;
+      prose hyperlinks exempt)
 - [ ] Closeout Notes/Follow-ups record concrete pipeline-metadata recommendations
       informed by actually using the dashboard
 - [ ] Root `pyproject.toml` / `uv.lock` are untouched — extract deps live only in
@@ -232,7 +264,8 @@ Also in this stage:
 - [ ] Discrepancy table lists dates with raw data but missing parquet, cross-checked
       by hand against at least one known-good and (if one exists) one known-missing
       partition
-- [ ] Unmapped feeds (in GCS, not in feeds.parquet) surface rather than disappear
+- [ ] Unmapped feeds (in GCS, not in feeds.parquet) surface rather than disappear —
+      including in an `--agency`-filtered run (via the delimiter discovery pass)
 - [ ] `data/`, `node_modules/`, `.evidence/` are gitignored; no data committed
 
 ## Risks / unknowns
@@ -243,7 +276,8 @@ Also in this stage:
 - **Listing cost/time** — linear in days × feeds; the hour-prefix fan-out and
   exact constructed prefixes are what keep the 14-day default interactive. Stage
   1's runtime numbers are unmeasured estimates — calibrate on the first validation
-  run and revisit the fan-out width if they're off.
+  run and revisit the fan-out width if they're off. Working targets (targets, not
+  validation criteria): ≲15 min for all agencies × 14 days, ≲2 min single-agency.
 - **Row-group heuristic coupling** — "one row group per non-empty parsed file" is
   an internal implementation detail of `compaction.py` with no test pinning it;
   record at closeout what would break it (row-group splitting, the zero-record
@@ -262,19 +296,21 @@ Also in this stage:
 
 ## Follow-ups
 
-(Populated at closeout. Already known: write the hardening issue — informed by what
-the temporary version teaches us — centered on **what the pipeline should record so
-this validation becomes cheap and continuous**. Candidates already visible:
+(Populated at closeout.)
 
-- Compaction writes a per-feed × date **manifest** alongside `data.parquet`
-  (files_listed, files_parsed, files_dropped + reasons, records_written). Today
-  those numbers exist only as Dagster materialization metadata
-  (`compaction.py`'s Output metadata) — trapped in the Dagster event DB, not
-  queryable from the lake.
-- Aggregate fetch outcomes pipeline-side: `.meta` sidecars already carry
-  `response_code` / `duration_ms` / `content_length` per fetch (`storage.py`), but
-  reading them after the fact costs one GET per file (~600k/day) — fold them into
-  the manifest at compaction time, which downloads each `.meta` anyway.
-- Publish per-day inventory: `inventory.py` computes per-file row counts, then
-  aggregates them away to `date_min`/`date_max`/`total_records` per feed.
-- Dagster asset checks over the manifest; hosted dashboard.)
+- Tracked as: hardening issue to be written at closeout, informed by what the
+  temporary version teaches us — centered on **what the pipeline should record so
+  this validation becomes cheap and continuous**. Candidates already visible:
+  - Compaction writes a per-feed × date **manifest** alongside `data.parquet`
+    (files_listed, files_parsed, files_dropped + reasons, records_written). Today
+    those numbers exist only as Dagster materialization metadata
+    (`compaction.py`'s Output metadata) — trapped in the Dagster event DB, not
+    queryable from the lake.
+  - Aggregate fetch outcomes pipeline-side: `.meta` sidecars already carry
+    `response_code` / `duration_ms` / `content_length` per fetch (`storage.py`),
+    but reading them after the fact costs one GET per file (one per fetch,
+    ~300k/day) — fold them into the manifest at compaction time, which downloads
+    each `.meta` anyway.
+  - Publish per-day inventory: `inventory.py` computes per-file row counts, then
+    aggregates them away to `date_min`/`date_max`/`total_records` per feed.
+  - Dagster asset checks over the manifest; hosted dashboard.
