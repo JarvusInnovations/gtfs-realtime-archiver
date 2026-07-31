@@ -274,37 +274,69 @@ order by date, feed_type
 
 Partitions where row groups fall short of *contentful* `.pb` files (bigger than
 a header-only message) — one row group is written per successfully-parsed
-non-empty file, so the shortfall approximates dropped files (heuristic; the
-labeled table below is the exact answer). Restricted to the reconcilable
-window, matching the extract's escalation — an out-of-window shortfall would
-have a by-construction-empty explanation below.
+non-empty file, so the shortfall approximates dropped files. Restricted to the
+reconcilable window, matching the extract's escalation.
+
+**"Contentful" is a size heuristic; the explanation columns are ground truth**,
+from parsing each shortfall file: `zero_entity` files parse fine but contain no
+entities of this feed's type (bigger than a header, but nothing was lost —
+common for feeds that pad empty responses), `parse_failure` files are invalid
+bytes (real fetch-time loss), and `valid_dropped` files parse with entities yet
+appear nowhere in the parquet — genuine compaction losses that should always
+be zero.
 
 ```sql short_partitions
+with drops as (
+    select
+        feed_type,
+        date,
+        base64url,
+        count(*) as classified,
+        count(*) filter (label = 'unexplained_drop') as valid_dropped,
+        count(*) filter (label = 'parse_failure') as parse_failure,
+        count(*) filter (label = 'legitimately_empty_feed') as zero_entity
+    from archiver.dropped_files
+    -- size filter makes this correct even against extracts that classified
+    -- header-only files (they never count toward the shortfall)
+    where size_bytes > 20
+    group by all
+)
+
 select
-    feed_type,
-    date,
-    agency_name,
-    system_name,
-    pb_contentful_count,
-    num_row_groups,
-    pb_contentful_count - num_row_groups as shortfall,
-    row_count
-from archiver.daily_comparison
-where ('${inputs.agency.value}' = '%' or coalesce(agency_id, '(unmapped)') = '${inputs.agency.value}')
-    and ('${inputs.feed_type.value}' = '%' or feed_type = '${inputs.feed_type.value}')
-    and row_count > 0
-    and num_row_groups < pb_contentful_count
-    and in_reconcilable_window
-order by shortfall desc
+    c.feed_type,
+    c.date,
+    c.agency_name,
+    c.system_name,
+    c.pb_contentful_count,
+    c.num_row_groups,
+    c.pb_contentful_count - c.num_row_groups as shortfall,
+    d.zero_entity,
+    d.parse_failure,
+    d.valid_dropped,
+    c.pb_contentful_count - c.num_row_groups
+        - coalesce(d.classified, 0) as unclassified,
+    c.row_count
+from archiver.daily_comparison c
+left join drops d
+    on d.feed_type = c.feed_type and d.date = c.date and d.base64url = c.base64url
+where ('${inputs.agency.value}' = '%' or coalesce(c.agency_id, '(unmapped)') = '${inputs.agency.value}')
+    and ('${inputs.feed_type.value}' = '%' or c.feed_type = '${inputs.feed_type.value}')
+    and c.row_count > 0
+    and c.num_row_groups < c.pb_contentful_count
+    and c.in_reconcilable_window
+order by coalesce(d.valid_dropped, 0) desc, coalesce(d.parse_failure, 0) desc, shortfall desc
 ```
 
 <DataTable data={short_partitions} rows=25 emptySet=pass emptyMessage="No short partitions 🎉"/>
 
 ### Dropped `.pb` files, classified
 
-Exact per-file attribution for flagged partitions: files present in the raw
-bucket whose path never appears in the parquet's `source_file` column, labeled
-by parsing the file and reading its `.meta` sidecar.
+Exact per-file attribution for flagged partitions: *contentful* files present
+in the raw bucket whose path never appears in the parquet's `source_file`
+column, labeled by parsing the file and reading its `.meta` sidecar. This
+table corresponds 1:1 with the shortfall arithmetic above (extracts from
+before 2026-07-31 also classified header-only files, which inflate the
+`legitimately_empty_feed` count here until the next extract).
 
 ```sql drop_labels
 select

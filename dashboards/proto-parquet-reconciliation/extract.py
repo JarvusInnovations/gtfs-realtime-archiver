@@ -503,13 +503,17 @@ def main() -> int:
         sources = source_sets.get((ft, d, b64))
         if sources is None:  # column read failed: no attribution possible
             continue
-        part_files = sorted(raw_pb_by_partition.get((ft, d, b64), []))
-        if path is None:
-            # Missing partition: only the contentful files need explaining —
-            # the zero-byte/header-only story is already told by the
-            # aggregate counts, and classifying ~1,400 empty snapshots to
-            # explain one bad file would be the download storm all over.
-            part_files = [(n, s) for n, s in part_files if s > HEADER_ONLY_MAX]
+        # Only contentful files need explaining, for missing and shortfall
+        # partitions alike: zero-byte/header-only files never produce a row
+        # group, don't count toward the shortfall metric, and are already
+        # counted in the aggregates — classifying them (~14k downloads per
+        # fleet run) told us nothing their size didn't. This also makes
+        # dropped_files correspond 1:1 with the shortfall arithmetic.
+        part_files = [
+            (n, s)
+            for n, s in sorted(raw_pb_by_partition.get((ft, d, b64), []))
+            if s > HEADER_ONLY_MAX
+        ]
         part = [(ft, d, b64, name, size) for name, size in part_files if name not in sources]
         if len(part) > args.max_classify:
             print(
