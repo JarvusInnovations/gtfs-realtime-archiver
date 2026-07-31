@@ -139,17 +139,19 @@ order by date
 *Contentful* raw `.pb` files exist but the daily parquet is missing. Feed-days
 whose files are all zero-byte/header-only are excluded — compaction correctly
 writes nothing for those (an always-quiet service_alerts feed is healthy, not
-missing). **Before remediating, check the classified drops table below**: for
-low-volume missing partitions (≤25 contentful files) the extract classifies
-each one, and if they're all `parse_failure` (e.g. the HTTP-200
-`ERROR: no connectivity to BusTime server!` vendor bodies), the partition is
-missing because no valid data exists — re-materialization can't recover it. Rows outside the reconcilable window, and rows where the extract's
-own footer read failed, are labeled distinctly. The `remediate` column is the
-paste-ready re-materialization command (`date|feed` multi-partition key):
-compaction rewrites the whole partition from raw, so one run recovers anything
-still within raw retention — but note it runs *local* code against
-*production* buckets under your ADC, and it cannot recover `parse_failure`
-files whose bytes were bad at fetch time.
+missing). Rows outside the reconcilable window, and rows where the extract's
+own footer read failed, are labeled distinctly.
+
+The **diagnosis** column answers "should I re-run compaction?" directly. For
+low-volume missing partitions (≤25 contentful files) the extract downloads and
+parses each one; if any parses with entities, real data was dropped and
+remediation recovers it — but if all of them are invalid bytes (e.g. the
+HTTP-200 `ERROR: no connectivity to BusTime server!` vendor bodies), no valid
+data ever existed, remediation cannot help, and **no remediate command is
+rendered**. The `remediate` column appears only when a re-run can actually
+recover something (or when the partition was too busy to classify, where
+re-running is safe to try): compaction rewrites the whole partition from raw,
+so one run recovers anything still within raw retention.
 
 **Preferred: remediate via the production Dagster UI** —
 [dagster.gtfsrt.io](https://dagster.gtfsrt.io) → Assets → `{feed_type}_parquet`
@@ -177,36 +179,62 @@ with base as (
             else regexp_replace(url, '^https://', '')
         end as feed_key
     from archiver.daily_comparison
+),
+
+drops as (
+    select
+        feed_type,
+        date,
+        base64url,
+        count(*) as classified,
+        count(*) filter (label = 'unexplained_drop') as valid_files,
+        count(*) filter (label = 'parse_failure') as parse_failures,
+        count(*) filter (label = 'never_valid_empty_body') as empty_bodies,
+        count(*) filter (label = 'legitimately_empty_feed') as zero_entity
+    from archiver.dropped_files
+    group by all
 )
 
 select
-    feed_type,
-    date,
-    agency_name,
-    system_name,
-    pb_count,
-    pb_contentful_count,
-    row_count,
+    b.feed_type,
+    b.date,
+    b.agency_name,
+    b.system_name,
+    b.pb_contentful_count,
+    b.row_count,
     case
-        when parquet_path is not null and row_count is null then 'footer read failed'
-        when in_reconcilable_window then 'MISSING'
+        when b.parquet_path is not null and b.row_count is null then 'footer read failed'
+        when b.in_reconcilable_window then 'MISSING'
         else 'out of window'
     end as status,
     case
-        when in_reconcilable_window and parquet_path is null and feed_key is not null then
+        when b.parquet_path is not null and b.row_count is null then ''
+        when d.classified is null
+            then 'not classified (busy partition, or extract predates classification) — re-run is safe to try'
+        when d.valid_files > 0
+            then d.valid_files || ' valid file(s) dropped — remediation recovers real data'
+        else 'no valid data ever existed (' || d.parse_failures || ' parse_failure, '
+            || d.empty_bodies || ' empty-body, ' || d.zero_entity
+            || ' zero-entity) — do NOT re-run, nothing to recover'
+    end as diagnosis,
+    case
+        when b.in_reconcilable_window and b.parquet_path is null and b.feed_key is not null
+            and (d.classified is null or d.valid_files > 0) then
             'uv run python -c "from dotenv import load_dotenv; load_dotenv(); '
             || 'import dagster as dg; dg.DagsterInstance.get().add_dynamic_partitions('''
-            || feed_type || '_feeds'', ['''
-            || feed_key || '''])" && uv run dg launch --assets '
-            || feed_type || '_parquet --partition '''
-            || strftime(date, '%Y-%m-%d') || '|' || feed_key || ''''
+            || b.feed_type || '_feeds'', ['''
+            || b.feed_key || '''])" && uv run dg launch --assets '
+            || b.feed_type || '_parquet --partition '''
+            || strftime(b.date, '%Y-%m-%d') || '|' || b.feed_key || ''''
     end as remediate
-from base
-where ('${inputs.agency.value}' = '%' or coalesce(agency_id, '(unmapped)') = '${inputs.agency.value}')
-    and ('${inputs.feed_type.value}' = '%' or feed_type = '${inputs.feed_type.value}')
-    and pb_contentful_count > 0
-    and coalesce(row_count, 0) = 0
-order by in_reconcilable_window desc, date, feed_type
+from base b
+left join drops d
+    on d.feed_type = b.feed_type and d.date = b.date and d.base64url = b.base64url
+where ('${inputs.agency.value}' = '%' or coalesce(b.agency_id, '(unmapped)') = '${inputs.agency.value}')
+    and ('${inputs.feed_type.value}' = '%' or b.feed_type = '${inputs.feed_type.value}')
+    and b.pb_contentful_count > 0
+    and coalesce(b.row_count, 0) = 0
+order by b.in_reconcilable_window desc, b.date, b.feed_type
 ```
 
 <DataTable data={missing_partitions} rows=25 emptySet=pass emptyMessage="No missing partitions in this window 🎉">
@@ -214,10 +242,10 @@ order by in_reconcilable_window desc, date, feed_type
     <Column id=date/>
     <Column id=agency_name/>
     <Column id=system_name/>
-    <Column id=pb_count/>
     <Column id=pb_contentful_count/>
     <Column id=row_count/>
     <Column id=status/>
+    <Column id=diagnosis wrap=true/>
     <Column id=remediate wrap=true/>
 </DataTable>
 
