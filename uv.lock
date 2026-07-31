@@ -1438,14 +1438,14 @@ wheels = [
 
 [[package]]
 name = "gtfs-realtime-bindings"
-version = "2.0.0"
+version = "2.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "protobuf" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6b/9b/c33d7889ff8d24cc9e9ae82a83fb9defba3f6595312f056cb62937dd1b33/gtfs_realtime_bindings-2.0.0.tar.gz", hash = "sha256:861a9dcf4c40f9a59520044d870e336b00894ad5638bcf2c4a9b998923543b42", size = 6231, upload-time = "2025-12-03T19:19:40.273Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/42/63/3e3d190df599b6d25e2c0793f6653bb696c1be8480263ef417ea70a40f25/gtfs_realtime_bindings-2.2.0.tar.gz", hash = "sha256:1e184075ff6aae1f8e8c91ae28eb946af5e5b656b743a41a7bca37818784886b", size = 12013, upload-time = "2026-07-29T19:12:47.132Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/91/d7/a5a71c655fd10c98fadb00d4db080195ced839445f410684fa6dfb901c28/gtfs_realtime_bindings-2.0.0-py3-none-any.whl", hash = "sha256:e66e581dfccad20e3b9eaed36aae106f945c2f5e506b03a63d37070096b8de39", size = 5303, upload-time = "2025-12-03T19:19:38.845Z" },
+    { url = "https://files.pythonhosted.org/packages/77/14/a73fbb70b7948cd2d2f1c48846889fc6c944a6aede25a31d8111a1d48dcf/gtfs_realtime_bindings-2.2.0-py3-none-any.whl", hash = "sha256:4f222a962bcb8715d9305cc08e7f7662cc70e7479f377e2694439a50724bc676", size = 11297, upload-time = "2026-07-29T19:12:46.089Z" },
 ]
 
 [[package]]
