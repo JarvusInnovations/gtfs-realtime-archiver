@@ -139,7 +139,11 @@ order by date
 *Contentful* raw `.pb` files exist but the daily parquet is missing. Feed-days
 whose files are all zero-byte/header-only are excluded — compaction correctly
 writes nothing for those (an always-quiet service_alerts feed is healthy, not
-missing). Rows outside the reconcilable window, and rows where the extract's
+missing). **Before remediating, check the classified drops table below**: for
+low-volume missing partitions (≤25 contentful files) the extract classifies
+each one, and if they're all `parse_failure` (e.g. the HTTP-200
+`ERROR: no connectivity to BusTime server!` vendor bodies), the partition is
+missing because no valid data exists — re-materialization can't recover it. Rows outside the reconcilable window, and rows where the extract's
 own footer read failed, are labeled distinctly. The `remediate` column is the
 paste-ready re-materialization command (`date|feed` multi-partition key):
 compaction rewrites the whole partition from raw, so one run recovers anything

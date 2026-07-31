@@ -76,6 +76,15 @@ _RT_PATTERN = re.compile(
 WINDOW_OLD_DAYS = 358
 WINDOW_NEW_DAYS = 2
 
+# Missing partitions (no parquet at all) normally skip per-file attribution —
+# nothing was written, so "which files dropped" is everything, and classifying
+# a busy feed's whole day is a download storm. But when the day held only a
+# handful of contentful files, classifying them explains WHY nothing was
+# written: e.g. a partition whose sole contentful .pb is the fleet-wide
+# "ERROR: no connectivity to BusTime server!" HTTP-200 body is
+# missing-and-unrecoverable, not missing-and-remediable.
+MISSING_CLASSIFY_MAX = 25
+
 
 def with_retries(fn, attempts: int = 3):
     """Retry a worker function on transient errors with linear backoff."""
@@ -431,9 +440,15 @@ def main() -> int:
     window_hi = (today_utc - timedelta(days=WINDOW_NEW_DAYS)).isoformat()
     flagged = []
     for ft, d, b64, rows, size, groups, path in parquet_daily:
-        if path is None or not (window_lo <= d <= window_hi):
+        if not (window_lo <= d <= window_hi):
             continue
         contentful_n = contentful_counts.get((ft, d, b64), 0)
+        if path is None:
+            # Missing partition: classify only the low-volume case (see
+            # MISSING_CLASSIFY_MAX) so the drops table explains it.
+            if 0 < contentful_n <= MISSING_CLASSIFY_MAX:
+                flagged.append((ft, d, b64, None))
+            continue
         # rows == 0 is belt-and-braces: compaction never uploads a 0-row
         # parquet (writer stays None), so only the shortfall branch fires in
         # practice.
@@ -468,13 +483,19 @@ def main() -> int:
             return None
 
     # Capped below LIST_WORKERS: each read holds a whole column in memory.
+    with_parquet = [t for t in flagged if t[3] is not None]
     with ThreadPoolExecutor(8) as pool:
         for (ft, d, b64, path), sources in zip(
-            flagged, pool.map(lambda t: safe_sources(t[3]), flagged)
+            with_parquet, pool.map(lambda t: safe_sources(t[3]), with_parquet)
         ):
             if sources is None:
                 continue
             source_sets[(ft, d, b64)] = sources
+    # Missing partitions have no parquet: every file is by definition
+    # uncontributed, so the anti-join runs against an empty source set.
+    for ft, d, b64, path in flagged:
+        if path is None:
+            source_sets[(ft, d, b64)] = set()
 
     candidates: list[tuple] = []
     skipped_classify = 0
@@ -482,11 +503,14 @@ def main() -> int:
         sources = source_sets.get((ft, d, b64))
         if sources is None:  # column read failed: no attribution possible
             continue
-        part = [
-            (ft, d, b64, name, size)
-            for name, size in sorted(raw_pb_by_partition.get((ft, d, b64), []))
-            if name not in sources
-        ]
+        part_files = sorted(raw_pb_by_partition.get((ft, d, b64), []))
+        if path is None:
+            # Missing partition: only the contentful files need explaining —
+            # the zero-byte/header-only story is already told by the
+            # aggregate counts, and classifying ~1,400 empty snapshots to
+            # explain one bad file would be the download storm all over.
+            part_files = [(n, s) for n, s in part_files if s > HEADER_ONLY_MAX]
+        part = [(ft, d, b64, name, size) for name, size in part_files if name not in sources]
         if len(part) > args.max_classify:
             print(
                 f"  NOTE: {ft}/{d}/{b64[:16]}…: classifying {args.max_classify} "
