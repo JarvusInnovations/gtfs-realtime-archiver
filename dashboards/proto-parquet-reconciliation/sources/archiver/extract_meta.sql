@@ -7,5 +7,6 @@ select
     cast(feed_type as varchar) as feed_type,
     extracted_at,
     window_old_days,
-    window_new_days
+    window_new_days,
+    header_only_max
 from extract_meta

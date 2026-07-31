@@ -87,12 +87,21 @@ MISSING_CLASSIFY_MAX = 25
 
 
 def with_retries(fn, attempts: int = 3):
-    """Retry a worker function on transient errors with linear backoff."""
+    """Retry a worker function on transient errors with linear backoff.
+
+    Terminal API errors (404/403) re-raise immediately — retrying a
+    guaranteed failure burns ~3s of backoff per call, which adds up across
+    thousands of classify candidates.
+    """
 
     def wrapped(*a, **k):
+        from google.api_core.exceptions import Forbidden, NotFound
+
         for i in range(attempts):
             try:
                 return fn(*a, **k)
+            except (NotFound, Forbidden):
+                raise
             except Exception:
                 if i == attempts - 1:
                     raise
@@ -250,6 +259,9 @@ def read_source_files(fs, path: str) -> set[str]:
     sources: set[str] = set()
     for chunk in table.column("source_file").chunks:
         if pa.types.is_dictionary(chunk.type):
+            # Null indices would yield a None in the set — harmless for the
+            # `name not in sources` anti-join, and unreachable anyway while
+            # the schema declares source_file non-nullable.
             vals = chunk.dictionary.take(pc.unique(chunk.indices))
         else:
             vals = pc.unique(chunk)
@@ -443,6 +455,10 @@ def main() -> int:
         if not (window_lo <= d <= window_hi):
             continue
         contentful_n = contentful_counts.get((ft, d, b64), 0)
+        # Bound on the row-group identity: pyarrow splits a write_table call
+        # above ~1Mi rows, so a single .pb yielding >1,048,576 rows would add
+        # row groups and mask shortfall (fails safe: hides, never invents).
+        # Largest observed snapshot is ~18k rows — ~50x headroom.
         if path is None:
             # Missing partition: classify only the low-volume case (see
             # MISSING_CLASSIFY_MAX) so the drops table explains it.
@@ -523,6 +539,8 @@ def main() -> int:
             skipped_classify += len(part) - args.max_classify
             part = part[: args.max_classify]
         candidates.extend(part)
+    if skipped_classify:
+        print(f"  NOTE: {skipped_classify} candidates skipped in total (--max-classify)")
     print(f"  classifying {len(candidates)} dropped .pb files")
 
     def safe_classify(c):
@@ -622,14 +640,15 @@ def main() -> int:
     if dropped:
         con.executemany("INSERT INTO dropped_files VALUES (?, ?, ?, ?, ?, ?, ?, ?)", dropped)
 
-    # window_*_days ride along so the SQL layer derives the reconcilable
-    # window from the run instead of restating the constants (drift there
-    # would mean the dashboard annotates partitions the extract never
-    # escalated).
+    # window_*_days and header_only_max ride along so the SQL layer derives
+    # them from the run instead of restating the constants (drift there would
+    # mean the dashboard annotates partitions the extract never escalated, or
+    # counts a different "contentful" population than the shortfall math).
     con.execute(
         """CREATE TABLE extract_meta AS SELECT
             ? AS start_date, ? AS end_date, ? AS agency, ? AS feed_type,
-            ? AS extracted_at, ? AS window_old_days, ? AS window_new_days""",
+            ? AS extracted_at, ? AS window_old_days, ? AS window_new_days,
+            ? AS header_only_max""",
         [
             start.isoformat(),
             end.isoformat(),
@@ -638,6 +657,7 @@ def main() -> int:
             datetime.now(timezone.utc).isoformat(),
             WINDOW_OLD_DAYS,
             WINDOW_NEW_DAYS,
+            HEADER_ONLY_MAX,
         ],
     )
 

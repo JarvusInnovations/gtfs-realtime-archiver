@@ -19,8 +19,9 @@ Plan: [`plans/proto-parquet-reconciliation-dashboard.md`](../../plans/proto-parq
 
 - **uv** (runs the extract script; deps are declared inline via PEP 723 — the
   repo's root `pyproject.toml`/`uv.lock` are not touched)
-- **Node ≥20** (`.tool-versions` pins 22.x; Evidence needs ≥18 but the vendored
-  specops CLI needs ≥20)
+- **Node ≥20** (pinned by *this directory's* `.tool-versions` — kept out of the
+  root pin so CI jobs don't install Node for a dashboard they never build;
+  asdf resolves nearest-ancestor, so `cd` here and it applies)
 
 ## Usage
 

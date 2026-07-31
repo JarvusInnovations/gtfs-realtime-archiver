@@ -32,6 +32,8 @@ import re
 import sys
 from pathlib import Path
 
+import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.csv as pacsv
 import pyarrow.parquet as pq
 
@@ -138,8 +140,6 @@ def main() -> int:
         # Slim the CSV for human (and editor) consumption: the constant
         # feed_url and the ~150-char source_file path repeated per row double
         # the file size, and VS Code stops colorizing files above 20MB.
-        import pyarrow.compute as pc
-
         slim = {}
         for col_name in rows.column_names:
             if col_name == "feed_url":
@@ -149,8 +149,6 @@ def main() -> int:
                 slim["snapshot"] = pc.replace_substring_regex(col, r"^.*/", "")
             else:
                 slim[col_name] = col
-        import pyarrow as pa
-
         pacsv.write_csv(pa.table(slim), outdir / "parquet_rows.csv")
     except FileNotFoundError:
         rows = None

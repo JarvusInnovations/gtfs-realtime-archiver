@@ -6,15 +6,19 @@ select
     end_date,
     coalesce(agency, 'all') as agency,
     coalesce(feed_type, 'all') as feed_type,
-    extracted_at
+    extracted_at,
+    window_old_days,
+    window_new_days
 from archiver.extract_meta
 ```
 
 Extract window **<Value data={extract_info} column=start_date/> → <Value data={extract_info} column=end_date/>**
 (agency: <Value data={extract_info} column=agency/>, feed type: <Value data={extract_info} column=feed_type/>),
 extracted <Value data={extract_info} column=extracted_at/>.
-Dates outside the buffered reconcilable window (older than ~358 days or newer
-than 2 full days ago) are annotated, not trusted — see the plan for why.
+Dates outside the buffered reconcilable window (older than
+<Value data={extract_info} column=window_old_days/> days or newer than
+<Value data={extract_info} column=window_new_days/> full days) are annotated,
+not trusted — see the plan for why.
 
 ```sql agencies
 -- scoped to feeds present in this extract, so picking an agency the extract
@@ -174,6 +178,8 @@ bucket names), the launch will target the emulator, not production. Check
 with base as (
     select
         *,
+        -- mirrors compaction.url_to_partition_key (scheme strip, ~ prefix
+        -- for http) — must not drift, or remediate commands stop resolving
         case
             when starts_with(url, 'http://') then '~' || substr(url, 8)
             else regexp_replace(url, '^https://', '')
@@ -189,9 +195,11 @@ drops as (
         count(*) as classified,
         count(*) filter (label = 'unexplained_drop') as valid_files,
         count(*) filter (label = 'parse_failure') as parse_failures,
-        count(*) filter (label = 'never_valid_empty_body') as empty_bodies,
         count(*) filter (label = 'legitimately_empty_feed') as zero_entity
     from archiver.dropped_files
+    -- threshold from the extract itself, and consistent with short_partitions:
+    -- pre-2026-07-31 extracts classified header-only files too
+    where size_bytes > (select header_only_max from archiver.extract_meta)
     group by all
 )
 
@@ -214,11 +222,13 @@ select
         when d.valid_files > 0
             then d.valid_files || ' valid file(s) dropped — remediation recovers real data'
         else 'no valid data ever existed (' || d.parse_failures || ' parse_failure, '
-            || d.empty_bodies || ' empty-body, ' || d.zero_entity
+            || d.zero_entity
             || ' zero-entity) — do NOT re-run, nothing to recover'
     end as diagnosis,
     case
         when b.in_reconcilable_window and b.parquet_path is null and b.feed_key is not null
+            -- shell-quote safety: this string gets pasted into a terminal
+            and b.feed_key not like '%''%'
             and (d.classified is null or d.valid_files > 0) then
             'uv run python -c "from dotenv import load_dotenv; load_dotenv(); '
             || 'import dagster as dg; dg.DagsterInstance.get().add_dynamic_partitions('''
@@ -296,9 +306,10 @@ with drops as (
         count(*) filter (label = 'parse_failure') as parse_failure,
         count(*) filter (label = 'legitimately_empty_feed') as zero_entity
     from archiver.dropped_files
-    -- size filter makes this correct even against extracts that classified
-    -- header-only files (they never count toward the shortfall)
-    where size_bytes > 20
+    -- threshold from the extract itself (never restated as a literal), and
+    -- makes this correct even against extracts that classified header-only
+    -- files (they never count toward the shortfall)
+    where size_bytes > (select header_only_max from archiver.extract_meta)
     group by all
 )
 
