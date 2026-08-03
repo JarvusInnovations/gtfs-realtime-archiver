@@ -38,6 +38,9 @@ from urllib.request import urlopen
 import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
+from google.api_core.exceptions import Forbidden, NotFound
+from google.protobuf.message import DecodeError
+from google.transit import gtfs_realtime_pb2
 
 PROTOBUF_BUCKET = os.environ.get("GCS_BUCKET_RT_PROTOBUF", "protobuf.gtfsrt.io")
 PARQUET_BUCKET = os.environ.get("GCS_BUCKET_RT_PARQUET", "parquet.gtfsrt.io")
@@ -95,8 +98,6 @@ def with_retries(fn, attempts: int = 3):
     """
 
     def wrapped(*a, **k):
-        from google.api_core.exceptions import Forbidden, NotFound
-
         for i in range(attempts):
             try:
                 return fn(*a, **k)
@@ -276,17 +277,11 @@ def classify_drop(client, bucket, feed_type: str, pb_name: str, size_bytes: int)
     anti-joined set is tiny, downloads and parses the .pb itself for the exact
     parse-failure vs zero-entities distinction the compaction loop makes.
     """
-    from google.protobuf.message import DecodeError
-    from google.transit import gtfs_realtime_pb2
-
-    # Only the zero-byte case skips the download — nothing to parse. Small
-    # files are NOT assumed empty: parsing a 15-byte body costs almost nothing
-    # by this stage (the candidate set is confined to flagged partitions) and
-    # turns "assumed fine" into "verified fine" — truncated tiny writes are
-    # exactly the failure class this tool exists to catch.
-    if size_bytes == 0:
-        return None, None, "never_valid_empty_body"
-
+    # Candidates are pre-filtered to contentful sizes (> HEADER_ONLY_MAX), so
+    # zero-byte and header-only files never reach here; their story is told by
+    # the aggregate counts. Small-but-contentful files are parsed, never
+    # assumed empty — truncated tiny writes are exactly the failure class this
+    # tool exists to catch.
     meta_name = pb_name.rsplit(".", 1)[0] + ".meta"
     response_code = None
     content_length = None

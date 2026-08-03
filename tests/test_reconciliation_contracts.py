@@ -71,10 +71,37 @@ def test_page_feed_key_sql_mirrors_url_to_partition_key() -> None:
 
 def test_page_derives_thresholds_from_extract_meta() -> None:
     """No restated literals: the page must derive the header-only threshold
-    and the reconcilable window from extract_meta, not hardcode them."""
+    from extract_meta, not hardcode it."""
     assert "size_bytes > 20" not in PAGE_SRC
     assert PAGE_SRC.count("select header_only_max from archiver.extract_meta") >= 2
-    assert "- 358" not in PAGE_SRC and "- 2\n" not in PAGE_SRC
+
+
+def test_daily_comparison_derives_window_from_meta() -> None:
+    """The reconcilable-window arithmetic lives in daily_comparison.sql; it
+    must derive the bounds from extract_meta, never restate 358/2."""
+    dc_src = (DASHBOARD / "sources" / "archiver" / "daily_comparison.sql").read_text()
+    assert "select window_old_days from meta" in dc_src
+    assert "select window_new_days from meta" in dc_src
+    assert "358" not in dc_src
+
+
+def test_prose_missing_classify_max_matches_extract() -> None:
+    """The page prose states the low-volume classification threshold as a
+    number; pin it to extract.py's MISSING_CLASSIFY_MAX."""
+    import ast
+    import re
+
+    value = None
+    for node in ast.walk(ast.parse(EXTRACT_SRC)):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "MISSING_CLASSIFY_MAX" for t in node.targets
+        ):
+            assert isinstance(node.value, ast.Constant)
+            value = node.value.value
+    assert value is not None
+    m = re.search(r"≤(\d+) contentful files", PAGE_SRC)
+    assert m is not None, "page prose no longer states the threshold"
+    assert int(m.group(1)) == value
 
 
 def test_base64url_padding_matches_compaction() -> None:

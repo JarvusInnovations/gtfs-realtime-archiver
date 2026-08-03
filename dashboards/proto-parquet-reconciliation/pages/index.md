@@ -21,17 +21,18 @@ Dates outside the buffered reconcilable window (older than
 not trusted — see the plan for why.
 
 ```sql agencies
--- scoped to feeds present in this extract, so picking an agency the extract
--- never listed (e.g. under --agency) can't render as a false all-clear
+-- scoped to feeds present in this extract (raw OR parquet side, matching
+-- daily_comparison's spine), so picking an agency the extract never listed
+-- can't render as a false all-clear
 select distinct f.agency_id, f.agency_name
 from archiver.feeds f
 where f.agency_id is not null
-    and f.base64url in (select base64url from archiver.proto_files_hourly)
+    and f.base64url in (select base64url from archiver.daily_comparison)
 order by f.agency_id
 ```
 
 ```sql feed_types
-select distinct feed_type from archiver.proto_files_hourly order by 1
+select distinct feed_type from archiver.daily_comparison order by 1
 ```
 
 <Dropdown data={agencies} name=agency value=agency_id label=agency_name title="Agency">
@@ -195,7 +196,8 @@ drops as (
         count(*) as classified,
         count(*) filter (label = 'unexplained_drop') as valid_files,
         count(*) filter (label = 'parse_failure') as parse_failures,
-        count(*) filter (label = 'legitimately_empty_feed') as zero_entity
+        count(*) filter (label = 'legitimately_empty_feed') as zero_entity,
+        count(*) filter (label = 'error') as errored
     from archiver.dropped_files
     -- threshold from the extract itself, and consistent with short_partitions:
     -- pre-2026-07-31 extracts classified header-only files too
@@ -221,19 +223,27 @@ select
             then 'not classified (busy partition, or extract predates classification) — re-run is safe to try'
         when d.valid_files > 0
             then d.valid_files || ' valid file(s) dropped — remediation recovers real data'
+        when d.errored > 0
+            then 'classification incomplete (' || d.errored
+                || ' errored) — unknown; re-run is safe to try'
         else 'no valid data ever existed (' || d.parse_failures || ' parse_failure, '
             || d.zero_entity
             || ' zero-entity) — do NOT re-run, nothing to recover'
     end as diagnosis,
     case
         when b.in_reconcilable_window and b.parquet_path is null and b.feed_key is not null
-            -- shell-quote safety: this string gets pasted into a terminal
+            -- shell-quote safety: this string gets pasted into a terminal.
+            -- feed_key rides inside shell single-quotes in BOTH halves below,
+            -- so a single quote is the only breaker — but exclude " and \\
+            -- too, which would corrupt the inner Python string literals.
             and b.feed_key not like '%''%'
-            and (d.classified is null or d.valid_files > 0) then
-            'uv run python -c "from dotenv import load_dotenv; load_dotenv(); '
-            || 'import dagster as dg; dg.DagsterInstance.get().add_dynamic_partitions('''
-            || b.feed_type || '_feeds'', ['''
-            || b.feed_key || '''])" && uv run dg launch --assets '
+            and b.feed_key not like '%"%'
+            and b.feed_key not like '%\%'
+            and (d.classified is null or d.valid_files > 0 or d.errored > 0) then
+            'uv run python -c ''from dotenv import load_dotenv; load_dotenv(); '
+            || 'import dagster as dg; dg.DagsterInstance.get().add_dynamic_partitions("'
+            || b.feed_type || '_feeds", ["'
+            || b.feed_key || '"])'' && uv run dg launch --assets '
             || b.feed_type || '_parquet --partition '''
             || strftime(b.date, '%Y-%m-%d') || '|' || b.feed_key || ''''
     end as remediate
@@ -304,7 +314,8 @@ with drops as (
         count(*) as classified,
         count(*) filter (label = 'unexplained_drop') as valid_dropped,
         count(*) filter (label = 'parse_failure') as parse_failure,
-        count(*) filter (label = 'legitimately_empty_feed') as zero_entity
+        count(*) filter (label = 'legitimately_empty_feed') as zero_entity,
+        count(*) filter (label = 'error') as errored
     from archiver.dropped_files
     -- threshold from the extract itself (never restated as a literal), and
     -- makes this correct even against extracts that classified header-only
@@ -324,6 +335,7 @@ select
     d.zero_entity,
     d.parse_failure,
     d.valid_dropped,
+    d.errored,
     c.pb_contentful_count - c.num_row_groups
         - coalesce(d.classified, 0) as unclassified,
     c.row_count
@@ -410,7 +422,7 @@ Feeds present in the raw bucket but absent from `feeds.parquet` — each one is 
 finding in itself.
 
 ```sql unmapped
-select base64url
+select base64url, url
 from archiver.feeds
 where agency_id = '(unmapped)'
 order by base64url
