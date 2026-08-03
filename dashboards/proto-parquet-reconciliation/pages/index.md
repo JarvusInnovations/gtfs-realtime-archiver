@@ -115,22 +115,28 @@ order by date
 ## Rows per proto
 
 Should be near-constant per feed; steps or spikes flag extraction or
-feed-content changes.
+feed-content changes. The focus dropdown narrows this chart only — the
+page-level filters above still apply.
+
+```sql rpp_names
+select distinct display_name
+from archiver.daily_comparison
+order by display_name
+```
+
+<Dropdown data={rpp_names} name=rpp_feed value=display_name title="Focus feed">
+    <DropdownOption value="%" valueLabel="All feeds"/>
+</Dropdown>
 
 ```sql rows_per_proto
 select
     date,
-    -- agencies either contain systems or hold feeds directly (system_name
-    -- NULL), so fall back to agency_name before resorting to the URL
-    case
-        when coalesce(agency_id, '(unmapped)') = '(unmapped)'
-            then coalesce(url, base64url)
-        else coalesce(system_name, agency_name)
-    end || ' · ' || feed_type as series,
+    display_name || ' · ' || feed_type as series,
     rows_per_proto
 from archiver.daily_comparison
 where ('${inputs.agency.value}' = '%' or coalesce(agency_id, '(unmapped)') = '${inputs.agency.value}')
     and ('${inputs.feed_type.value}' = '%' or feed_type = '${inputs.feed_type.value}')
+    and ('${inputs.rpp_feed.value}' = '%' or display_name = '${inputs.rpp_feed.value}')
     and rows_per_proto is not null
 order by date
 ```
