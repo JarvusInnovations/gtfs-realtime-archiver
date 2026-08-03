@@ -120,7 +120,13 @@ feed-content changes.
 ```sql rows_per_proto
 select
     date,
-    coalesce(system_name, base64url) || ' · ' || feed_type as series,
+    -- agencies either contain systems or hold feeds directly (system_name
+    -- NULL), so fall back to agency_name before resorting to the URL
+    case
+        when coalesce(agency_id, '(unmapped)') = '(unmapped)'
+            then coalesce(url, base64url)
+        else coalesce(system_name, agency_name)
+    end || ' · ' || feed_type as series,
     rows_per_proto
 from archiver.daily_comparison
 where ('${inputs.agency.value}' = '%' or coalesce(agency_id, '(unmapped)') = '${inputs.agency.value}')
