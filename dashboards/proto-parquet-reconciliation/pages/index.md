@@ -121,6 +121,8 @@ page-level filters above still apply.
 ```sql rpp_names
 select distinct display_name
 from archiver.daily_comparison
+where ('${inputs.agency.value}' = '%' or coalesce(agency_id, '(unmapped)') = '${inputs.agency.value}')
+    and ('${inputs.feed_type.value}' = '%' or feed_type = '${inputs.feed_type.value}')
 order by display_name
 ```
 

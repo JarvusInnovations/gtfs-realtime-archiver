@@ -82,6 +82,34 @@ _RT_PATTERN = re.compile(
 WINDOW_OLD_DAYS = 358
 WINDOW_NEW_DAYS = 2
 
+# Dedupe feeds AT INGEST: Evidence source queries run standalone against the
+# raw tables (they cannot reference each other), so a dedupe in feeds.sql
+# would not protect the joins in daily_comparison/proto_files_hourly/
+# dropped_files — a duplicated (url, feed_type) in agencies.yaml would fan
+# them out and silently double the charts. Every consumer inherits this.
+FEEDS_INGEST_SQL = """CREATE TABLE feeds AS
+    SELECT * FROM feeds_arrow
+    QUALIFY row_number() OVER (
+        PARTITION BY base64url, feed_type
+        ORDER BY agency_id, system_id
+    ) = 1"""
+
+# Shared with tests: the fixture DB must derive proto_files_hourly exactly the
+# way the extract does, or the SQL tests validate a stale shape.
+PROTO_FILES_HOURLY_DDL = """CREATE TABLE proto_files_hourly AS
+    SELECT feed_type, date, hour, base64url,
+           count(r.name) AS pb_count,
+           coalesce(any_value(m.meta_count), 0) AS meta_count,
+           count(r.name) FILTER (r.size_bytes = 0) AS zero_byte_count,
+           count(r.name) FILTER (r.size_bytes > 0
+                                 AND r.size_bytes <= {header_only_max})
+               AS header_only_count
+    FROM raw_files r
+    -- FULL OUTER: an hour with .meta sidecars but no .pb (or vice versa)
+    -- must still produce a row
+    FULL OUTER JOIN meta_counts m USING (feed_type, date, hour, base64url)
+    GROUP BY ALL"""
+
 # Missing partitions (no parquet at all) normally skip per-file attribution —
 # nothing was written, so "which files dropped" is everything, and classifying
 # a busy feed's whole day is a download storm. But when the day held only a
@@ -90,6 +118,23 @@ WINDOW_NEW_DAYS = 2
 # "ERROR: no connectivity to BusTime server!" HTTP-200 body is
 # missing-and-unrecoverable, not missing-and-remediable.
 MISSING_CLASSIFY_MAX = 25
+
+
+def _stride_cap(items: list, cap: int, label: str, flag: str) -> list:
+    """Cap a candidate list by even stride across the whole list — a
+    head-of-list truncation would sample only the earliest timestamps of the
+    day. cap <= 0 means "classify nothing" (compare-only runs) rather than
+    ZeroDivisionError after all the listing work.
+    """
+    if cap <= 0:
+        # Silent per call: the run-level "skipped in total" summary reports it
+        # once instead of once per flagged partition.
+        return []
+    if len(items) <= cap:
+        return items
+    print(f"  NOTE: {label}: classifying {cap} of {len(items)} ({flag} cap)")
+    stride = len(items) / cap
+    return [items[int(i * stride)] for i in range(cap)]
 
 
 def with_retries(fn, attempts: int = 3):
@@ -140,15 +185,15 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=1000,
         help="Per-partition cap on dropped-file classification downloads; "
-        "truncation is logged (default 1000)",
+        "truncation is logged; 0 disables classification (default 1000)",
     )
     parser.add_argument(
         "--max-classify-total",
         type=int,
         default=20000,
         help="Run-level cap on classification downloads across all flagged "
-        "partitions (~2 GETs each); even-stride sampled, truncation logged "
-        "(default 20000)",
+        "partitions (~2 GETs each); even-stride sampled, truncation logged; "
+        "0 disables classification (default 20000)",
     )
     return parser.parse_args()
 
@@ -354,7 +399,10 @@ def main() -> int:
     from requests.adapters import HTTPAdapter
 
     adapter = HTTPAdapter(pool_connections=LIST_WORKERS, pool_maxsize=LIST_WORKERS)
-    client._http.mount("https://", adapter)  # private API; temporary tooling
+    # Private API; guard so a google-cloud-storage reshape degrades to
+    # "slower" (default 10-connection pool) instead of AttributeError.
+    if hasattr(client, "_http") and hasattr(client._http, "mount"):
+        client._http.mount("https://", adapter)
     import gcsfs
 
     fs = gcsfs.GCSFileSystem()
@@ -374,8 +422,8 @@ def main() -> int:
     feeds_by_b64 = {r["base64url"]: r for r in feeds_rows}
     print(f"  {feeds.num_rows} feeds in feeds.parquet")
     # feeds.parquet has no uniqueness guarantee; a duplicated (url, feed_type)
-    # would fan out every feeds join on the dashboard and silently double the
-    # charts. Surface it as a finding rather than a chart error.
+    # would — absent the ingest dedupe in FEEDS_INGEST_SQL — fan out every
+    # feeds join on the dashboard. Surface it as a finding regardless.
     seen_pairs: set[tuple] = set()
     for r in feeds_rows:
         pair = (r["base64url"], r["feed_type"])
@@ -435,7 +483,12 @@ def main() -> int:
 
     if agency_b64s is None:
         # Full-range mode: presence falls out of the object listing directly.
-        discovered = sorted({(ft, d, h, b64) for (ft, d, h, b64, _n, _s) in raw_files})
+        # Union .meta-only partitions so a sidecar-only feed doesn't escape
+        # unmapped-feed detection in this mode (agency mode's delimiter pass
+        # sees every base64url prefix regardless of contents).
+        discovered = sorted(
+            {(ft, d, h, b64) for (ft, d, h, b64, _n, _s) in raw_files} | set(meta_counts.keys())
+        )
     discovered_b64s = {b64 for _, _, _, b64 in discovered}
     print(f"  {len(discovered_b64s)} distinct feeds present in raw bucket")
 
@@ -458,7 +511,7 @@ def main() -> int:
             print(f"  WARNING: footer read failed for {path}: {e}", file=sys.stderr)
             return None, None
 
-    selected = agency_b64s if agency_b64s is not None else None
+    selected = agency_b64s
     footer_targets = [
         (ft, d, b64, path, size)
         for (ft, d, b64, path, size) in pq_objects
@@ -483,8 +536,8 @@ def main() -> int:
     # Per-partition "contentful" pb count (bigger than a header-only message,
     # so capable of producing a row group).
     contentful_counts: dict[tuple, int] = {}
-    for ft, d, h, b64, name, size in raw_files:
-        if name.endswith(".pb") and size > HEADER_ONLY_MAX:
+    for ft, d, h, b64, name, size in raw_files:  # raw_files holds .pb only
+        if size > HEADER_ONLY_MAX:
             key = (ft, d, b64)
             contentful_counts[key] = contentful_counts.get(key, 0) + 1
 
@@ -527,8 +580,8 @@ def main() -> int:
     protobuf_bucket = client.bucket(PROTOBUF_BUCKET)
     flagged_keys = {(ft, d, b64) for (ft, d, b64, _p) in flagged}
     raw_pb_by_partition: dict[tuple, list[tuple[str, int]]] = {}
-    for ft, d, h, b64, name, size in raw_files:
-        if name.endswith(".pb") and (ft, d, b64) in flagged_keys:
+    for ft, d, h, b64, name, size in raw_files:  # raw_files holds .pb only
+        if (ft, d, b64) in flagged_keys:
             raw_pb_by_partition.setdefault((ft, d, b64), []).append((name, size))
 
     # Parallel source_file column reads, then parallel per-file
@@ -577,27 +630,16 @@ def main() -> int:
             if s > HEADER_ONLY_MAX
         ]
         part = [(ft, d, b64, name, size) for name, size in part_files if name not in sources]
-        if len(part) > args.max_classify:
-            print(
-                f"  NOTE: {ft}/{d}/{b64[:16]}…: classifying {args.max_classify} "
-                f"of {len(part)} dropped files (--max-classify cap)"
-            )
-            skipped_classify += len(part) - args.max_classify
-            # Even stride, not head-of-list: a name-sorted prefix would sample
-            # only the earliest timestamps of the day.
-            stride = len(part) / args.max_classify
-            part = [part[int(i * stride)] for i in range(args.max_classify)]
-        candidates.extend(part)
-    if len(candidates) > args.max_classify_total:
-        print(
-            f"  NOTE: classifying {args.max_classify_total} of {len(candidates)} "
-            f"total candidates (--max-classify-total)"
-        )
-        skipped_classify += len(candidates) - args.max_classify_total
-        stride = len(candidates) / args.max_classify_total
-        candidates = [candidates[int(i * stride)] for i in range(args.max_classify_total)]
+        capped = _stride_cap(part, args.max_classify, f"{ft}/{d}/{b64[:16]}…", "--max-classify")
+        skipped_classify += len(part) - len(capped)
+        candidates.extend(capped)
+    n_before = len(candidates)
+    candidates = _stride_cap(
+        candidates, args.max_classify_total, "run total", "--max-classify-total"
+    )
+    skipped_classify += n_before - len(candidates)
     if skipped_classify:
-        print(f"  NOTE: {skipped_classify} candidates skipped in total (--max-classify)")
+        print(f"  NOTE: {skipped_classify} candidates skipped in total (caps)")
     print(f"  classifying {len(candidates)} dropped .pb files")
 
     def safe_classify(c):
@@ -626,7 +668,7 @@ def main() -> int:
     con = duckdb.connect(str(out_path))
 
     con.register("feeds_arrow", feeds)
-    con.execute("CREATE TABLE feeds AS SELECT * FROM feeds_arrow")
+    con.execute(FEEDS_INGEST_SQL)
     # Unmapped feeds: present in GCS, absent from feeds.parquet. Named columns
     # so this can't silently shift if fetch_feeds()'s column list changes.
     # The decoded URL makes the finding actionable (same decode as
@@ -680,21 +722,7 @@ def main() -> int:
     if mc_rows:
         con.executemany("INSERT INTO meta_counts VALUES (?, ?, ?, ?, ?)", mc_rows)
 
-    con.execute(
-        f"""CREATE TABLE proto_files_hourly AS
-        SELECT feed_type, date, hour, base64url,
-               count(r.name) AS pb_count,
-               coalesce(any_value(m.meta_count), 0) AS meta_count,
-               count(r.name) FILTER (r.size_bytes = 0) AS zero_byte_count,
-               count(r.name) FILTER (r.size_bytes > 0
-                                     AND r.size_bytes <= {HEADER_ONLY_MAX})
-                   AS header_only_count
-        FROM raw_files r
-        -- FULL OUTER: an hour with .meta sidecars but no .pb (or vice versa)
-        -- must still produce a row
-        FULL OUTER JOIN meta_counts m USING (feed_type, date, hour, base64url)
-        GROUP BY ALL"""
-    )
+    con.execute(PROTO_FILES_HOURLY_DDL.format(header_only_max=HEADER_ONLY_MAX))
 
     con.execute(
         """CREATE TABLE parquet_daily (

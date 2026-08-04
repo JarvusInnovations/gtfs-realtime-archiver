@@ -19,6 +19,7 @@ anchor-2):
 - short:           parquet short of contentful count  -> shortfall explained
 """
 
+import importlib.util
 import re
 from pathlib import Path
 
@@ -29,9 +30,18 @@ DASHBOARD = Path(__file__).parents[1] / "dashboards" / "proto-parquet-reconcilia
 SOURCES = DASHBOARD / "sources" / "archiver"
 PAGE_SRC = (DASHBOARD / "pages" / "index.md").read_text()
 
+_spec = importlib.util.spec_from_file_location("recon_extract_sql", DASHBOARD / "extract.py")
+assert _spec is not None and _spec.loader is not None
+extract = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(extract)
+
 ANCHOR = "2026-08-01"
 IN_WINDOW = "2026-07-25"
 OUT_WINDOW = "2026-07-31"  # anchor-1: newer than the 2-day edge
+# One fixture threshold, used both in extract_meta (which drop_summary derives
+# from) and in the DDL .format() — the fixture sizes (15/41/300) are designed
+# around it.
+HEADER_ONLY = 20
 
 B64 = {
     "quiet": "cXVpZXQ",
@@ -127,24 +137,14 @@ def con() -> duckdb.DuckDBPyConnection:
             NULL AS agency, NULL AS feed_type,
             '2026-08-01T10:00:00+00:00' AS extracted_at,
             358 AS window_old_days, 2 AS window_new_days,
-            20 AS header_only_max, ? AS window_anchor_date""",
-        [ANCHOR],
+            ? AS header_only_max, ? AS window_anchor_date""",
+        [HEADER_ONLY, ANCHOR],
     )
 
     # proto_files_hourly is a table the extract derives from raw_files +
-    # meta_counts; mirror its aggregation here.
-    c.execute("""
-        CREATE TABLE proto_files_hourly AS
-        SELECT feed_type, date, hour, base64url,
-               count(r.name) AS pb_count,
-               coalesce(any_value(m.meta_count), 0) AS meta_count,
-               count(r.name) FILTER (r.size_bytes = 0) AS zero_byte_count,
-               count(r.name) FILTER (r.size_bytes > 0 AND r.size_bytes <= 20)
-                   AS header_only_count
-        FROM raw_files r
-        FULL OUTER JOIN meta_counts m USING (feed_type, date, hour, base64url)
-        GROUP BY ALL
-    """)
+    # meta_counts; use the extract's own DDL so this fixture can't validate a
+    # stale shape.
+    c.execute(extract.PROTO_FILES_HOURLY_DDL.format(header_only_max=HEADER_ONLY))
 
     # Materialize every Evidence source as a view named archiver_<name>,
     # mirroring how the page addresses them (archiver.<name>).
@@ -216,6 +216,43 @@ def test_out_of_window_is_labeled_not_contradictory(
     assert rec["status"] == "out of window"
     assert rec["diagnosis"] == "outside reconcilable window — not classified"
     assert rec["remediate"] is None
+
+
+def test_feeds_ingest_dedupes_duplicates() -> None:
+    """A duplicated (url, feed_type) in agencies.yaml must not fan out the
+    dashboard joins: the extract's ingest statement dedupes at the source of
+    truth (Evidence sources run standalone, so a dedupe there protects
+    nothing)."""
+    import pyarrow as pa
+
+    c = duckdb.connect()
+    feeds_arrow = pa.table(
+        {
+            "base64url": ["ZHVw", "ZHVw", "b3RoZXI"],
+            "url": ["https://dup.example/f"] * 2 + ["https://other.example/f"],
+            "feed_type": ["service_alerts"] * 3,
+            "agency_id": ["a1", "a2", "a3"],
+            "agency_name": ["A1", "A2", "A3"],
+            "system_id": [None, None, None],
+            "system_name": [None, None, None],
+        }
+    )
+    c.register("feeds_arrow", feeds_arrow)
+    c.execute(extract.FEEDS_INGEST_SQL)
+    counts = dict(c.execute("select base64url, count(*) from feeds group by 1").fetchall())
+    assert counts == {"ZHVw": 1, "b3RoZXI": 1}
+    # the ORDER BY makes the survivor deterministic — pin it
+    survivor = c.execute("select agency_id from feeds where base64url = 'ZHVw'").fetchone()[0]
+    assert survivor == "a1"
+
+
+def test_hourly_spine_renders_total_outage_day(con: duckdb.DuckDBPyConnection) -> None:
+    """The prose promises a day with zero archived files still renders as 24
+    zero cells rather than vanishing off the axis."""
+    rows = con.execute(_page_query("hourly")).fetchall()
+    outage_day = [(h, pb) for (d, h, pb) in rows if d == "2026-07-20"]
+    assert len(outage_day) == 24
+    assert all(pb == 0 for _h, pb in outage_day)
 
 
 def test_short_partition_arithmetic_closes(con: duckdb.DuckDBPyConnection) -> None:

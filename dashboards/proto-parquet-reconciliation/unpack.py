@@ -57,7 +57,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pb", required=True, help="Full raw .pb object path")
     parser.add_argument(
-        "--count", type=int, default=5, help="Window size, centered on --pb (default 5)"
+        "--count",
+        type=int,
+        default=5,
+        help="Window size, centered on --pb (clamped at partition edges; default 5)",
     )
     parser.add_argument(
         "--out", type=Path, default=Path(".scratch/inspect"), help="Output root directory"
@@ -69,6 +72,12 @@ def main() -> int:
         print(f"--pb does not look like a raw .pb path: {args.pb}", file=sys.stderr)
         return 1
     ft, d, hour, b64, ts = match.group("feed_type", "date", "hour", "base64url", "ts")
+    if ft not in ENTITY_FIELDS:
+        print(
+            f"unknown feed type '{ft}' — expected one of {sorted(ENTITY_FIELDS)}",
+            file=sys.stderr,
+        )
+        return 1
 
     from google.cloud import storage
     from google.protobuf import json_format
@@ -87,7 +96,9 @@ def main() -> int:
         return 1
     i = pb_names.index(args.pb)
     half = args.count // 2
-    lo = max(0, i - half)
+    # Clamp at BOTH ends so the window stays full-width near partition
+    # boundaries (drops cluster there) instead of right-truncating.
+    lo = max(0, min(i - half, len(pb_names) - args.count))
     window = pb_names[lo : lo + args.count]
 
     outdir = args.out / f"{ft}_{d}_{ts.replace(':', '')}"
