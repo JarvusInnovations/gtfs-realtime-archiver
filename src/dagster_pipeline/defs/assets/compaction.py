@@ -70,6 +70,7 @@ try:
         (gtfs_realtime_pb2.TripDescriptor.ModifiedTripSelector, "start_time"),
         (gtfs_realtime_pb2.TripUpdate.StopTimeEvent, "scheduled_time"),
         (gtfs_realtime_pb2.TripUpdate.StopTimeUpdate, "departure_occupancy_status"),
+        (gtfs_realtime_pb2.TripUpdate.StopTimeUpdate, "stop_time_properties"),
         (gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.StopTimeProperties, "assigned_stop_id"),
         (gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.StopTimeProperties, "stop_headsign"),
         (gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.StopTimeProperties, "pickup_type"),
@@ -762,11 +763,13 @@ def compact_single_feed(
                 continue
 
             # Write batch to parquet stream. Fail the partition with the
-            # offending file named — a bare ArrowInvalid escaping here gives
+            # offending file named — a bare Arrow error escaping here gives
             # no clue which of ~thousands of .pb files produced it.
+            # ArrowException is the common base: ArrowInvalid derives from
+            # ValueError but its siblings (ArrowTypeError et al.) do not.
             try:
                 batch = pa.Table.from_pylist(records, schema=schema)
-            except pa.lib.ArrowInvalid as e:
+            except pa.ArrowException as e:
                 raise dg.Failure(f"Arrow conversion failed for {pb_file}: {e}") from e
             if writer is None:
                 writer = pq.ParquetWriter(buffer, schema, compression="zstd", compression_level=9)

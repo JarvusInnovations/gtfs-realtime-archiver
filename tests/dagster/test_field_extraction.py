@@ -6,8 +6,11 @@ JSON encoding, and record↔schema key parity for all three extractors.
 """
 
 import json
+import re
+from pathlib import Path
 
 import pyarrow as pa
+import pytest
 from google.transit import gtfs_realtime_pb2
 
 from dagster_pipeline.defs.assets.compaction import (
@@ -284,11 +287,6 @@ def test_bigquery_ddl_matches_schemas() -> None:
     a language boundary with no import to break. A column added to
     schemas.py without a matching BigQuery column ships Parquet data the
     external tables can't see."""
-    import re
-    from pathlib import Path
-
-    import pytest
-
     tf_path = Path(__file__).parents[2] / "tf" / "bigquery.tf"
     if not tf_path.exists():
         pytest.skip("tf/ not present (e.g. pytest inside the built container)")
@@ -304,19 +302,24 @@ def test_bigquery_ddl_matches_schemas() -> None:
             re.S,
         )
         assert block is not None, f"no schema block for {table_id}"
-        entries = re.findall(r'name\s*=\s*"(\w+)",\s*type\s*=\s*"(\w+)"', block.group(1))
-        # If a tofu fmt reflow breaks the name-then-type-on-one-line pattern,
+        entries = re.findall(
+            r'name\s*=\s*"(\w+)",\s*type\s*=\s*"(\w+)",\s*mode\s*=\s*"(\w+)"',
+            block.group(1),
+        )
+        # If a tofu fmt reflow breaks the name-type-mode-on-one-line pattern,
         # fail with "parse produced N of M columns", not a confusing name diff.
         assert len(entries) == len(schema.names), (
             f"{table_id}: DDL parse produced {len(entries)} of "
             f"{len(schema.names)} columns — regex no longer matches tf layout?"
         )
-        names = [name for name, _t in entries]
+        names = [name for name, _t, _m in entries]
         assert names == list(schema.names), (
             f"{table_id}: BigQuery DDL columns diverge from schemas.py"
         )
-        # Types matter more than order for a name-matched Parquet external
-        # table: a STRING column declared INT64 breaks at query time.
+        # Types and modes matter more than order for a name-matched Parquet
+        # external table: a STRING column declared INT64 breaks at query
+        # time, and a nullable Arrow field declared REQUIRED breaks on the
+        # first NULL row.
         arrow_to_bq = {
             "string": "STRING",
             "int32": "INT64",
@@ -327,10 +330,12 @@ def test_bigquery_ddl_matches_schemas() -> None:
             "double": "FLOAT64",
             "timestamp[us, tz=UTC]": "TIMESTAMP",
         }
-        bq_types = dict(entries)
+        bq_entries = {name: (type_, mode) for name, type_, mode in entries}
         for field in schema:
-            expected = arrow_to_bq[str(field.type)]
-            assert bq_types[field.name] == expected, (
-                f"{table_id}.{field.name}: BigQuery type {bq_types[field.name]} "
-                f"!= expected {expected} for arrow {field.type}"
+            expected_type = arrow_to_bq[str(field.type)]
+            expected_mode = "NULLABLE" if field.nullable else "REQUIRED"
+            assert bq_entries[field.name] == (expected_type, expected_mode), (
+                f"{table_id}.{field.name}: BigQuery {bq_entries[field.name]} "
+                f"!= expected ({expected_type}, {expected_mode}) for arrow "
+                f"{field.type} nullable={field.nullable}"
             )

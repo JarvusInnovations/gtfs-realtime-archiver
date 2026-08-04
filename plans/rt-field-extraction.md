@@ -33,8 +33,9 @@ backfill later.
   granularity decision: 172 fleet alerts carry >1 period, max 251; a JSON
   column preserves them without multiplying rows; `active_period_start`/`end`
   keep first-period compatibility)
-- Raise the root `gtfs-realtime-bindings` floor to `>=2.2.0` (per #93 review) +
-  a descriptor regression test
+- Raise the `gtfs-realtime-bindings` floor to `>=2.2.0` in the `dagster`
+  dependency group (per #93 review; only compaction parses protos —
+  `dagster-deploy` inherits via include-group) + a descriptor regression test
 - `tf/bigquery.tf` external-table schemas updated to match
 - DESIGN.md schema lists updated (incl. the pre-existing `occupancy_percentage`
   omission)
