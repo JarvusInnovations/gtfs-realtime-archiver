@@ -49,45 +49,60 @@ HTTP_FEED_PREFIX = "~"
 # EMPTY partitions. Assert the whole surface once at import so the code
 # server / run worker fails to start instead. tests/dagster iterates this
 # same table, so the guard and the extractors cannot drift apart.
-REQUIRED_BINDINGS_FIELDS: tuple[tuple[Any, str], ...] = (
-    (gtfs_realtime_pb2.VehicleDescriptor, "wheelchair_accessible"),
-    (gtfs_realtime_pb2.TripUpdate, "trip_properties"),
-    (gtfs_realtime_pb2.TripUpdate.TripProperties, "trip_id"),
-    (gtfs_realtime_pb2.TripUpdate.TripProperties, "start_date"),
-    (gtfs_realtime_pb2.TripUpdate.TripProperties, "start_time"),
-    (gtfs_realtime_pb2.TripUpdate.TripProperties, "shape_id"),
-    (gtfs_realtime_pb2.TripUpdate.TripProperties, "trip_headsign"),
-    (gtfs_realtime_pb2.TripUpdate.TripProperties, "trip_short_name"),
-    (gtfs_realtime_pb2.TripDescriptor, "modified_trip"),
-    (gtfs_realtime_pb2.TripDescriptor.ModifiedTripSelector, "modifications_id"),
-    (gtfs_realtime_pb2.TripDescriptor.ModifiedTripSelector, "affected_trip_id"),
-    (gtfs_realtime_pb2.TripDescriptor.ModifiedTripSelector, "start_date"),
-    (gtfs_realtime_pb2.TripDescriptor.ModifiedTripSelector, "start_time"),
-    (gtfs_realtime_pb2.TripUpdate.StopTimeEvent, "scheduled_time"),
-    (gtfs_realtime_pb2.TripUpdate.StopTimeUpdate, "departure_occupancy_status"),
-    (gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.StopTimeProperties, "assigned_stop_id"),
-    (gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.StopTimeProperties, "stop_headsign"),
-    (gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.StopTimeProperties, "pickup_type"),
-    (gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.StopTimeProperties, "drop_off_type"),
-    (gtfs_realtime_pb2.Alert, "cause_detail"),
-    (gtfs_realtime_pb2.Alert, "effect_detail"),
-    (gtfs_realtime_pb2.Alert, "tts_header_text"),
-    (gtfs_realtime_pb2.Alert, "tts_description_text"),
-    (gtfs_realtime_pb2.Alert, "image"),
-    (gtfs_realtime_pb2.Alert, "image_alternative_text"),
-    (gtfs_realtime_pb2.EntitySelector, "direction_id"),
-)
-
-_missing_fields = [
-    f"{message.DESCRIPTOR.full_name}.{field}"
-    for message, field in REQUIRED_BINDINGS_FIELDS
-    if field not in message.DESCRIPTOR.fields_by_name
-]
-if _missing_fields:
+# The tuple literal itself dereferences nested message classes
+# (TripProperties, ModifiedTripSelector, StopTimeProperties), which raise
+# AttributeError on bindings old enough to lack the message — catch that so
+# the failure still says "upgrade" instead of a bare AttributeError.
+try:
+    REQUIRED_BINDINGS_FIELDS: tuple[tuple[Any, str], ...] = (
+        (gtfs_realtime_pb2.VehicleDescriptor, "wheelchair_accessible"),
+        (gtfs_realtime_pb2.TripUpdate, "trip_properties"),
+        (gtfs_realtime_pb2.TripUpdate.TripProperties, "trip_id"),
+        (gtfs_realtime_pb2.TripUpdate.TripProperties, "start_date"),
+        (gtfs_realtime_pb2.TripUpdate.TripProperties, "start_time"),
+        (gtfs_realtime_pb2.TripUpdate.TripProperties, "shape_id"),
+        (gtfs_realtime_pb2.TripUpdate.TripProperties, "trip_headsign"),
+        (gtfs_realtime_pb2.TripUpdate.TripProperties, "trip_short_name"),
+        (gtfs_realtime_pb2.TripDescriptor, "modified_trip"),
+        (gtfs_realtime_pb2.TripDescriptor.ModifiedTripSelector, "modifications_id"),
+        (gtfs_realtime_pb2.TripDescriptor.ModifiedTripSelector, "affected_trip_id"),
+        (gtfs_realtime_pb2.TripDescriptor.ModifiedTripSelector, "start_date"),
+        (gtfs_realtime_pb2.TripDescriptor.ModifiedTripSelector, "start_time"),
+        (gtfs_realtime_pb2.TripUpdate.StopTimeEvent, "scheduled_time"),
+        (gtfs_realtime_pb2.TripUpdate.StopTimeUpdate, "departure_occupancy_status"),
+        (gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.StopTimeProperties, "assigned_stop_id"),
+        (gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.StopTimeProperties, "stop_headsign"),
+        (gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.StopTimeProperties, "pickup_type"),
+        (gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.StopTimeProperties, "drop_off_type"),
+        (gtfs_realtime_pb2.Alert, "cause_detail"),
+        (gtfs_realtime_pb2.Alert, "effect_detail"),
+        (gtfs_realtime_pb2.Alert, "tts_header_text"),
+        (gtfs_realtime_pb2.Alert, "tts_description_text"),
+        (gtfs_realtime_pb2.Alert, "image"),
+        (gtfs_realtime_pb2.Alert, "image_alternative_text"),
+        (gtfs_realtime_pb2.EntitySelector, "direction_id"),
+    )
+except AttributeError as _e:
     raise ImportError(
         "gtfs-realtime-bindings is too old for this extraction code; "
-        f"missing fields: {_missing_fields} (need >= 2.2.0)"
-    )
+        f"missing message type: {_e} (need >= 2.2.0)"
+    ) from _e
+
+
+def _assert_required_bindings_fields() -> None:
+    missing = [
+        f"{message.DESCRIPTOR.full_name}.{field}"
+        for message, field in REQUIRED_BINDINGS_FIELDS
+        if field not in message.DESCRIPTOR.fields_by_name
+    ]
+    if missing:
+        raise ImportError(
+            "gtfs-realtime-bindings is too old for this extraction code; "
+            f"missing fields: {missing} (need >= 2.2.0)"
+        )
+
+
+_assert_required_bindings_fields()
 
 
 def url_to_partition_key(url: str) -> str:
@@ -746,8 +761,13 @@ def compact_single_feed(
             if not records:
                 continue
 
-            # Write batch to parquet stream
-            batch = pa.Table.from_pylist(records, schema=schema)
+            # Write batch to parquet stream. Fail the partition with the
+            # offending file named — a bare ArrowInvalid escaping here gives
+            # no clue which of ~thousands of .pb files produced it.
+            try:
+                batch = pa.Table.from_pylist(records, schema=schema)
+            except pa.lib.ArrowInvalid as e:
+                raise dg.Failure(f"Arrow conversion failed for {pb_file}: {e}") from e
             if writer is None:
                 writer = pq.ParquetWriter(buffer, schema, compression="zstd", compression_level=9)
             writer.write_table(batch)

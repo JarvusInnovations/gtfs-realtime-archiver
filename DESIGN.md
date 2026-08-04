@@ -772,12 +772,19 @@ use per-field presence — unset is NULL, never `""`. Strings on
 routinely-populated parents (`vehicle_id`, `vehicle_label`, trip-descriptor
 strings) keep the long-standing parent-presence convention, where an unset
 field on a present parent reads as `""`. One deliberate asymmetry:
-`license_plate` is parent-`""` in **vehicle_positions** (history is frozen on
-that convention) but per-field NULL in **trip_updates** (a brand-new column
-that would otherwise read `""` on nearly every row, since plates are rarely
-published) — unions across the two feed types should normalize with
+`license_plate` is parent-`""` in **vehicle_positions** (changing an existing
+column's semantics is its own change if ever — re-materialization means
+history isn't strictly frozen, but consumers may already rely on the shape)
+and per-field NULL in **trip_updates** (a brand-new column that would
+otherwise read `""` on nearly every row, since plates are rarely published) —
+unions across the two feed types should normalize with
 `NULLIF(license_plate, '')`. `active_periods_json` is NULL when an alert
 declares no active periods (spec: always active); `"[]"` is never emitted.
+
+Producer-supplied text columns (`header_text`, `description_text`, `tts_*`,
+`cause_detail`, `effect_detail`, `image_url`, headsigns, etc.) are unvalidated
+third-party content passed through verbatim — the pipeline never interprets or
+fetches them, but downstream renderers must treat them as untrusted input.
 
 ### Schedule
 

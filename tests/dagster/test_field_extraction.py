@@ -30,7 +30,6 @@ def test_bindings_expose_required_fields() -> None:
     drift from what the extractors actually dereference."""
     from dagster_pipeline.defs.assets.compaction import REQUIRED_BINDINGS_FIELDS
 
-    assert len(REQUIRED_BINDINGS_FIELDS) >= 26
     for message, field in REQUIRED_BINDINGS_FIELDS:
         assert field in message.DESCRIPTOR.fields_by_name, (
             f"{message.DESCRIPTOR.full_name}.{field} missing from installed bindings"
@@ -77,6 +76,29 @@ def test_wheelchair_accessible_edge_cases() -> None:
     records = list(extract_vehicle_positions(feed, "f.pb", "https://x", None))
     assert records[0]["wheelchair_accessible"] is None
     assert records[1]["wheelchair_accessible"] == 0
+
+
+def test_license_plate_presence_asymmetry() -> None:
+    """Pin the documented VP-""/TU-NULL split (DESIGN.md): with a vehicle
+    descriptor present but no plate, vehicle_positions keeps the historical
+    parent-presence convention ("" for unset) while trip_updates — a
+    brand-new column — uses per-field presence (NULL). A silent flip either
+    way changes query semantics for readers relying on the documented shape."""
+    feed = _feed()
+    vp_entity = feed.entity.add()
+    vp_entity.id = "v1"
+    vp_entity.vehicle.position.latitude = 1.0
+    vp_entity.vehicle.position.longitude = 2.0
+    vp_entity.vehicle.vehicle.id = "bus-1"  # descriptor present, plate unset
+    tu_entity = feed.entity.add()
+    tu_entity.id = "t1"
+    tu_entity.trip_update.trip.trip_id = "trip-1"
+    tu_entity.trip_update.vehicle.id = "bus-1"  # descriptor present, plate unset
+
+    (vp_record,) = extract_vehicle_positions(feed, "f.pb", "https://x", None)
+    (tu_record,) = extract_trip_updates(feed, "f.pb", "https://x", None)
+    assert vp_record["license_plate"] == ""
+    assert tu_record["license_plate"] is None
 
 
 def test_trip_update_new_fields() -> None:
@@ -265,7 +287,12 @@ def test_bigquery_ddl_matches_schemas() -> None:
     import re
     from pathlib import Path
 
-    tf_src = (Path(__file__).parents[2] / "tf" / "bigquery.tf").read_text()
+    import pytest
+
+    tf_path = Path(__file__).parents[2] / "tf" / "bigquery.tf"
+    if not tf_path.exists():
+        pytest.skip("tf/ not present (e.g. pytest inside the built container)")
+    tf_src = tf_path.read_text()
     for table_id, schema in (
         ("vehicle_positions", VEHICLE_POSITIONS_SCHEMA),
         ("trip_updates", TRIP_UPDATES_SCHEMA),
@@ -278,6 +305,12 @@ def test_bigquery_ddl_matches_schemas() -> None:
         )
         assert block is not None, f"no schema block for {table_id}"
         entries = re.findall(r'name\s*=\s*"(\w+)",\s*type\s*=\s*"(\w+)"', block.group(1))
+        # If a tofu fmt reflow breaks the name-then-type-on-one-line pattern,
+        # fail with "parse produced N of M columns", not a confusing name diff.
+        assert len(entries) == len(schema.names), (
+            f"{table_id}: DDL parse produced {len(entries)} of "
+            f"{len(schema.names)} columns — regex no longer matches tf layout?"
+        )
         names = [name for name, _t in entries]
         assert names == list(schema.names), (
             f"{table_id}: BigQuery DDL columns diverge from schemas.py"

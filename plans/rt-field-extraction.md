@@ -90,7 +90,10 @@ nullable everywhere).
   DuckDB consumers must read with `union_by_name`. Document on #86.
 - **`active_periods_json` is a contract choice** — downstream consumers parse
   JSON for multi-period logic. Recorded here and on #91; revisit if a
-  first-class nested type ever becomes worth the reader complexity.
+  first-class nested type ever becomes worth the reader complexity — the
+  concrete alternative is `list<struct<start, end>>`, which lands as a
+  BigQuery REPEATED RECORD and gives native `UNNEST` instead of JSON string
+  parsing for "is this alert active at time T" queries.
 - **uint64 timestamp fields**: existing convention uses uint64 for proto
   uint64s; BigQuery INT64 handles observed ranges.
 
@@ -122,8 +125,14 @@ nullable everywhere).
 - Deviations from Approach: tests landed in a new
   `tests/dagster/test_field_extraction.py` rather than extending
   `test_compaction.py`; the promised "row-group identity unaffected" test was
-  not written — `compact_single_feed` is untouched by this diff (verified in
-  review) and the real invariant-pinning test remains #92's item.
+  not written — the write-per-file loop is unchanged and the real
+  invariant-pinning test remains #92's item. `compact_single_feed` **was**
+  touched (review round 3): the Arrow conversion moved outside the per-file
+  parse handler (`pyarrow.ArrowInvalid` subclasses `ValueError`), so a
+  schema/type bug now fails the partition loudly — naming the offending file —
+  instead of masquerading as per-file parse warnings over an empty partition.
+  That flips conversion-error semantics from skip-and-warn to fail-partition;
+  noted on #92 so the invariant test pins the new behavior.
 - New enum fields all use per-field `HasField` guards; the pre-existing
   unguarded `trip.schedule_relationship` reads (the #93 review's enum-0
   hazard) were left as-is — fleet probe found no unknown values in flight, and
