@@ -120,7 +120,7 @@ def main() -> int:
         # a ValueError file is exactly what this tool gets pointed at.
         except (DecodeError, ValueError) as e:
             (outdir / (base + ".PARSE_ERROR.txt")).write_text(
-                f"DecodeError: {e}\n\nsize: {len(content)} bytes"
+                f"{type(e).__name__}: {e}\n\nsize: {len(content)} bytes"
                 f" ({len(content) / 4096:.2f} x 4096)\n"
                 f"first 32 bytes: {content[:32]!r}\nlast 32 bytes: {content[-32:]!r}\n"
             )

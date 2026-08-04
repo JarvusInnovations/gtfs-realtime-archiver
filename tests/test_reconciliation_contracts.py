@@ -1,15 +1,18 @@
-"""Drift guards for the proto-parquet reconciliation dashboard.
+"""Drift guards and behavioral tests for the reconciliation dashboard.
 
 dashboards/proto-parquet-reconciliation/ re-implements several pipeline
 formats it cannot import (extract.py is a standalone PEP 723 script; the page
-is Evidence SQL). Each copy carries a "must not drift" comment; these tests
-make that comment enforceable. They read the dashboard files as text — the
-dashboard's dependencies are deliberately not part of this project's
-environment.
+is Evidence SQL). Each copy carries a "must not drift" comment; the guard
+tests make those comments enforceable. extract.py defers its one
+non-dev-environment import (duckdb) so its pure helpers can also be exercised
+behaviorally here.
 """
 
-from datetime import UTC, datetime
+import importlib.util
+from datetime import UTC, date, datetime
 from pathlib import Path
+
+import pytest
 
 from dagster_pipeline.defs.assets.compaction import (
     encode_base64url,
@@ -20,6 +23,15 @@ from dagster_pipeline.defs.assets.inventory import _RT_PATTERN
 DASHBOARD = Path(__file__).parents[1] / "dashboards" / "proto-parquet-reconciliation"
 EXTRACT_SRC = (DASHBOARD / "extract.py").read_text()
 PAGE_SRC = (DASHBOARD / "pages" / "index.md").read_text()
+
+_spec = importlib.util.spec_from_file_location("recon_extract", DASHBOARD / "extract.py")
+assert _spec is not None and _spec.loader is not None
+extract = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(extract)
+
+
+def _norm(s: str) -> str:
+    return " ".join(s.split())
 
 
 def test_rt_pattern_copied_verbatim() -> None:
@@ -65,15 +77,19 @@ def test_page_feed_key_sql_mirrors_url_to_partition_key() -> None:
     assert url_to_partition_key("http://a.example/feed") == "~a.example/feed"
     # https:// is 8 chars — the SQL strips it via regexp_replace; http:// is
     # 7 chars — the SQL takes substr(url, 8) (1-indexed) and prepends ~.
-    assert "'~' || substr(url, 8)" in PAGE_SRC
-    assert "regexp_replace(url, '^https://', '')" in PAGE_SRC
+    # Whitespace-normalized so SQL reformatting can't false-fail the guard.
+    assert "'~' || substr(url, 8)" in _norm(PAGE_SRC)
+    assert "regexp_replace(url, '^https://', '')" in _norm(PAGE_SRC)
 
 
-def test_page_derives_thresholds_from_extract_meta() -> None:
-    """No restated literals: the page must derive the header-only threshold
-    from extract_meta, not hardcode it."""
-    assert "size_bytes > 20" not in PAGE_SRC
-    assert PAGE_SRC.count("select header_only_max from archiver.extract_meta") >= 2
+def test_drop_summary_derives_threshold_from_extract_meta() -> None:
+    """No restated literals: the shared drop rollup derives the header-only
+    threshold from extract_meta, and the page never hardcodes it."""
+    ds_src = (DASHBOARD / "sources" / "archiver" / "drop_summary.sql").read_text()
+    assert "select header_only_max from extract_meta" in _norm(ds_src)
+    # the page may display size_bytes but never applies a size threshold —
+    # that logic lives in the sources, derived from extract_meta
+    assert "size_bytes >" not in PAGE_SRC
 
 
 def test_daily_comparison_derives_window_from_meta() -> None:
@@ -113,4 +129,108 @@ def test_base64url_padding_matches_compaction() -> None:
     import base64
 
     assert base64.urlsafe_b64decode(padded).decode() == url
-    assert 'b64 + "=" * (4 - len(b64) % 4) if len(b64) % 4 else b64' in EXTRACT_SRC
+    assert 'b64 + "=" * (4 - len(b64) % 4) if len(b64) % 4 else b64' in _norm(EXTRACT_SRC)
+
+
+def test_pep723_bindings_floor_not_below_root() -> None:
+    """classify_drop's parse-parity contract with compaction only holds if
+    both sides can resolve the same generated bindings: the script's PEP 723
+    floor must never fall below the root project's."""
+    import re
+
+    m = re.search(r'"gtfs-realtime-bindings>=([\d.]+)"', EXTRACT_SRC)
+    assert m is not None
+    script_floor = tuple(int(x) for x in m.group(1).split("."))
+    root_src = (Path(__file__).parents[1] / "pyproject.toml").read_text()
+    m2 = re.search(r'"gtfs-realtime-bindings>=([\d.]+)"', root_src)
+    assert m2 is not None
+    root_floor = tuple(int(x) for x in m2.group(1).split("."))
+    assert script_floor >= root_floor
+
+
+def test_date_range_edges() -> None:
+    assert extract.date_range(date(2026, 1, 1), date(2026, 1, 3)) == [
+        "2026-01-01",
+        "2026-01-02",
+        "2026-01-03",
+    ]
+    assert extract.date_range(date(2026, 1, 1), date(2026, 1, 1)) == ["2026-01-01"]
+
+
+def test_with_retries_short_circuits_terminal_errors() -> None:
+    from google.api_core.exceptions import NotFound
+
+    calls: list[int] = []
+
+    def boom() -> None:
+        calls.append(1)
+        raise NotFound("gone")
+
+    with pytest.raises(NotFound):
+        extract.with_retries(boom)()
+    assert len(calls) == 1  # no retries burned on a guaranteed failure
+
+
+def test_with_retries_retries_transient_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(extract.time, "sleep", lambda _s: None)
+    calls: list[int] = []
+
+    def flaky() -> str:
+        calls.append(1)
+        if len(calls) < 3:
+            raise RuntimeError("transient")
+        return "ok"
+
+    assert extract.with_retries(flaky)() == "ok"
+    assert len(calls) == 3
+
+
+class _FakeBlob:
+    def __init__(self, store: dict[str, bytes], name: str) -> None:
+        self.store, self.name = store, name
+
+    def download_as_bytes(self) -> bytes:
+        return self.store[self.name]
+
+    def download_as_text(self) -> str:
+        raise FileNotFoundError(self.name)  # no .meta sidecar in fixtures
+
+
+class _FakeBucket:
+    def __init__(self, store: dict[str, bytes]) -> None:
+        self.store = store
+
+    def blob(self, name: str) -> _FakeBlob:
+        return _FakeBlob(self.store, name)
+
+
+def _feed_message(n_vehicles: int) -> bytes:
+    from google.transit import gtfs_realtime_pb2
+
+    feed = gtfs_realtime_pb2.FeedMessage()
+    feed.header.gtfs_realtime_version = "2.0"
+    feed.header.timestamp = 1_700_000_000
+    for i in range(n_vehicles):
+        entity = feed.entity.add()
+        entity.id = str(i)
+        entity.vehicle.vehicle.id = f"v{i}"
+    return feed.SerializeToString()
+
+
+def test_classify_drop_label_mapping() -> None:
+    """Pin the three labels, including the exact fleet-observed failure body
+    (the HTTP-200 BusTime error text) as the parse_failure case."""
+    store = {
+        "valid.pb": _feed_message(2),
+        "empty.pb": _feed_message(0),
+        "garbage.pb": b"ERROR: no connectivity to BusTime server!",
+    }
+    bucket = _FakeBucket(store)
+    labels = {
+        name: extract.classify_drop(None, bucket, "vehicle_positions", name)[2] for name in store
+    }
+    assert labels == {
+        "valid.pb": "unexplained_drop",
+        "empty.pb": "legitimately_empty_feed",
+        "garbage.pb": "parse_failure",
+    }

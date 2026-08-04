@@ -198,23 +198,6 @@ with base as (
             else regexp_replace(url, '^https://', '')
         end as feed_key
     from archiver.daily_comparison
-),
-
-drops as (
-    select
-        feed_type,
-        date,
-        base64url,
-        count(*) as classified,
-        count(*) filter (label = 'unexplained_drop') as valid_files,
-        count(*) filter (label = 'parse_failure') as parse_failures,
-        count(*) filter (label = 'legitimately_empty_feed') as zero_entity,
-        count(*) filter (label = 'error') as errored
-    from archiver.dropped_files
-    -- threshold from the extract itself, and consistent with short_partitions:
-    -- pre-2026-07-31 extracts classified header-only files too
-    where size_bytes > (select header_only_max from archiver.extract_meta)
-    group by all
 )
 
 select
@@ -233,12 +216,12 @@ select
         when b.parquet_path is not null and b.row_count is null then ''
         when d.classified is null
             then 'not classified (busy partition, or extract predates classification) — re-run is safe to try'
-        when d.valid_files > 0
-            then d.valid_files || ' valid file(s) dropped — remediation recovers real data'
+        when d.valid_dropped > 0
+            then d.valid_dropped || ' valid file(s) dropped — remediation recovers real data'
         when d.errored > 0
             then 'classification incomplete (' || d.errored
                 || ' errored) — unknown; re-run is safe to try'
-        else 'no valid data ever existed (' || d.parse_failures || ' parse_failure, '
+        else 'no valid data ever existed (' || d.parse_failure || ' parse_failure, '
             || d.zero_entity
             || ' zero-entity) — do NOT re-run, nothing to recover'
     end as diagnosis,
@@ -250,8 +233,10 @@ select
             -- too, which would corrupt the inner Python string literals.
             and b.feed_key not like '%''%'
             and b.feed_key not like '%"%'
-            and b.feed_key not like '%\%'
-            and (d.classified is null or d.valid_files > 0 or d.errored > 0) then
+            -- contains() rather than LIKE: LIKE-escape semantics for
+            -- backslash differ across engines and are easy to misread
+            and not contains(b.feed_key, '\')
+            and (d.classified is null or d.valid_dropped > 0 or d.errored > 0) then
             'uv run python -c ''from dotenv import load_dotenv; load_dotenv(); '
             || 'import dagster as dg; dg.DagsterInstance.get().add_dynamic_partitions("'
             || b.feed_type || '_feeds", ["'
@@ -260,7 +245,7 @@ select
             || strftime(b.date, '%Y-%m-%d') || '|' || b.feed_key || ''''
     end as remediate
 from base b
-left join drops d
+left join archiver.drop_summary d
     on d.feed_type = b.feed_type and d.date = b.date and d.base64url = b.base64url
 where ('${inputs.agency.value}' = '%' or coalesce(b.agency_id, '(unmapped)') = '${inputs.agency.value}')
     and ('${inputs.feed_type.value}' = '%' or b.feed_type = '${inputs.feed_type.value}')
@@ -318,24 +303,6 @@ appear nowhere in the parquet — genuine compaction losses that should always
 be zero.
 
 ```sql short_partitions
-with drops as (
-    select
-        feed_type,
-        date,
-        base64url,
-        count(*) as classified,
-        count(*) filter (label = 'unexplained_drop') as valid_dropped,
-        count(*) filter (label = 'parse_failure') as parse_failure,
-        count(*) filter (label = 'legitimately_empty_feed') as zero_entity,
-        count(*) filter (label = 'error') as errored
-    from archiver.dropped_files
-    -- threshold from the extract itself (never restated as a literal), and
-    -- makes this correct even against extracts that classified header-only
-    -- files (they never count toward the shortfall)
-    where size_bytes > (select header_only_max from archiver.extract_meta)
-    group by all
-)
-
 select
     c.feed_type,
     c.date,
@@ -352,7 +319,7 @@ select
         - coalesce(d.classified, 0) as unclassified,
     c.row_count
 from archiver.daily_comparison c
-left join drops d
+left join archiver.drop_summary d
     on d.feed_type = c.feed_type and d.date = c.date and d.base64url = c.base64url
 where ('${inputs.agency.value}' = '%' or coalesce(c.agency_id, '(unmapped)') = '${inputs.agency.value}')
     and ('${inputs.feed_type.value}' = '%' or c.feed_type = '${inputs.feed_type.value}')
@@ -398,7 +365,11 @@ select
     response_code,
     content_length,
     label,
-    'uv run --script dashboards/proto-parquet-reconciliation/unpack.py --pb ''' || name || '''' as unpack
+    -- same paste-into-shell guard as remediate; object names are
+    -- archiver-generated so this never fires in practice
+    case when name not like '%''%' then
+        'uv run --script dashboards/proto-parquet-reconciliation/unpack.py --pb ''' || name || ''''
+    end as unpack
 from archiver.dropped_files
 where ('${inputs.agency.value}' = '%' or coalesce(agency_id, '(unmapped)') = '${inputs.agency.value}')
     and ('${inputs.feed_type.value}' = '%' or feed_type = '${inputs.feed_type.value}')

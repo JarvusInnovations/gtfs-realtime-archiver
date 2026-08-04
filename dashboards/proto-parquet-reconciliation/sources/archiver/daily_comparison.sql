@@ -79,13 +79,18 @@ select
     f.url,
     -- one human-readable identity per feed, shared by chart series labels and
     -- the focus dropdown: "SEPTA · Bus", "Sound Transit", or the decoded URL
-    -- for unmapped feeds
-    case
-        when coalesce(f.agency_id, '(unmapped)') = '(unmapped)'
-            then coalesce(f.url, j.base64url)
-        else f.agency_name
-            || coalesce(' · ' || f.system_name, '')
-    end as display_name,
+    -- for unmapped feeds. Single quotes are mapped to a typographic apostrophe
+    -- because this value round-trips through Evidence's raw ${inputs.*}
+    -- interpolation — a literal quote would break the page query.
+    replace(
+        case
+            when coalesce(f.agency_id, '(unmapped)') = '(unmapped)'
+                then coalesce(f.url, j.base64url)
+            else f.agency_name
+                || coalesce(' · ' || f.system_name, '')
+        end,
+        '''', '’'
+    ) as display_name,
     round(j.row_count / nullif(j.pb_contentful_count, 0), 1) as rows_per_proto,
     j.date between (select extracted_ts from meta)::date - (select window_old_days from meta)
         and (select extracted_ts from meta)::date - (select window_new_days from meta)

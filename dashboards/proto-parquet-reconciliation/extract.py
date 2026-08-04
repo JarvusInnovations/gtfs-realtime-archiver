@@ -4,9 +4,9 @@
 # dependencies = [
 #     "google-cloud-storage>=2.14",
 #     "gcsfs>=2024.2.0",
-#     "pyarrow>=16",
+#     "pyarrow>=22",
 #     "duckdb>=1.0",
-#     "gtfs-realtime-bindings>=1.0.0",
+#     "gtfs-realtime-bindings>=2.2.0",
 # ]
 # ///
 """Extract reconciliation data: GCS -> data/reconciliation.duckdb.
@@ -35,12 +35,15 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.request import urlopen
 
-import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
 from google.api_core.exceptions import Forbidden, NotFound
 from google.protobuf.message import DecodeError
 from google.transit import gtfs_realtime_pb2
+
+# duckdb is imported inside main(): it's the one dependency absent from the
+# repo's dev groups, and deferring it keeps this module importable from
+# tests/ for behavioral tests of the pure helpers.
 
 PROTOBUF_BUCKET = os.environ.get("GCS_BUCKET_RT_PROTOBUF", "protobuf.gtfsrt.io")
 PARQUET_BUCKET = os.environ.get("GCS_BUCKET_RT_PARQUET", "parquet.gtfsrt.io")
@@ -270,7 +273,7 @@ def read_source_files(fs, path: str) -> set[str]:
     return sources
 
 
-def classify_drop(client, bucket, feed_type: str, pb_name: str, size_bytes: int):
+def classify_drop(client, bucket, feed_type: str, pb_name: str):
     """Label one anti-joined .pb: why did it not contribute rows?
 
     Reads the sibling .meta (response_code/content_length) and, since the
@@ -321,6 +324,7 @@ def main() -> int:
     dates = date_range(start, end)
     feed_types = [args.feed_type] if args.feed_type else FEED_TYPES
 
+    import duckdb  # deferred: see module-scope note
     from google.cloud import storage  # deferred: slow import
 
     client = storage.Client()
@@ -336,7 +340,15 @@ def main() -> int:
 
     # 1. Feed dimension ----------------------------------------------------
     print(f"Fetching {FEEDS_PARQUET_URL}")
-    feeds = fetch_feeds()
+    try:
+        feeds = with_retries(fetch_feeds)()
+    except Exception as e:
+        print(
+            f"Could not fetch {FEEDS_PARQUET_URL} ({e}) — this script reads "
+            "feeds.parquet anonymously over HTTPS from the public parquet bucket",
+            file=sys.stderr,
+        )
+        return 1
     feeds_rows = feeds.to_pylist()
     feeds_by_b64 = {r["base64url"]: r for r in feeds_rows}
     print(f"  {feeds.num_rows} feeds in feeds.parquet")
@@ -540,7 +552,7 @@ def main() -> int:
 
     def safe_classify(c):
         try:
-            return with_retries(classify_drop)(client, protobuf_bucket, c[0], c[3], c[4])
+            return with_retries(classify_drop)(client, protobuf_bucket, c[0], c[3])
         except Exception:
             return None, None, "error"
 
