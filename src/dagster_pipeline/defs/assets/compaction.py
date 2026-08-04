@@ -12,7 +12,7 @@ import dagster as dg
 import pyarrow as pa
 import pyarrow.parquet as pq
 from google.cloud import storage
-from google.protobuf.message import DecodeError
+from google.protobuf.message import DecodeError, Message
 from google.transit import gtfs_realtime_pb2
 
 from dagster_pipeline.defs.assets.schemas import (
@@ -42,7 +42,11 @@ def encode_base64url(url: str) -> str:
 # Prefix for HTTP-only feeds (HTTPS is the default, no prefix needed)
 HTTP_FEED_PREFIX = "~"
 
-# Every version-gated (message, field) pair the extractors dereference.
+# The (message, field) pairs the extractors dereference that are absent from
+# older bindings releases, plus the parent fields of the nested messages they
+# read. Deliberately NOT every field the extractors touch: long-stable fields
+# (TranslatedString.translation, TranslatedImage.localized_image, ...) predate
+# every bindings release this code could plausibly meet.
 # HasField on a field the installed bindings don't know raises ValueError —
 # which the per-file parse handler would swallow, turning a bindings
 # downgrade into "every file failed to parse" and successful runs writing
@@ -54,7 +58,7 @@ HTTP_FEED_PREFIX = "~"
 # AttributeError on bindings old enough to lack the message — catch that so
 # the failure still says "upgrade" instead of a bare AttributeError.
 try:
-    REQUIRED_BINDINGS_FIELDS: tuple[tuple[Any, str], ...] = (
+    REQUIRED_BINDINGS_FIELDS: tuple[tuple[type[Message], str], ...] = (
         (gtfs_realtime_pb2.VehicleDescriptor, "wheelchair_accessible"),
         (gtfs_realtime_pb2.TripUpdate, "trip_properties"),
         (gtfs_realtime_pb2.TripUpdate.TripProperties, "trip_id"),
@@ -298,8 +302,10 @@ def extract_vehicle_positions(
                     vp.occupancy_percentage if vp.HasField("occupancy_percentage") else None
                 ),
                 "wheelchair_accessible": (
+                    # No parent check needed: an unset submessage returns the
+                    # default instance, whose per-field HasField is False.
                     vp.vehicle.wheelchair_accessible
-                    if vp.HasField("vehicle") and vp.vehicle.HasField("wheelchair_accessible")
+                    if vp.vehicle.HasField("wheelchair_accessible")
                     else None
                 ),
             }
@@ -540,8 +546,11 @@ def extract_trip_updates(
                     )
                     yield record
             else:
-                # Trip update with no stop time updates - still yield the base record
+                # Trip update with no stop time updates - still yield the base record.
+                # A base-record key landing in STOP_TIME_UPDATE_KEYS would be
+                # silently NULLed here while the key-parity test still passes.
                 record = base_record.copy()
+                assert not record.keys() & set(STOP_TIME_UPDATE_KEYS)
                 record.update(dict.fromkeys(STOP_TIME_UPDATE_KEYS))
                 yield record
 
@@ -549,7 +558,7 @@ def extract_trip_updates(
 def _get_text(translated_string: Any) -> str | None:
     """First translation of a TranslatedString (typically English) — the
     keep-first convention documented in DESIGN.md."""
-    if translated_string and translated_string.translation:
+    if translated_string.translation:
         return str(translated_string.translation[0].text)
     return None
 
@@ -675,8 +684,11 @@ def extract_service_alerts(
                     )
                     yield record
             else:
-                # Alert with no informed entities - still yield the base record
+                # Alert with no informed entities - still yield the base record.
+                # A base-record key landing in INFORMED_ENTITY_KEYS would be
+                # silently NULLed here while the key-parity test still passes.
                 record = base_record.copy()
+                assert not record.keys() & set(INFORMED_ENTITY_KEYS)
                 record.update(dict.fromkeys(INFORMED_ENTITY_KEYS))
                 yield record
 
@@ -763,17 +775,21 @@ def compact_single_feed(
                 continue
 
             # Write batch to parquet stream. Fail the partition with the
-            # offending file named — a bare Arrow error escaping here gives
-            # no clue which of ~thousands of .pb files produced it.
-            # ArrowException is the common base: ArrowInvalid derives from
-            # ValueError but its siblings (ArrowTypeError et al.) do not.
+            # offending file named — any error escaping here bare gives no
+            # clue which of ~thousands of .pb files produced it. Broad on
+            # purpose: from_pylist raises ArrowInvalid/ArrowTypeError (which
+            # straddle ValueError/TypeError) and bare TypeError/OverflowError
+            # depending on the conversion path; the intent is "fail the
+            # partition, loudly, naming the file", not enumerating classes.
             try:
                 batch = pa.Table.from_pylist(records, schema=schema)
-            except pa.ArrowException as e:
-                raise dg.Failure(f"Arrow conversion failed for {pb_file}: {e}") from e
-            if writer is None:
-                writer = pq.ParquetWriter(buffer, schema, compression="zstd", compression_level=9)
-            writer.write_table(batch)
+                if writer is None:
+                    writer = pq.ParquetWriter(
+                        buffer, schema, compression="zstd", compression_level=9
+                    )
+                writer.write_table(batch)
+            except Exception as e:
+                raise dg.Failure(f"Parquet conversion/write failed for {pb_file}: {e}") from e
             records_count += len(records)
     finally:
         if writer is not None:

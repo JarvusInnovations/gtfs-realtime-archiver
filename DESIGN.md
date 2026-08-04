@@ -764,7 +764,14 @@ history — another reason for `union_by_name`. Within service_alerts, bare
 informed-entity column names (`agency_id`, `route_id`, `stop_id`,
 `direction_id`) carry EntitySelector semantics — distinct from the
 trip-descriptor meanings the same names have in vehicle_positions/
-trip_updates.
+trip_updates. Similarly, in trip_updates the `StopTimeProperties` fields
+(`assigned_stop_id`, `stop_headsign`, `pickup_type`, `drop_off_type`) are
+deliberately bare — each denormalized row already *is* a stop_time_update, so
+STU-level fields take row-level names, and only fields hoisted from
+trip-level nested messages (`trip_properties_*`, `modified_trip_*`) carry a
+provenance prefix. Note `pickup_type`/`drop_off_type`/`stop_headsign` also
+name GTFS **static** `stop_times.txt` columns; qualify columns when joining
+static and RT tables.
 
 String-presence semantics: fields of sparse-by-design nested messages
 (`trip_properties_*`, `modified_trip_*`, `assigned_stop_id`, `stop_headsign`)
@@ -772,13 +779,15 @@ use per-field presence — unset is NULL, never `""`. Strings on
 routinely-populated parents (`vehicle_id`, `vehicle_label`, trip-descriptor
 strings) keep the long-standing parent-presence convention, where an unset
 field on a present parent reads as `""`. One deliberate asymmetry:
-`license_plate` is parent-`""` in **vehicle_positions** (changing an existing
-column's semantics is its own change if ever — re-materialization means
-history isn't strictly frozen, but consumers may already rely on the shape)
-and per-field NULL in **trip_updates** (a brand-new column that would
-otherwise read `""` on nearly every row, since plates are rarely published) —
-unions across the two feed types should normalize with
-`NULLIF(license_plate, '')`. `active_periods_json` is NULL when an alert
+`license_plate` is parent-`""` in **vehicle_positions** and per-field NULL in
+**trip_updates** (a brand-new column that would otherwise read `""` on nearly
+every row, since plates are rarely published). The reason for not normalizing
+VP to NULL: partitions are re-materialized individually, so switching an
+existing column's convention makes its value for identical source data depend
+on *when* each partition was written — `""` pre-switch, NULL post-switch —
+a within-column inconsistency worse than the cross-table asymmetry (which a
+full backfill could fix, but that is #91's separate decision). Unions across
+the two feed types should normalize with `NULLIF(license_plate, '')`. `active_periods_json` is NULL when an alert
 declares no active periods (spec: always active); `"[]"` is never emitted.
 
 Producer-supplied text columns (`header_text`, `description_text`, `tts_*`,

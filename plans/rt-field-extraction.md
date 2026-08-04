@@ -94,7 +94,13 @@ nullable everywhere).
   first-class nested type ever becomes worth the reader complexity — the
   concrete alternative is `list<struct<start, end>>`, which lands as a
   BigQuery REPEATED RECORD and gives native `UNNEST` instead of JSON string
-  parsing for "is this alert active at time T" queries.
+  parsing for "is this alert active at time T" queries. Both shapes replicate
+  the period list onto every informed-entity row (O(periods ×
+  informed_entities); Parquet dictionary encoding collapses it on disk, but
+  the Arrow batch materializes it — ~100MB transient for a worst-case
+  251-period alert × thousands of entities). Only a separate
+  `alert_active_periods` table keyed by `source_file` + `entity_id` avoids
+  the multiplication.
 - **uint64 timestamp fields**: existing convention uses uint64 for proto
   uint64s; BigQuery INT64 handles observed ranges.
 
