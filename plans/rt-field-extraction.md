@@ -51,11 +51,9 @@ backfill later.
 
 ## Implements
 
-No `specs/` yet (#87). Governing intent: issue #91 (census-verified add-list),
-
-# 86 (columnset is a cross-repo contract — uniform superset, nullable
-
-everywhere).
+No `specs/` yet (#87). Governing intent: issue #91 (census-verified add-list)
+and issue #86 (columnset is a cross-repo contract — uniform superset,
+nullable everywhere).
 
 ## Approach
 
@@ -103,6 +101,18 @@ everywhere).
   semantics confirmed empirically on bindings 2.2.0 (explicit enum 0 captured,
   unset → NULL); targeted `tofu plan` shows all three external tables
   **update in-place, 0 to destroy**; 213 tests.
+- **String-presence decision** (post-review): fields of sparse-by-design
+  nested messages (`trip_properties_*`, `modified_trip_*`, `assigned_stop_id`,
+  `stop_headsign`) use per-field `HasField` — unset is NULL, never `""` (a
+  parent-only guard would poison the IS NOT NULL queries these columns exist
+  for, and unset `stop_headsign` means "inherit the scheduled headsign").
+  Strings on routinely-populated parents (`license_plate` et al.) keep the
+  existing parent-presence convention. Documented in DESIGN.md; pinned by
+  tests.
+- **`image_alternative_text` added** (accessibility sibling of the `tts_*`
+  fields — capturing it was cheaper than justifying its absence);
+  `LocalizedImage.media_type`/`language` stay keep-first-dropped alongside the
+  translation deferral.
 - **Naming decision**: service_alerts' informed-entity `direction_id` keeps the
   bare name, matching the existing SA convention (`agency_id`/`route_id`/
   `stop_id` already carry EntitySelector semantics distinct from the same

@@ -140,6 +140,7 @@ SERVICE_ALERTS_SCHEMA = pa.schema(
         pa.field("tts_header_text", pa.string()),
         pa.field("tts_description_text", pa.string()),
         pa.field("image_url", pa.string()),
+        pa.field("image_alternative_text", pa.string()),
         # Full active-period list, JSON-encoded [{"start":…,"end":…},…] —
         # 172 fleet alerts carry >1 period (max 251); active_period_start/end
         # remain the first period for compatibility (#91 granularity decision)

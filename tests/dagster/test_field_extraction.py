@@ -23,16 +23,23 @@ from dagster_pipeline.defs.assets.schemas import (
 
 
 def test_bindings_expose_2_2_0_fields() -> None:
-    """Regression guard: a bindings downgrade below 2.2.0 silently re-blinds
-    the parser to these fields; fail loudly instead."""
+    """Regression guard: a bindings downgrade would re-blind the parser to
+    (or AttributeError on) every field this module dereferences; fail loudly
+    on the full load-bearing surface instead."""
     stu_event = gtfs_realtime_pb2.TripUpdate.StopTimeEvent.DESCRIPTOR.fields_by_name
     assert "scheduled_time" in stu_event
     alert = gtfs_realtime_pb2.Alert.DESCRIPTOR.fields_by_name
-    assert "cause_detail" in alert
-    assert "effect_detail" in alert
-    assert "image" in alert
+    for field in ("cause_detail", "effect_detail", "image", "image_alternative_text"):
+        assert field in alert
     trip = gtfs_realtime_pb2.TripDescriptor.DESCRIPTOR.fields_by_name
     assert "modified_trip" in trip
+    tu = gtfs_realtime_pb2.TripUpdate.DESCRIPTOR.fields_by_name
+    assert "trip_properties" in tu
+    stp = gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.StopTimeProperties.DESCRIPTOR.fields_by_name
+    for field in ("assigned_stop_id", "stop_headsign", "pickup_type", "drop_off_type"):
+        assert field in stp
+    entity_selector = gtfs_realtime_pb2.EntitySelector.DESCRIPTOR.fields_by_name
+    assert "direction_id" in entity_selector
 
 
 def _feed() -> gtfs_realtime_pb2.FeedMessage:
@@ -54,6 +61,27 @@ def test_vehicle_position_wheelchair_accessible() -> None:
 
     (r,) = extract_vehicle_positions(feed, "f.pb", "https://x", None)
     assert r["wheelchair_accessible"] == gtfs_realtime_pb2.VehicleDescriptor.WHEELCHAIR_ACCESSIBLE
+
+
+def test_wheelchair_accessible_edge_cases() -> None:
+    """Absent vehicle descriptor -> NULL; explicit NO_VALUE (enum 0, the
+    likeliest wild value) -> 0, not NULL."""
+    feed = _feed()
+    bare = feed.entity.add()
+    bare.id = "v-bare"
+    bare.vehicle.position.latitude = 1.0
+    bare.vehicle.position.longitude = 2.0
+    explicit_zero = feed.entity.add()
+    explicit_zero.id = "v-zero"
+    explicit_zero.vehicle.position.latitude = 1.0
+    explicit_zero.vehicle.position.longitude = 2.0
+    explicit_zero.vehicle.vehicle.wheelchair_accessible = (
+        gtfs_realtime_pb2.VehicleDescriptor.NO_VALUE
+    )
+
+    records = list(extract_vehicle_positions(feed, "f.pb", "https://x", None))
+    assert records[0]["wheelchair_accessible"] is None
+    assert records[1]["wheelchair_accessible"] == 0
 
 
 def test_trip_update_new_fields() -> None:
@@ -99,6 +127,13 @@ def test_trip_update_new_fields() -> None:
         == gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.StopTimeProperties.COORDINATE_WITH_DRIVER
     )
     assert r["drop_off_type"] is None  # per-field HasField, not enum default
+    # Sparse-message strings: unset siblings of set fields are NULL, not ""
+    # (trip_properties has trip_id/shape_id/trip_headsign set above)
+    assert r["trip_properties_start_date"] is None
+    assert r["trip_properties_start_time"] is None
+    assert r["trip_properties_trip_short_name"] is None
+    assert r["modified_trip_start_date"] is None
+    assert r["modified_trip_start_time"] is None
 
 
 def test_explicit_enum_zero_is_captured_not_nulled() -> None:
@@ -161,6 +196,19 @@ def test_service_alert_new_fields_and_multi_active_period() -> None:
         {"start": 1_754_100_000, "end": 1_754_110_000},
         {"start": 1_754_200_000, "end": None},
     ]
+    assert r["image_alternative_text"] is None  # image set, alt text unset
+
+
+def test_active_periods_json_null_when_no_periods() -> None:
+    """No active periods -> NULL (spec: alert always active), never "[]"."""
+    feed = _feed()
+    entity = feed.entity.add()
+    entity.id = "a-open"
+    entity.alert.header_text.translation.add(text="Always on")
+
+    (r,) = extract_service_alerts(feed, "f.pb", "https://x", None)
+    assert r["active_periods_json"] is None
+    assert r["active_period_start"] is None
 
 
 def test_record_keys_match_schemas_exactly() -> None:
@@ -207,3 +255,34 @@ def test_record_keys_match_schemas_exactly() -> None:
         assert records, "each case must yield at least one record"
         for record in records:
             assert set(record.keys()) == set(schema.names)
+        # Round-trip through Arrow with the explicit schema: catches a
+        # wrong-typed value at test time instead of at compaction write time,
+        # where it would surface as a per-file warning and a short parquet.
+        table = pa.Table.from_pylist(records, schema=schema)
+        assert table.num_rows == len(records)
+
+
+def test_bigquery_ddl_matches_schemas() -> None:
+    """Machine-check the schema -> tf/bigquery.tf leg — the one that crosses
+    a language boundary with no import to break. A column added to
+    schemas.py without a matching BigQuery column ships Parquet data the
+    external tables can't see."""
+    import re
+    from pathlib import Path
+
+    tf_src = (Path(__file__).parents[2] / "tf" / "bigquery.tf").read_text()
+    for table_id, schema in (
+        ("vehicle_positions", VEHICLE_POSITIONS_SCHEMA),
+        ("trip_updates", TRIP_UPDATES_SCHEMA),
+        ("service_alerts", SERVICE_ALERTS_SCHEMA),
+    ):
+        block = re.search(
+            rf'resource "google_bigquery_table" "{table_id}".*?schema = jsonencode\(\[(.*?)\]\)',
+            tf_src,
+            re.S,
+        )
+        assert block is not None, f"no schema block for {table_id}"
+        names = re.findall(r'name\s*=\s*"(\w+)"', block.group(1))
+        assert names == list(schema.names), (
+            f"{table_id}: BigQuery DDL columns diverge from schemas.py"
+        )

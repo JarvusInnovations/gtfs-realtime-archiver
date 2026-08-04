@@ -747,7 +747,7 @@ Each feed type has a defined schema for consistent output:
 **Service Alerts:**
 
 - Base: `source_file`, `feed_url`, `feed_timestamp`, `fetch_timestamp`, `entity_id`
-- Alert: `cause`, `effect`, `severity_level`, `cause_detail`, `effect_detail`, `url`, `header_text`, `description_text`, `tts_header_text`, `tts_description_text`, `image_url`
+- Alert: `cause`, `effect`, `severity_level`, `cause_detail`, `effect_detail`, `url`, `header_text`, `description_text`, `tts_header_text`, `tts_description_text`, `image_url`, `image_alternative_text`
 - Active period: `active_period_start`, `active_period_end` (first period), `active_periods_json` (full list)
 - Informed entity: `agency_id`, `route_id`, `route_type`, `stop_id`, `direction_id`, `trip_id`, `trip_route_id`, `trip_direction_id`
 
@@ -757,10 +757,23 @@ gtfs-realtime-bindings-2.2.0-gated `*_scheduled_time`, `cause_detail`,
 `effect_detail`, `image_url`, `modified_trip_*`) populate only from the
 release that shipped them onward; earlier partitions lack the columns and
 read as NULL from the BigQuery external tables (DuckDB consumers should use
-`union_by_name`). Within service_alerts, bare informed-entity column names
-(`agency_id`, `route_id`, `stop_id`, `direction_id`) carry EntitySelector
-semantics — distinct from the trip-descriptor meanings the same names have
-in vehicle_positions/trip_updates.
+`union_by_name`). Note that **re-materializing any old partition backfills
+its new columns** (compaction rewrites partitions wholesale from raw, 365-day
+retention), so column presence varies partition-to-partition with re-run
+history — another reason for `union_by_name`. Within service_alerts, bare
+informed-entity column names (`agency_id`, `route_id`, `stop_id`,
+`direction_id`) carry EntitySelector semantics — distinct from the
+trip-descriptor meanings the same names have in vehicle_positions/
+trip_updates.
+
+String-presence semantics: fields of sparse-by-design nested messages
+(`trip_properties_*`, `modified_trip_*`, `assigned_stop_id`, `stop_headsign`)
+use per-field presence — unset is NULL, never `""`. Strings on
+routinely-populated parents (`vehicle_id`, `vehicle_label`, `license_plate`,
+trip-descriptor strings) keep the long-standing parent-presence convention,
+where an unset field on a present parent reads as `""`.
+`active_periods_json` is NULL when an alert declares no active periods (spec:
+always active); `"[]"` is never emitted.
 
 ### Schedule
 

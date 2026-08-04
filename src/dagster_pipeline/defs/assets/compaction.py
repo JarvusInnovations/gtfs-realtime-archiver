@@ -283,44 +283,59 @@ def extract_trip_updates(
                 # Trip-level fields
                 "trip_timestamp": tu.timestamp if tu.HasField("timestamp") else None,
                 "trip_delay": tu.delay if tu.HasField("delay") else None,
-                # TripProperties (added-trip metadata; #91)
+                # TripProperties (added-trip metadata; #91). Per-FIELD presence
+                # guards, like the enums: these messages are sparse by design
+                # (a producer sets a handful of overrides), and parent-only
+                # guards would write "" for every unset sibling — poisoning
+                # the IS NOT NULL queries these columns exist for. An unset
+                # submessage returns the default instance, whose per-field
+                # HasField is False, so no parent check is needed.
                 "trip_properties_trip_id": (
-                    tu.trip_properties.trip_id if tu.HasField("trip_properties") else None
+                    tu.trip_properties.trip_id if tu.trip_properties.HasField("trip_id") else None
                 ),
                 "trip_properties_start_date": (
-                    tu.trip_properties.start_date if tu.HasField("trip_properties") else None
+                    tu.trip_properties.start_date
+                    if tu.trip_properties.HasField("start_date")
+                    else None
                 ),
                 "trip_properties_start_time": (
-                    tu.trip_properties.start_time if tu.HasField("trip_properties") else None
+                    tu.trip_properties.start_time
+                    if tu.trip_properties.HasField("start_time")
+                    else None
                 ),
                 "trip_properties_shape_id": (
-                    tu.trip_properties.shape_id if tu.HasField("trip_properties") else None
+                    tu.trip_properties.shape_id if tu.trip_properties.HasField("shape_id") else None
                 ),
                 "trip_properties_trip_headsign": (
-                    tu.trip_properties.trip_headsign if tu.HasField("trip_properties") else None
+                    tu.trip_properties.trip_headsign
+                    if tu.trip_properties.HasField("trip_headsign")
+                    else None
                 ),
                 "trip_properties_trip_short_name": (
-                    tu.trip_properties.trip_short_name if tu.HasField("trip_properties") else None
+                    tu.trip_properties.trip_short_name
+                    if tu.trip_properties.HasField("trip_short_name")
+                    else None
                 ),
-                # ModifiedTripSelector (trip-modifications linkage; #91)
+                # ModifiedTripSelector (trip-modifications linkage; #91) —
+                # same per-field presence discipline
                 "modified_trip_modifications_id": (
                     tu.trip.modified_trip.modifications_id
-                    if tu.HasField("trip") and tu.trip.HasField("modified_trip")
+                    if tu.trip.modified_trip.HasField("modifications_id")
                     else None
                 ),
                 "modified_trip_affected_trip_id": (
                     tu.trip.modified_trip.affected_trip_id
-                    if tu.HasField("trip") and tu.trip.HasField("modified_trip")
+                    if tu.trip.modified_trip.HasField("affected_trip_id")
                     else None
                 ),
                 "modified_trip_start_date": (
                     tu.trip.modified_trip.start_date
-                    if tu.HasField("trip") and tu.trip.HasField("modified_trip")
+                    if tu.trip.modified_trip.HasField("start_date")
                     else None
                 ),
                 "modified_trip_start_time": (
                     tu.trip.modified_trip.start_time
-                    if tu.HasField("trip") and tu.trip.HasField("modified_trip")
+                    if tu.trip.modified_trip.HasField("start_time")
                     else None
                 ),
             }
@@ -389,26 +404,29 @@ def extract_trip_updates(
                                 if stu.HasField("departure_occupancy_status")
                                 else None
                             ),
+                            # StopTimeProperties: per-FIELD presence for all
+                            # fields (sparse-by-design message; parent-only
+                            # guards would write "" for unset strings, and
+                            # unset stop_headsign semantically means "inherit
+                            # the scheduled headsign", not intentional blank)
                             "assigned_stop_id": (
                                 stu.stop_time_properties.assigned_stop_id
-                                if stu.HasField("stop_time_properties")
+                                if stu.stop_time_properties.HasField("assigned_stop_id")
                                 else None
                             ),
                             "stop_headsign": (
                                 stu.stop_time_properties.stop_headsign
-                                if stu.HasField("stop_time_properties")
+                                if stu.stop_time_properties.HasField("stop_headsign")
                                 else None
                             ),
                             "pickup_type": (
                                 stu.stop_time_properties.pickup_type
-                                if stu.HasField("stop_time_properties")
-                                and stu.stop_time_properties.HasField("pickup_type")
+                                if stu.stop_time_properties.HasField("pickup_type")
                                 else None
                             ),
                             "drop_off_type": (
                                 stu.stop_time_properties.drop_off_type
-                                if stu.HasField("stop_time_properties")
-                                and stu.stop_time_properties.HasField("drop_off_type")
+                                if stu.stop_time_properties.HasField("drop_off_type")
                                 else None
                             ),
                         }
@@ -440,6 +458,14 @@ def extract_trip_updates(
                 yield record
 
 
+def _get_text(translated_string: Any) -> str | None:
+    """First translation of a TranslatedString (typically English) — the
+    keep-first convention documented in DESIGN.md."""
+    if translated_string and translated_string.translation:
+        return str(translated_string.translation[0].text)
+    return None
+
+
 def extract_service_alerts(
     feed: gtfs_realtime_pb2.FeedMessage,
     source_file: str,
@@ -464,6 +490,10 @@ def extract_service_alerts(
                 ap = alert.active_period[0]
                 active_start = ap.start if ap.HasField("start") else None
                 active_end = ap.end if ap.HasField("end") else None
+                # NULL means "no active periods declared" (spec: alert is
+                # always active) — deliberately distinct from "[]", which is
+                # never emitted. Compact separators: the string replicates
+                # onto every informed-entity row.
                 active_periods_json = json.dumps(
                     [
                         {
@@ -471,35 +501,35 @@ def extract_service_alerts(
                             "end": p.end if p.HasField("end") else None,
                         }
                         for p in alert.active_period
-                    ]
+                    ],
+                    separators=(",", ":"),
                 )
 
-            # Get first translation for text fields (typically English)
-            def get_text(translated_string: Any) -> str | None:
-                if translated_string and translated_string.translation:
-                    return str(translated_string.translation[0].text)
-                return None
-
-            header_text = get_text(alert.header_text) if alert.HasField("header_text") else None
+            header_text = _get_text(alert.header_text) if alert.HasField("header_text") else None
             description_text = (
-                get_text(alert.description_text) if alert.HasField("description_text") else None
+                _get_text(alert.description_text) if alert.HasField("description_text") else None
             )
-            url = get_text(alert.url) if alert.HasField("url") else None
+            url = _get_text(alert.url) if alert.HasField("url") else None
             tts_header_text = (
-                get_text(alert.tts_header_text) if alert.HasField("tts_header_text") else None
+                _get_text(alert.tts_header_text) if alert.HasField("tts_header_text") else None
             )
             tts_description_text = (
-                get_text(alert.tts_description_text)
+                _get_text(alert.tts_description_text)
                 if alert.HasField("tts_description_text")
                 else None
             )
-            cause_detail = get_text(alert.cause_detail) if alert.HasField("cause_detail") else None
+            cause_detail = _get_text(alert.cause_detail) if alert.HasField("cause_detail") else None
             effect_detail = (
-                get_text(alert.effect_detail) if alert.HasField("effect_detail") else None
+                _get_text(alert.effect_detail) if alert.HasField("effect_detail") else None
             )
             image_url = (
                 str(alert.image.localized_image[0].url)
                 if alert.HasField("image") and alert.image.localized_image
+                else None
+            )
+            image_alternative_text = (
+                _get_text(alert.image_alternative_text)
+                if alert.HasField("image_alternative_text")
                 else None
             )
 
@@ -530,6 +560,7 @@ def extract_service_alerts(
                 "cause_detail": cause_detail,
                 "effect_detail": effect_detail,
                 "image_url": image_url,
+                "image_alternative_text": image_alternative_text,
             }
 
             # Denormalize: one row per informed_entity
