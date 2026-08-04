@@ -1,8 +1,9 @@
 ---
-status: planned
+status: done
 depends: [proto-parquet-reconciliation-dashboard]
 specs: []
 issues: [91]
+pr: 94
 ---
 
 # Plan: Extract newly-visible GTFS-RT fields (issue #91 step 2)
@@ -51,7 +52,9 @@ backfill later.
 ## Implements
 
 No `specs/` yet (#87). Governing intent: issue #91 (census-verified add-list),
+
 # 86 (columnset is a cross-repo contract — uniform superset, nullable
+
 everywhere).
 
 ## Approach
@@ -72,15 +75,15 @@ everywhere).
 
 ## Validation
 
-- [ ] Every census-populated field appears in schema + extractor + BigQuery DDL
-- [ ] Extractor tests cover each new field with a synthetic FeedMessage,
+- [x] Every census-populated field appears in schema + extractor + BigQuery DDL
+- [x] Extractor tests cover each new field with a synthetic FeedMessage,
       including a >1-active-period alert asserting `active_periods_json`
-- [ ] Descriptor test pins `scheduled_time` / `cause_detail` / `image`
+- [x] Descriptor test pins `scheduled_time` / `cause_detail` / `image`
       visibility (fails on a bindings downgrade)
-- [ ] Existing tests pass unmodified in their assertions about old columns
+- [x] Existing tests pass unmodified in their assertions about old columns
       (pure additions — no renames, no type changes)
-- [ ] ruff, mypy strict, full pytest green
-- [ ] DESIGN.md column lists match `schemas.py` exactly
+- [x] ruff, mypy strict, full pytest green
+- [x] DESIGN.md column lists match `schemas.py` exactly
 
 ## Risks / unknowns
 
@@ -95,8 +98,34 @@ everywhere).
 
 ## Notes
 
-(Populated at closeout.)
+- Verification beyond the checklist: three-way schema ↔ extractor ↔ BigQuery
+  parity checked programmatically (27/42/27 columns); proto2 `HasField`
+  semantics confirmed empirically on bindings 2.2.0 (explicit enum 0 captured,
+  unset → NULL); targeted `tofu plan` shows all three external tables
+  **update in-place, 0 to destroy**; 213 tests.
+- **Naming decision**: service_alerts' informed-entity `direction_id` keeps the
+  bare name, matching the existing SA convention (`agency_id`/`route_id`/
+  `stop_id` already carry EntitySelector semantics distinct from the same
+  names' trip-descriptor meanings in VP/TU). Documented in DESIGN.md; recorded
+  here because cross-feed-type unions must know it.
+- Deviations from Approach: tests landed in a new
+  `tests/dagster/test_field_extraction.py` rather than extending
+  `test_compaction.py`; the promised "row-group identity unaffected" test was
+  not written — `compact_single_feed` is untouched by this diff (verified in
+  review) and the real invariant-pinning test remains #92's item.
+- New enum fields all use per-field `HasField` guards; the pre-existing
+  unguarded `trip.schedule_relationship` reads (the #93 review's enum-0
+  hazard) were left as-is — fleet probe found no unknown values in flight, and
+  changing existing column semantics belongs to its own change if ever.
 
 ## Follow-ups
 
-(Populated at closeout.)
+- Issue [#91](https://github.com/JarvusInnovations/gtfs-realtime-archiver/issues/91) —
+  remaining after this plan: the historical-backfill decision (365-day raw
+  retention horizon; re-materializing partitions populates the new columns for
+  history), and the two recorded deferrals (multi-language translations =
+  keep-first; `multi_carriage_details` = decide when a publisher appears).
+- Issue [#86](https://github.com/JarvusInnovations/gtfs-realtime-archiver/issues/86) —
+  the columnset contract docs must include the new columns, the
+  pre-release-NULL / `union_by_name` mixed-schema note, and the SA
+  informed-entity naming semantics.
