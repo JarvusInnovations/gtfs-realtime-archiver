@@ -106,6 +106,15 @@ nullable everywhere).
 
 ## Notes
 
+- **Mixed-schema NULL-read verified empirically** (review rounds 3–6 kept
+  flagging it as believed-not-checked): a `bq query` over a pre-release
+  parquet file (SEPTA VP 2026-07-01, 1,847,088 rows) through an ad-hoc
+  external table definition carrying the widened 27-column schema returned
+  `COUNT(wheelchair_accessible) = 0` with old columns intact and **no error**
+  — BigQuery PARQUET external tables read declared-but-absent columns as
+  NULL. The Risks bullet's failure mode ("every query errors") does not
+  occur. Release checklist still re-runs the query against the real tables
+  post-apply.
 - Verification beyond the checklist: three-way schema ↔ extractor ↔ BigQuery
   parity checked programmatically (27/42/28 columns incl.
   `image_alternative_text`, names AND types machine-checked in CI); proto2 `HasField`
