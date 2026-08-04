@@ -234,6 +234,11 @@ def extract_vehicle_positions(
                 "occupancy_percentage": (
                     vp.occupancy_percentage if vp.HasField("occupancy_percentage") else None
                 ),
+                "wheelchair_accessible": (
+                    vp.vehicle.wheelchair_accessible
+                    if vp.HasField("vehicle") and vp.vehicle.HasField("wheelchair_accessible")
+                    else None
+                ),
             }
 
 
@@ -274,9 +279,50 @@ def extract_trip_updates(
                 # Vehicle descriptor
                 "vehicle_id": tu.vehicle.id if tu.HasField("vehicle") else None,
                 "vehicle_label": tu.vehicle.label if tu.HasField("vehicle") else None,
+                "license_plate": (tu.vehicle.license_plate if tu.HasField("vehicle") else None),
                 # Trip-level fields
                 "trip_timestamp": tu.timestamp if tu.HasField("timestamp") else None,
                 "trip_delay": tu.delay if tu.HasField("delay") else None,
+                # TripProperties (added-trip metadata; #91)
+                "trip_properties_trip_id": (
+                    tu.trip_properties.trip_id if tu.HasField("trip_properties") else None
+                ),
+                "trip_properties_start_date": (
+                    tu.trip_properties.start_date if tu.HasField("trip_properties") else None
+                ),
+                "trip_properties_start_time": (
+                    tu.trip_properties.start_time if tu.HasField("trip_properties") else None
+                ),
+                "trip_properties_shape_id": (
+                    tu.trip_properties.shape_id if tu.HasField("trip_properties") else None
+                ),
+                "trip_properties_trip_headsign": (
+                    tu.trip_properties.trip_headsign if tu.HasField("trip_properties") else None
+                ),
+                "trip_properties_trip_short_name": (
+                    tu.trip_properties.trip_short_name if tu.HasField("trip_properties") else None
+                ),
+                # ModifiedTripSelector (trip-modifications linkage; #91)
+                "modified_trip_modifications_id": (
+                    tu.trip.modified_trip.modifications_id
+                    if tu.HasField("trip") and tu.trip.HasField("modified_trip")
+                    else None
+                ),
+                "modified_trip_affected_trip_id": (
+                    tu.trip.modified_trip.affected_trip_id
+                    if tu.HasField("trip") and tu.trip.HasField("modified_trip")
+                    else None
+                ),
+                "modified_trip_start_date": (
+                    tu.trip.modified_trip.start_date
+                    if tu.HasField("trip") and tu.trip.HasField("modified_trip")
+                    else None
+                ),
+                "modified_trip_start_time": (
+                    tu.trip.modified_trip.start_time
+                    if tu.HasField("trip") and tu.trip.HasField("modified_trip")
+                    else None
+                ),
             }
 
             # Denormalize: one row per stop_time_update
@@ -325,6 +371,46 @@ def extract_trip_updates(
                                 if stu.HasField("schedule_relationship")
                                 else None
                             ),
+                            # bindings >= 2.2.0 fields (#91)
+                            "arrival_scheduled_time": (
+                                stu.arrival.scheduled_time
+                                if stu.HasField("arrival")
+                                and stu.arrival.HasField("scheduled_time")
+                                else None
+                            ),
+                            "departure_scheduled_time": (
+                                stu.departure.scheduled_time
+                                if stu.HasField("departure")
+                                and stu.departure.HasField("scheduled_time")
+                                else None
+                            ),
+                            "departure_occupancy_status": (
+                                stu.departure_occupancy_status
+                                if stu.HasField("departure_occupancy_status")
+                                else None
+                            ),
+                            "assigned_stop_id": (
+                                stu.stop_time_properties.assigned_stop_id
+                                if stu.HasField("stop_time_properties")
+                                else None
+                            ),
+                            "stop_headsign": (
+                                stu.stop_time_properties.stop_headsign
+                                if stu.HasField("stop_time_properties")
+                                else None
+                            ),
+                            "pickup_type": (
+                                stu.stop_time_properties.pickup_type
+                                if stu.HasField("stop_time_properties")
+                                and stu.stop_time_properties.HasField("pickup_type")
+                                else None
+                            ),
+                            "drop_off_type": (
+                                stu.stop_time_properties.drop_off_type
+                                if stu.HasField("stop_time_properties")
+                                and stu.stop_time_properties.HasField("drop_off_type")
+                                else None
+                            ),
                         }
                     )
                     yield record
@@ -342,6 +428,13 @@ def extract_trip_updates(
                         "departure_time": None,
                         "departure_uncertainty": None,
                         "stop_schedule_relationship": None,
+                        "arrival_scheduled_time": None,
+                        "departure_scheduled_time": None,
+                        "departure_occupancy_status": None,
+                        "assigned_stop_id": None,
+                        "stop_headsign": None,
+                        "pickup_type": None,
+                        "drop_off_type": None,
                     }
                 )
                 yield record
@@ -360,13 +453,26 @@ def extract_service_alerts(
         if entity.HasField("alert"):
             alert = entity.alert
 
-            # Get first active period if available
+            # First active period for the compat columns, plus the full list
+            # JSON-encoded — 172 fleet alerts carry >1 period (max 251), and
+            # keep-first alone misreports "is this alert active at time T"
+            # for all of them (#91).
             active_start = None
             active_end = None
+            active_periods_json = None
             if alert.active_period:
                 ap = alert.active_period[0]
                 active_start = ap.start if ap.HasField("start") else None
                 active_end = ap.end if ap.HasField("end") else None
+                active_periods_json = json.dumps(
+                    [
+                        {
+                            "start": p.start if p.HasField("start") else None,
+                            "end": p.end if p.HasField("end") else None,
+                        }
+                        for p in alert.active_period
+                    ]
+                )
 
             # Get first translation for text fields (typically English)
             def get_text(translated_string: Any) -> str | None:
@@ -379,6 +485,23 @@ def extract_service_alerts(
                 get_text(alert.description_text) if alert.HasField("description_text") else None
             )
             url = get_text(alert.url) if alert.HasField("url") else None
+            tts_header_text = (
+                get_text(alert.tts_header_text) if alert.HasField("tts_header_text") else None
+            )
+            tts_description_text = (
+                get_text(alert.tts_description_text)
+                if alert.HasField("tts_description_text")
+                else None
+            )
+            cause_detail = get_text(alert.cause_detail) if alert.HasField("cause_detail") else None
+            effect_detail = (
+                get_text(alert.effect_detail) if alert.HasField("effect_detail") else None
+            )
+            image_url = (
+                str(alert.image.localized_image[0].url)
+                if alert.HasField("image") and alert.image.localized_image
+                else None
+            )
 
             # Base fields for this alert
             base_record = {
@@ -397,10 +520,16 @@ def extract_service_alerts(
                 # Active period
                 "active_period_start": active_start,
                 "active_period_end": active_end,
+                "active_periods_json": active_periods_json,
                 # Text fields
                 "header_text": header_text,
                 "description_text": description_text,
                 "url": url,
+                "tts_header_text": tts_header_text,
+                "tts_description_text": tts_description_text,
+                "cause_detail": cause_detail,
+                "effect_detail": effect_detail,
+                "image_url": image_url,
             }
 
             # Denormalize: one row per informed_entity
@@ -420,6 +549,9 @@ def extract_service_alerts(
                                 if ie.HasField("trip") and ie.trip.HasField("direction_id")
                                 else None
                             ),
+                            "direction_id": (
+                                ie.direction_id if ie.HasField("direction_id") else None
+                            ),
                         }
                     )
                     yield record
@@ -435,6 +567,7 @@ def extract_service_alerts(
                         "trip_id": None,
                         "trip_route_id": None,
                         "trip_direction_id": None,
+                        "direction_id": None,
                     }
                 )
                 yield record

@@ -37,6 +37,9 @@ VEHICLE_POSITIONS_SCHEMA = pa.schema(
         pa.field("congestion_level", pa.int32()),
         pa.field("occupancy_status", pa.int32()),
         pa.field("occupancy_percentage", pa.uint32()),
+        # Vehicle descriptor (spec fields visible from bindings >= 2.2.0;
+        # unpopulated fleet-wide as of the #91 census, captured from day one)
+        pa.field("wheelchair_accessible", pa.int32()),
     ]
 )
 
@@ -73,6 +76,29 @@ TRIP_UPDATES_SCHEMA = pa.schema(
         pa.field("departure_time", pa.int64()),
         pa.field("departure_uncertainty", pa.int32()),
         pa.field("stop_schedule_relationship", pa.int32()),
+        # Fields added per the #91 census (bindings >= 2.2.0 required for
+        # scheduled_time visibility)
+        pa.field("license_plate", pa.string()),
+        pa.field("arrival_scheduled_time", pa.int64()),
+        pa.field("departure_scheduled_time", pa.int64()),
+        pa.field("departure_occupancy_status", pa.int32()),
+        # StopTimeProperties
+        pa.field("assigned_stop_id", pa.string()),
+        pa.field("stop_headsign", pa.string()),
+        pa.field("pickup_type", pa.int32()),
+        pa.field("drop_off_type", pa.int32()),
+        # TripProperties (added-trip metadata)
+        pa.field("trip_properties_trip_id", pa.string()),
+        pa.field("trip_properties_start_date", pa.string()),
+        pa.field("trip_properties_start_time", pa.string()),
+        pa.field("trip_properties_shape_id", pa.string()),
+        pa.field("trip_properties_trip_headsign", pa.string()),
+        pa.field("trip_properties_trip_short_name", pa.string()),
+        # ModifiedTripSelector (trip-modifications linkage)
+        pa.field("modified_trip_modifications_id", pa.string()),
+        pa.field("modified_trip_affected_trip_id", pa.string()),
+        pa.field("modified_trip_start_date", pa.string()),
+        pa.field("modified_trip_start_time", pa.string()),
     ]
 )
 
@@ -105,5 +131,18 @@ SERVICE_ALERTS_SCHEMA = pa.schema(
         pa.field("trip_id", pa.string()),
         pa.field("trip_route_id", pa.string()),
         pa.field("trip_direction_id", pa.uint32()),
+        pa.field("direction_id", pa.uint32()),
+        # Fields added per the #91 census (cause_detail/effect_detail/image
+        # require bindings >= 2.2.0). Translated fields keep the
+        # first-translation convention.
+        pa.field("cause_detail", pa.string()),
+        pa.field("effect_detail", pa.string()),
+        pa.field("tts_header_text", pa.string()),
+        pa.field("tts_description_text", pa.string()),
+        pa.field("image_url", pa.string()),
+        # Full active-period list, JSON-encoded [{"start":…,"end":…},…] —
+        # 172 fleet alerts carry >1 period (max 251); active_period_start/end
+        # remain the first period for compatibility (#91 granularity decision)
+        pa.field("active_periods_json", pa.string()),
     ]
 )

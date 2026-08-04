@@ -61,6 +61,8 @@ resource "google_bigquery_table" "vehicle_positions" {
     { name = "congestion_level", type = "INT64", mode = "NULLABLE" },
     { name = "occupancy_status", type = "INT64", mode = "NULLABLE" },
     { name = "occupancy_percentage", type = "INT64", mode = "NULLABLE" },
+    # Added per #91; absent in pre-v0.9.3 partitions (read as NULL)
+    { name = "wheelchair_accessible", type = "INT64", mode = "NULLABLE" },
   ])
 }
 
@@ -108,6 +110,26 @@ resource "google_bigquery_table" "trip_updates" {
     { name = "departure_time", type = "INT64", mode = "NULLABLE" },
     { name = "departure_uncertainty", type = "INT64", mode = "NULLABLE" },
     { name = "stop_schedule_relationship", type = "INT64", mode = "NULLABLE" },
+    # Added per #91 (bindings 2.2.0 fields); absent in pre-v0.9.3 partitions,
+    # which BigQuery reads as NULL
+    { name = "license_plate", type = "STRING", mode = "NULLABLE" },
+    { name = "arrival_scheduled_time", type = "INT64", mode = "NULLABLE" },
+    { name = "departure_scheduled_time", type = "INT64", mode = "NULLABLE" },
+    { name = "departure_occupancy_status", type = "INT64", mode = "NULLABLE" },
+    { name = "assigned_stop_id", type = "STRING", mode = "NULLABLE" },
+    { name = "stop_headsign", type = "STRING", mode = "NULLABLE" },
+    { name = "pickup_type", type = "INT64", mode = "NULLABLE" },
+    { name = "drop_off_type", type = "INT64", mode = "NULLABLE" },
+    { name = "trip_properties_trip_id", type = "STRING", mode = "NULLABLE" },
+    { name = "trip_properties_start_date", type = "STRING", mode = "NULLABLE" },
+    { name = "trip_properties_start_time", type = "STRING", mode = "NULLABLE" },
+    { name = "trip_properties_shape_id", type = "STRING", mode = "NULLABLE" },
+    { name = "trip_properties_trip_headsign", type = "STRING", mode = "NULLABLE" },
+    { name = "trip_properties_trip_short_name", type = "STRING", mode = "NULLABLE" },
+    { name = "modified_trip_modifications_id", type = "STRING", mode = "NULLABLE" },
+    { name = "modified_trip_affected_trip_id", type = "STRING", mode = "NULLABLE" },
+    { name = "modified_trip_start_date", type = "STRING", mode = "NULLABLE" },
+    { name = "modified_trip_start_time", type = "STRING", mode = "NULLABLE" },
   ])
 }
 
@@ -151,6 +173,15 @@ resource "google_bigquery_table" "service_alerts" {
     { name = "trip_id", type = "STRING", mode = "NULLABLE" },
     { name = "trip_route_id", type = "STRING", mode = "NULLABLE" },
     { name = "trip_direction_id", type = "INT64", mode = "NULLABLE" },
+    # Added per #91 (cause_detail/effect_detail/image need bindings 2.2.0);
+    # absent in pre-v0.9.3 partitions, which BigQuery reads as NULL
+    { name = "direction_id", type = "INT64", mode = "NULLABLE" },
+    { name = "cause_detail", type = "STRING", mode = "NULLABLE" },
+    { name = "effect_detail", type = "STRING", mode = "NULLABLE" },
+    { name = "tts_header_text", type = "STRING", mode = "NULLABLE" },
+    { name = "tts_description_text", type = "STRING", mode = "NULLABLE" },
+    { name = "image_url", type = "STRING", mode = "NULLABLE" },
+    { name = "active_periods_json", type = "STRING", mode = "NULLABLE" },
   ])
 }
 

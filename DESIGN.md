@@ -728,26 +728,35 @@ Each feed type has a defined schema for consistent output:
 
 **Vehicle Positions:**
 
-- `source_file`, `feed_url`, `feed_timestamp`, `entity_id`
+- `source_file`, `feed_url`, `feed_timestamp`, `fetch_timestamp`, `entity_id`
 - `trip_id`, `route_id`, `direction_id`, `start_date`, `start_time`, `schedule_relationship`
-- `vehicle_id`, `vehicle_label`, `license_plate`
+- `vehicle_id`, `vehicle_label`, `license_plate`, `wheelchair_accessible`
 - `latitude`, `longitude`, `bearing`, `odometer`, `speed`
-- `current_stop_sequence`, `stop_id`, `current_status`, `timestamp`, `congestion_level`, `occupancy_status`
+- `current_stop_sequence`, `stop_id`, `current_status`, `timestamp`, `congestion_level`, `occupancy_status`, `occupancy_percentage`
 
 **Trip Updates:**
 
-- Base: `source_file`, `feed_url`, `feed_timestamp`, `entity_id`
+- Base: `source_file`, `feed_url`, `feed_timestamp`, `fetch_timestamp`, `entity_id`
 - Trip: `trip_id`, `route_id`, `direction_id`, `start_date`, `start_time`, `schedule_relationship`
-- Vehicle: `vehicle_id`, `vehicle_label`
+- Vehicle: `vehicle_id`, `vehicle_label`, `license_plate`
 - Update: `trip_delay`, `trip_timestamp`
-- Stop time: `stop_sequence`, `stop_id`, `arrival_delay`, `arrival_time`, `arrival_uncertainty`, `departure_delay`, `departure_time`, `departure_uncertainty`, `schedule_relationship`
+- Trip properties: `trip_properties_trip_id`, `trip_properties_start_date`, `trip_properties_start_time`, `trip_properties_shape_id`, `trip_properties_trip_headsign`, `trip_properties_trip_short_name`
+- Modified trip: `modified_trip_modifications_id`, `modified_trip_affected_trip_id`, `modified_trip_start_date`, `modified_trip_start_time`
+- Stop time: `stop_sequence`, `stop_id`, `arrival_delay`, `arrival_time`, `arrival_uncertainty`, `arrival_scheduled_time`, `departure_delay`, `departure_time`, `departure_uncertainty`, `departure_scheduled_time`, `departure_occupancy_status`, `stop_schedule_relationship`, `assigned_stop_id`, `stop_headsign`, `pickup_type`, `drop_off_type`
 
 **Service Alerts:**
 
-- Base: `source_file`, `feed_url`, `feed_timestamp`, `entity_id`
-- Alert: `cause`, `effect`, `url`, `header_text`, `description_text`
-- Active period: `active_period_start`, `active_period_end`
-- Informed entity: `agency_id`, `route_id`, `route_type`, `stop_id`, `trip_id`, `direction_id`
+- Base: `source_file`, `feed_url`, `feed_timestamp`, `fetch_timestamp`, `entity_id`
+- Alert: `cause`, `effect`, `severity_level`, `cause_detail`, `effect_detail`, `url`, `header_text`, `description_text`, `tts_header_text`, `tts_description_text`, `image_url`
+- Active period: `active_period_start`, `active_period_end` (first period), `active_periods_json` (full list)
+- Informed entity: `agency_id`, `route_id`, `route_type`, `stop_id`, `direction_id`, `trip_id`, `trip_route_id`, `trip_direction_id`
+
+Translated fields store the first translation only (typically English) — a
+deliberate keep-first decision (#91). Fields new in gtfs-realtime-bindings
+2.2.0 (`*_scheduled_time`, `cause_detail`, `effect_detail`, `image_url`,
+`modified_trip_*`) populate from v0.9.3 onward; earlier partitions lack the
+columns and read as NULL from the BigQuery external tables (DuckDB consumers
+should use `union_by_name`).
 
 ### Schedule
 
