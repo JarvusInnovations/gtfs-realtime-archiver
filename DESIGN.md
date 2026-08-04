@@ -769,11 +769,15 @@ trip_updates.
 String-presence semantics: fields of sparse-by-design nested messages
 (`trip_properties_*`, `modified_trip_*`, `assigned_stop_id`, `stop_headsign`)
 use per-field presence — unset is NULL, never `""`. Strings on
-routinely-populated parents (`vehicle_id`, `vehicle_label`, `license_plate`,
-trip-descriptor strings) keep the long-standing parent-presence convention,
-where an unset field on a present parent reads as `""`.
-`active_periods_json` is NULL when an alert declares no active periods (spec:
-always active); `"[]"` is never emitted.
+routinely-populated parents (`vehicle_id`, `vehicle_label`, trip-descriptor
+strings) keep the long-standing parent-presence convention, where an unset
+field on a present parent reads as `""`. One deliberate asymmetry:
+`license_plate` is parent-`""` in **vehicle_positions** (history is frozen on
+that convention) but per-field NULL in **trip_updates** (a brand-new column
+that would otherwise read `""` on nearly every row, since plates are rarely
+published) — unions across the two feed types should normalize with
+`NULLIF(license_plate, '')`. `active_periods_json` is NULL when an alert
+declares no active periods (spec: always active); `"[]"` is never emitted.
 
 ### Schedule
 

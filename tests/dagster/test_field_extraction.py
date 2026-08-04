@@ -22,24 +22,19 @@ from dagster_pipeline.defs.assets.schemas import (
 )
 
 
-def test_bindings_expose_2_2_0_fields() -> None:
-    """Regression guard: a bindings downgrade would re-blind the parser to
-    (or AttributeError on) every field this module dereferences; fail loudly
-    on the full load-bearing surface instead."""
-    stu_event = gtfs_realtime_pb2.TripUpdate.StopTimeEvent.DESCRIPTOR.fields_by_name
-    assert "scheduled_time" in stu_event
-    alert = gtfs_realtime_pb2.Alert.DESCRIPTOR.fields_by_name
-    for field in ("cause_detail", "effect_detail", "image", "image_alternative_text"):
-        assert field in alert
-    trip = gtfs_realtime_pb2.TripDescriptor.DESCRIPTOR.fields_by_name
-    assert "modified_trip" in trip
-    tu = gtfs_realtime_pb2.TripUpdate.DESCRIPTOR.fields_by_name
-    assert "trip_properties" in tu
-    stp = gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.StopTimeProperties.DESCRIPTOR.fields_by_name
-    for field in ("assigned_stop_id", "stop_headsign", "pickup_type", "drop_off_type"):
-        assert field in stp
-    entity_selector = gtfs_realtime_pb2.EntitySelector.DESCRIPTOR.fields_by_name
-    assert "direction_id" in entity_selector
+def test_bindings_expose_required_fields() -> None:
+    """Drive the guard from the extractor's own REQUIRED_BINDINGS_FIELDS
+    table (which compaction.py also asserts at import, so a bindings
+    downgrade fails the code server at startup rather than silently writing
+    empty partitions). Iterating the shared table means this test cannot
+    drift from what the extractors actually dereference."""
+    from dagster_pipeline.defs.assets.compaction import REQUIRED_BINDINGS_FIELDS
+
+    assert len(REQUIRED_BINDINGS_FIELDS) >= 26
+    for message, field in REQUIRED_BINDINGS_FIELDS:
+        assert field in message.DESCRIPTOR.fields_by_name, (
+            f"{message.DESCRIPTOR.full_name}.{field} missing from installed bindings"
+        )
 
 
 def _feed() -> gtfs_realtime_pb2.FeedMessage:
@@ -282,7 +277,27 @@ def test_bigquery_ddl_matches_schemas() -> None:
             re.S,
         )
         assert block is not None, f"no schema block for {table_id}"
-        names = re.findall(r'name\s*=\s*"(\w+)"', block.group(1))
+        entries = re.findall(r'name\s*=\s*"(\w+)",\s*type\s*=\s*"(\w+)"', block.group(1))
+        names = [name for name, _t in entries]
         assert names == list(schema.names), (
             f"{table_id}: BigQuery DDL columns diverge from schemas.py"
         )
+        # Types matter more than order for a name-matched Parquet external
+        # table: a STRING column declared INT64 breaks at query time.
+        arrow_to_bq = {
+            "string": "STRING",
+            "int32": "INT64",
+            "int64": "INT64",
+            "uint32": "INT64",
+            "uint64": "INT64",
+            "float": "FLOAT64",
+            "double": "FLOAT64",
+            "timestamp[us, tz=UTC]": "TIMESTAMP",
+        }
+        bq_types = dict(entries)
+        for field in schema:
+            expected = arrow_to_bq[str(field.type)]
+            assert bq_types[field.name] == expected, (
+                f"{table_id}.{field.name}: BigQuery type {bq_types[field.name]} "
+                f"!= expected {expected} for arrow {field.type}"
+            )

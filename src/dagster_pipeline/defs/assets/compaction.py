@@ -42,6 +42,53 @@ def encode_base64url(url: str) -> str:
 # Prefix for HTTP-only feeds (HTTPS is the default, no prefix needed)
 HTTP_FEED_PREFIX = "~"
 
+# Every version-gated (message, field) pair the extractors dereference.
+# HasField on a field the installed bindings don't know raises ValueError —
+# which the per-file parse handler would swallow, turning a bindings
+# downgrade into "every file failed to parse" and successful runs writing
+# EMPTY partitions. Assert the whole surface once at import so the code
+# server / run worker fails to start instead. tests/dagster iterates this
+# same table, so the guard and the extractors cannot drift apart.
+REQUIRED_BINDINGS_FIELDS: tuple[tuple[Any, str], ...] = (
+    (gtfs_realtime_pb2.VehicleDescriptor, "wheelchair_accessible"),
+    (gtfs_realtime_pb2.TripUpdate, "trip_properties"),
+    (gtfs_realtime_pb2.TripUpdate.TripProperties, "trip_id"),
+    (gtfs_realtime_pb2.TripUpdate.TripProperties, "start_date"),
+    (gtfs_realtime_pb2.TripUpdate.TripProperties, "start_time"),
+    (gtfs_realtime_pb2.TripUpdate.TripProperties, "shape_id"),
+    (gtfs_realtime_pb2.TripUpdate.TripProperties, "trip_headsign"),
+    (gtfs_realtime_pb2.TripUpdate.TripProperties, "trip_short_name"),
+    (gtfs_realtime_pb2.TripDescriptor, "modified_trip"),
+    (gtfs_realtime_pb2.TripDescriptor.ModifiedTripSelector, "modifications_id"),
+    (gtfs_realtime_pb2.TripDescriptor.ModifiedTripSelector, "affected_trip_id"),
+    (gtfs_realtime_pb2.TripDescriptor.ModifiedTripSelector, "start_date"),
+    (gtfs_realtime_pb2.TripDescriptor.ModifiedTripSelector, "start_time"),
+    (gtfs_realtime_pb2.TripUpdate.StopTimeEvent, "scheduled_time"),
+    (gtfs_realtime_pb2.TripUpdate.StopTimeUpdate, "departure_occupancy_status"),
+    (gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.StopTimeProperties, "assigned_stop_id"),
+    (gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.StopTimeProperties, "stop_headsign"),
+    (gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.StopTimeProperties, "pickup_type"),
+    (gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.StopTimeProperties, "drop_off_type"),
+    (gtfs_realtime_pb2.Alert, "cause_detail"),
+    (gtfs_realtime_pb2.Alert, "effect_detail"),
+    (gtfs_realtime_pb2.Alert, "tts_header_text"),
+    (gtfs_realtime_pb2.Alert, "tts_description_text"),
+    (gtfs_realtime_pb2.Alert, "image"),
+    (gtfs_realtime_pb2.Alert, "image_alternative_text"),
+    (gtfs_realtime_pb2.EntitySelector, "direction_id"),
+)
+
+_missing_fields = [
+    f"{message.DESCRIPTOR.full_name}.{field}"
+    for message, field in REQUIRED_BINDINGS_FIELDS
+    if field not in message.DESCRIPTOR.fields_by_name
+]
+if _missing_fields:
+    raise ImportError(
+        "gtfs-realtime-bindings is too old for this extraction code; "
+        f"missing fields: {_missing_fields} (need >= 2.2.0)"
+    )
+
 
 def url_to_partition_key(url: str) -> str:
     """Convert URL to partition key.
@@ -242,6 +289,43 @@ def extract_vehicle_positions(
             }
 
 
+# The STU-level keys of the denormalized trip_updates row. The no-STU
+# fallback branch derives its all-None record from this tuple instead of
+# hand-maintaining a duplicate key list; the record↔schema parity test pins
+# it against TRIP_UPDATES_SCHEMA.
+STOP_TIME_UPDATE_KEYS = (
+    "stop_sequence",
+    "stop_id",
+    "arrival_delay",
+    "arrival_time",
+    "arrival_uncertainty",
+    "departure_delay",
+    "departure_time",
+    "departure_uncertainty",
+    "stop_schedule_relationship",
+    "arrival_scheduled_time",
+    "departure_scheduled_time",
+    "departure_occupancy_status",
+    "assigned_stop_id",
+    "stop_headsign",
+    "pickup_type",
+    "drop_off_type",
+)
+
+# The informed-entity-level keys of the denormalized service_alerts row
+# (EntitySelector semantics — see DESIGN.md); same derivation pattern.
+INFORMED_ENTITY_KEYS = (
+    "agency_id",
+    "route_id",
+    "route_type",
+    "stop_id",
+    "trip_id",
+    "trip_route_id",
+    "trip_direction_id",
+    "direction_id",
+)
+
+
 def extract_trip_updates(
     feed: gtfs_realtime_pb2.FeedMessage,
     source_file: str,
@@ -279,7 +363,14 @@ def extract_trip_updates(
                 # Vehicle descriptor
                 "vehicle_id": tu.vehicle.id if tu.HasField("vehicle") else None,
                 "vehicle_label": tu.vehicle.label if tu.HasField("vehicle") else None,
-                "license_plate": tu.vehicle.license_plate if tu.HasField("vehicle") else None,
+                # Per-field presence, unlike vehicle_positions' license_plate:
+                # that column has history frozen on the parent-"" convention,
+                # while this one is brand-new and would otherwise read "" on
+                # nearly every row (plates are rarely published). The
+                # asymmetry is documented in DESIGN.md.
+                "license_plate": (
+                    tu.vehicle.license_plate if tu.vehicle.HasField("license_plate") else None
+                ),
                 # Trip-level fields
                 "trip_timestamp": tu.timestamp if tu.HasField("timestamp") else None,
                 "trip_delay": tu.delay if tu.HasField("delay") else None,
@@ -435,26 +526,7 @@ def extract_trip_updates(
             else:
                 # Trip update with no stop time updates - still yield the base record
                 record = base_record.copy()
-                record.update(
-                    {
-                        "stop_sequence": None,
-                        "stop_id": None,
-                        "arrival_delay": None,
-                        "arrival_time": None,
-                        "arrival_uncertainty": None,
-                        "departure_delay": None,
-                        "departure_time": None,
-                        "departure_uncertainty": None,
-                        "stop_schedule_relationship": None,
-                        "arrival_scheduled_time": None,
-                        "departure_scheduled_time": None,
-                        "departure_occupancy_status": None,
-                        "assigned_stop_id": None,
-                        "stop_headsign": None,
-                        "pickup_type": None,
-                        "drop_off_type": None,
-                    }
-                )
+                record.update(dict.fromkeys(STOP_TIME_UPDATE_KEYS))
                 yield record
 
 
@@ -589,18 +661,7 @@ def extract_service_alerts(
             else:
                 # Alert with no informed entities - still yield the base record
                 record = base_record.copy()
-                record.update(
-                    {
-                        "agency_id": None,
-                        "route_id": None,
-                        "route_type": None,
-                        "stop_id": None,
-                        "trip_id": None,
-                        "trip_route_id": None,
-                        "trip_direction_id": None,
-                        "direction_id": None,
-                    }
-                )
+                record.update(dict.fromkeys(INFORMED_ENTITY_KEYS))
                 yield record
 
 
@@ -671,23 +732,26 @@ def compact_single_feed(
             # Read fetch_timestamp from adjacent .meta file
             fetch_timestamp = read_meta_file(protobuf_bucket, pb_file)
 
+            # The parse-failure handler covers ONLY parsing/extraction: the
+            # Arrow conversion sits outside it because pyarrow.ArrowInvalid
+            # subclasses ValueError — a schema/type bug caught here would
+            # otherwise masquerade as "every file failed to parse" and let a
+            # successful run write an empty partition.
             try:
                 feed = parse_protobuf(content)
                 records = list(extractor(feed, pb_file, feed_url, fetch_timestamp))
-                if not records:
-                    continue
-
-                # Write batch to parquet stream
-                batch = pa.Table.from_pylist(records, schema=schema)
-                if writer is None:
-                    writer = pq.ParquetWriter(
-                        buffer, schema, compression="zstd", compression_level=9
-                    )
-                writer.write_table(batch)
-                records_count += len(records)
             except (DecodeError, ValueError) as e:
                 context.log.warning(f"Failed to parse {pb_file}: {e}")
                 continue
+            if not records:
+                continue
+
+            # Write batch to parquet stream
+            batch = pa.Table.from_pylist(records, schema=schema)
+            if writer is None:
+                writer = pq.ParquetWriter(buffer, schema, compression="zstd", compression_level=9)
+            writer.write_table(batch)
+            records_count += len(records)
     finally:
         if writer is not None:
             writer.close()

@@ -97,7 +97,8 @@ nullable everywhere).
 ## Notes
 
 - Verification beyond the checklist: three-way schema ↔ extractor ↔ BigQuery
-  parity checked programmatically (27/42/27 columns); proto2 `HasField`
+  parity checked programmatically (27/42/28 columns incl.
+  `image_alternative_text`, names AND types machine-checked in CI); proto2 `HasField`
   semantics confirmed empirically on bindings 2.2.0 (explicit enum 0 captured,
   unset → NULL); targeted `tofu plan` shows all three external tables
   **update in-place, 0 to destroy**; 213 tests.
