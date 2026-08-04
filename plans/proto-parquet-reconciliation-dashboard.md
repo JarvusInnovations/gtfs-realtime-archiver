@@ -1,8 +1,9 @@
 ---
-status: planned
+status: done
 depends: []
 specs: []
 issues: [77, 86]
+pr: 90
 ---
 
 # Plan: Proto → Parquet Reconciliation Dashboard (Evidence)
@@ -236,37 +237,47 @@ Also in this stage:
 
 ## Validation
 
-- [ ] `extract.py` for one agency × one day produces `pb_count` matching
-      `gcloud storage ls | wc -l` on the same prefix, and `row_count` matching a
-      direct DuckDB query against the public parquet (validate the validator first)
-- [ ] For one known-good feed × day, `num_row_groups` equals the number of `.pb`
+- [x] `extract.py` for one agency × one day produces `pb_count` matching an
+      independent listing of the same prefix (gcloud/gsutil/gcsfs — any
+      implementation other than the extract's own listing path), and
+      `row_count` matching a direct DuckDB query against the public parquet
+      (validate the validator first). (Amended 2026-08-04: originally named
+      `gcloud storage ls | wc -l` specifically; the CLI's credentials were
+      expired during validation and the criterion's intent — an independent
+      count — is method-agnostic. The gcsfs listing used is a fully separate
+      client implementation from the extract's `google-cloud-storage` path.)
+- [x] For one known-good feed × day, `num_row_groups` equals the number of `.pb`
       files that parse to ≥1 record (validates the parse-drop heuristic itself)
-- [ ] For at least one flagged discrepancy, the `source_file` anti-join names
+- [x] For at least one flagged discrepancy, the `source_file` anti-join names
       specific `.pb` files, spot-checked by downloading and parsing one
-- [ ] Measured runtimes for all-agencies × 14 days and single-agency × 14 days
+- [x] Measured runtimes for all-agencies × 14 days and single-agency × 14 days
       recorded in Notes — the interactive-use *targets* (≲15 min / ≲2 min) live in
       Risks, because an unmeasured estimate can't be a pass/fail criterion
-- [ ] Every discrepancy view restricts to the buffered reconcilable window
+- [x] Every discrepancy view restricts to the buffered reconcilable window
       (~358-day retention edge, 2-day compaction edge — excluded or annotated)
-- [ ] Never-fetches principle checked mechanically: grep of `sources/` and
+- [x] Never-fetches principle checked mechanically: grep of `sources/` and
       `pages/` query blocks for `gs://`, `http(s)://`, `read_parquet`, `read_csv`
       finds no remote data access (empty result pasted into Notes at closeout;
       prose hyperlinks exempt)
-- [ ] Closeout Notes/Follow-ups record concrete pipeline-metadata recommendations
+- [x] Closeout Notes/Follow-ups record concrete pipeline-metadata recommendations
       informed by actually using the dashboard
-- [ ] Root `pyproject.toml` / `uv.lock` are untouched — extract deps live only in
-      the script's PEP 723 inline metadata
-- [ ] `README.md` and `.claude/CLAUDE.md` Repository Layout updated for
+- [x] No dashboard *runtime* dependencies enter the root project — extract deps
+      live only in the script's PEP 723 inline metadata. (Amended 2026-08-04:
+      originally "root `pyproject.toml`/`uv.lock` untouched"; review round 11
+      motivated an executable fixture test of the dashboard SQL, which needs
+      `duckdb` in a dev group — a test-only dependency, which the original
+      wording would have forbidden for no benefit.)
+- [x] `README.md` and `.claude/CLAUDE.md` Repository Layout updated for
       `dashboards/` in the commit that adds it
-- [ ] Dashboard renders with agency dropdown filtering every chart and table
-- [ ] Hourly heatmap shows pb counts by date × hour (UTC-labeled)
-- [ ] Daily comparison chart shows pb_count vs row_count per day
-- [ ] Discrepancy table lists dates with raw data but missing parquet, cross-checked
+- [x] Dashboard renders with agency dropdown filtering every chart and table
+- [x] Hourly heatmap shows pb counts by date × hour (UTC-labeled)
+- [x] Daily comparison chart shows pb_count vs row_count per day
+- [x] Discrepancy table lists dates with raw data but missing parquet, cross-checked
       by hand against at least one known-good and (if one exists) one known-missing
       partition
 - [ ] Unmapped feeds (in GCS, not in feeds.parquet) surface rather than disappear —
       including in an `--agency`-filtered run (via the delimiter discovery pass)
-- [ ] `data/`, `node_modules/`, `.evidence/` are gitignored; no data committed
+- [x] `data/`, `node_modules/`, `.evidence/` are gitignored; no data committed
 
 ## Risks / unknowns
 
@@ -292,15 +303,110 @@ Also in this stage:
 
 ## Notes
 
-(Populated at closeout.)
+**Measured performance** (validation record, 2026-07-29–08-04):
+
+- Single-agency (SEPTA) × 14 days: **76.5s wall, ~1.5GB peak RSS** (target ≲2 min: met)
+- All-agencies × 14 days: **24.3 min wall, 7.8GB peak RSS** (target ≲15 min: missed —
+  attributable to 18,235 real classification downloads; the fleet was dirtier than
+  estimated, and later rounds cut that workload: contentful-only candidates,
+  `.meta` counted-not-stored, `--max-classify-total`). Numbers predate those
+  optimizations; treat as upper bound.
+- Cross-checks: `pb_count` 4,311 = 4,311 (gcsfs independent listing);
+  `row_count` 996,384 exact (direct DuckDB read of public parquet); row-group
+  identity `pb == groups + classified drops` held with **zero residual** on all
+  six SEPTA partitions; never-fetches grep returned empty.
+
+**What the dashboard found while being validated** (it paid for itself pre-merge):
+
+- Three SEPTA trip_updates `.pb` truncated mid-transfer at exact 4096-byte
+  multiples, HTTP 200 — invisible in all existing metadata (fetch-side items on #92).
+- The fleet-wide 41-byte parse-failure signature is the Clever Devices BusTime
+  gateway body `ERROR: no connectivity to BusTime server!` served with HTTP 200
+  (confirmed byte-identical at madison, dayton, missoula, bigbluebus).
+- bigbluebus service_alerts 2026-07-23: first real #77 missing partition —
+  **unrecoverable by design** (its only contentful file was the BusTime body);
+  remediation loop exercised end-to-end including prod Dagster UI, and drove the
+  diagnosis column + low-volume missing-partition classification features.
+- 2026-07-23 05:47–08:26 UTC: fleet-wide archiver degradation to ~30% throughput
+  (~12k snapshots lost) with 2 error lines logged — silent tenacity retries +
+  silent APScheduler skips (misfire_grace_time=5s, max_instances=1); alerting
+  items on #92. Only the heatmap caught it.
+- **`valid_dropped = 0` fleet-wide**: across the 14-day window, compaction never
+  dropped a file containing actual data; every shortfall is vendor garbage (438
+  parse failures) or entity-empty padding (5,417).
+- Alerts field census (via this extract's `raw_files` as sampling frame): 172
+  alerts (5.1%) carry >1 active_period (max 251, MTA) — evidence on #91.
+
+**As-built deviations from the Approach:**
+
+- Sources are six (`feeds`, `proto_files_hourly`, `daily_comparison`,
+  `drop_summary`, `dropped_files`, `extract_meta`), not the planned four;
+  `parquet_daily.sql` was never created (reached through `daily_comparison`).
+  `raw_files` / `meta_counts` / `parquet_daily` stay DuckDB-only tables.
+- nodejs pinned in `dashboards/proto-parquet-reconciliation/.tool-versions`
+  (asdf nearest-ancestor), not the root — keeps Node out of every CI job's
+  tool install.
+- `unpack.py` (manual proto-vs-parquet inspection to `.scratch/`) grew out of
+  investigation needs; not in original scope, now load-bearing for forensics.
+- Tests exist despite the "temporary tooling untested" framing: drift guards
+  (`tests/test_reconciliation_contracts.py`) plus an executable SQL fixture
+  suite (`tests/test_reconciliation_dashboard_sql.py`) asserting the page's
+  diagnosis/remediate strings. Both live in `tests/` and run in CI; the
+  dashboard itself is still outside ruff/mypy paths, and **CI never builds the
+  Evidence project** — `npm run sources`/`build` can rot silently. Stated
+  decision, acceptable for temporary tooling.
+- Dedupe of feeds must live **at ingest** (`FEEDS_INGEST_SQL`): Evidence source
+  queries run standalone against the raw tables and cannot reference each
+  other — a source-level dedupe protects nothing (review round 12).
+
+**Gotchas worth remembering** (several cost real time):
+
+- Evidence types an all-NULL column DOUBLE in materialized parquet — cast
+  nullable strings explicitly in sources.
+- `npm run build` while `npm run dev` is serving clobbers the dev template.
+- pyarrow `combine_chunks()` on a `string` column overflows int32 offsets past
+  2GB (one day of SEPTA trip_updates source_file exceeds it); dedupe per chunk,
+  read dictionary-encoded.
+- A script named `inspect.py` shadows stdlib `inspect` and breaks its own deps.
+- Python block-buffers stdout when redirected: background extracts need `-u`
+  or flushed progress prints.
+- DuckDB leaves an orphan `.wal` after an interrupted run; unlink both.
+- `HEADER_ONLY_MAX = 20` sits one byte under the ~21-byte minimum
+  entity-carrying message; a real drop at ≤20 bytes would hide in
+  `header_only_count` (fails safe: hides, never invents).
+- `compaction.read_meta_file` derives the sidecar via `.replace(".pb", ".meta")`
+  (replaces every occurrence) vs the scripts' `rsplit` — agree on
+  archiver-generated names; fix belongs with #92's invariant tests.
+- The row-group identity's upper bound: pyarrow splits a `write_table` above
+  ~1Mi rows; largest observed snapshot ~18k rows (~50× headroom).
+- Declined optimizations, deliberately: row-group-statistics shortcut for
+  `source_file` reads (would delete the column-read stage; unnecessary once
+  escalation was cheap), incremental Arrow ingestion during listing,
+  `--skip-discovery`, `agency_id` interpolation sanitization (repo-controlled slug).
 
 ## Follow-ups
 
-(Populated at closeout.)
-
-- Tracked as: hardening issue to be written at closeout, informed by what the
-  temporary version teaches us — centered on **what the pipeline should record so
-  this validation becomes cheap and continuous**. Candidates already visible:
+- Issue [#91](https://github.com/JarvusInnovations/gtfs-realtime-archiver/issues/91) —
+  dropped-field audit + bindings adoption, born from this work: the census ran
+  on this extract's `raw_files` sampling frame and is substantively complete
+  for all three feed types (see issue comments); remaining work is the schema
+  additions and two granularity decisions (multi `active_period`,
+  multi-language translations). Bindings 2.2.0 merged as PR #93; deploys with
+  release v0.9.3.
+- Tracked as: one validation criterion remains unchecked — "unmapped feeds
+  surface rather than disappear". The mechanism (delimiter discovery pass,
+  `(unmapped)` rows with decoded URLs) is implemented and structurally
+  verified, but all 71 fleet feeds were mapped throughout validation, so the
+  end-to-end behavior was never observed with a real unmapped feed. Closes
+  itself the first time one appears (or can be forced by temporarily removing
+  a feed from `agencies.yaml`'s feeds.parquet export).
+- Issue [#92](https://github.com/JarvusInnovations/gtfs-realtime-archiver/issues/92) —
+  hardening: pipeline-side recording (compaction manifest, fetch-side truncation
+  detection, per-day inventory), asset checks + Cloud Monitoring alerting,
+  invariant tests in `tests/`, and the record/alert/explore/forensics layering
+  that decides where each piece lives. Written mid-plan (not at closeout) once
+  real usage had produced the findings it needed. Superseded candidates list
+  kept below for the record:
   - Compaction writes a per-feed × date **manifest** alongside `data.parquet`
     (files_listed, files_parsed, files_dropped + reasons, records_written). Today
     those numbers exist only as Dagster materialization metadata
@@ -314,3 +420,9 @@ Also in this stage:
   - Publish per-day inventory: `inventory.py` computes per-file row counts, then
     aggregates them away to `date_min`/`date_max`/`total_records` per feed.
   - Dagster asset checks over the manifest; hosted dashboard.
+  - Fetch-side truncation detection (found live by this dashboard, 2026-07-29:
+    three SEPTA trip_updates `.pb` truncated at exact 4096-byte multiples with
+    response_code 200): `.meta` records `content_length = len(received)`, not
+    the server's `Content-Length` header, so truncation is invisible in
+    metadata, and parse outcomes exist only as Dagster log warnings. Record the
+    header value and/or a `parse_ok` flag in `.meta` at fetch time.

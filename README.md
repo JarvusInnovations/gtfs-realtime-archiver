@@ -322,9 +322,11 @@ uv run dg list defs
 # Validate definitions load correctly
 uv run dg check defs
 
-# Manually materialize an asset for a specific date
-uv run dg launch --assets vehicle_positions_parquet --partition 2026-01-01
+# Manually materialize an asset for a specific date and feed
+uv run dg launch --assets vehicle_positions_parquet --partition "2026-01-01|gtfs.example.com/feed"
 ```
+
+Partition keys are `date|feed`, where `feed` is the scheme-stripped feed URL (`~` prefix for `http`); the feed dimension is dynamic, so the key must already be registered.
 
 ### Environment
 
@@ -342,6 +344,17 @@ separate Cloud Run resources) and `consolidated` (all three as containers in one
 always-on instance, for the lowest cost floor with a single code location). See
 "Deployment Topologies" in `.claude/CLAUDE.md` for constraints and cost
 break-even details.
+
+## Dashboards
+
+`dashboards/` holds temporary local analysis dashboards. Currently:
+
+- **`proto-parquet-reconciliation/`** — an [Evidence](https://evidence.dev)
+  dashboard validating the protobuf → parquet compaction pipeline (raw `.pb`
+  counts vs parquet row counts, missing partitions, dropped-file classification).
+  See its [README](dashboards/proto-parquet-reconciliation/README.md) for the
+  two-command extract-and-serve flow. Requires ADC with read access to the raw
+  protobuf bucket.
 
 ## License
 
