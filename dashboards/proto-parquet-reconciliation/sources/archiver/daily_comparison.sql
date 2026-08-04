@@ -5,9 +5,11 @@
 -- emits its own window constants) so SQL and Python cannot drift.
 with meta as (
     select
-        cast(extracted_at as timestamp) as extracted_ts,
         cast(start_date as date) as start_date,
         cast(end_date as date) as end_date,
+        -- the date escalation anchored on — not extracted_at, which is
+        -- stamped at write time and can cross UTC midnight on a long run
+        cast(window_anchor_date as date) as anchor_date,
         window_old_days,
         window_new_days
     from extract_meta
@@ -92,8 +94,8 @@ select
         '''', '’'
     ) as display_name,
     round(j.row_count / nullif(j.pb_contentful_count, 0), 1) as rows_per_proto,
-    j.date between (select extracted_ts from meta)::date - (select window_old_days from meta)
-        and (select extracted_ts from meta)::date - (select window_new_days from meta)
+    j.date between (select anchor_date from meta) - (select window_old_days from meta)
+        and (select anchor_date from meta) - (select window_new_days from meta)
         as in_reconcilable_window
 from joined j
 left join feeds f

@@ -132,13 +132,15 @@ def test_base64url_padding_matches_compaction() -> None:
     assert 'b64 + "=" * (4 - len(b64) % 4) if len(b64) % 4 else b64' in _norm(EXTRACT_SRC)
 
 
-def test_pep723_bindings_floor_not_below_root() -> None:
-    """classify_drop's parse-parity contract with compaction only holds if
-    both sides can resolve the same generated bindings: the script's PEP 723
-    floor must never fall below the root project's."""
+@pytest.mark.parametrize("script", ["extract.py", "unpack.py"])
+def test_pep723_bindings_floor_not_below_root(script: str) -> None:
+    """Both scripts claim parse parity with compaction, which only holds if
+    they can resolve the same generated bindings: the PEP 723 floor must
+    never fall below the root project's."""
     import re
 
-    m = re.search(r'"gtfs-realtime-bindings>=([\d.]+)"', EXTRACT_SRC)
+    src = (DASHBOARD / script).read_text()
+    m = re.search(r'"gtfs-realtime-bindings>=([\d.]+)"', src)
     assert m is not None
     script_floor = tuple(int(x) for x in m.group(1).split("."))
     root_src = (Path(__file__).parents[1] / "pyproject.toml").read_text()
@@ -226,11 +228,20 @@ def test_classify_drop_label_mapping() -> None:
         "garbage.pb": b"ERROR: no connectivity to BusTime server!",
     }
     bucket = _FakeBucket(store)
-    labels = {
-        name: extract.classify_drop(None, bucket, "vehicle_positions", name)[2] for name in store
-    }
+    labels = {name: extract.classify_drop(bucket, "vehicle_positions", name)[2] for name in store}
     assert labels == {
         "valid.pb": "unexplained_drop",
         "empty.pb": "legitimately_empty_feed",
         "garbage.pb": "parse_failure",
     }
+
+
+def test_read_source_files_dictionary_chunks(tmp_path: Path) -> None:
+    """Exercise the dictionary-encoded chunk branch against a local parquet."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    path = tmp_path / "part.parquet"
+    table = pa.table({"source_file": pa.array(["a.pb"] * 500 + ["b.pb"] * 500)})
+    pq.write_table(table, path)
+    assert extract.read_source_files(str(path)) == {"a.pb", "b.pb"}

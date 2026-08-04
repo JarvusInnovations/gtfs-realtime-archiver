@@ -104,7 +104,8 @@ def with_retries(fn, attempts: int = 3):
         for i in range(attempts):
             try:
                 return fn(*a, **k)
-            except (NotFound, Forbidden):
+            # gcsfs raises the stdlib equivalents for the same conditions
+            except (NotFound, Forbidden, FileNotFoundError, PermissionError):
                 raise
             except Exception:
                 if i == attempts - 1:
@@ -140,6 +141,14 @@ def parse_args() -> argparse.Namespace:
         default=1000,
         help="Per-partition cap on dropped-file classification downloads; "
         "truncation is logged (default 1000)",
+    )
+    parser.add_argument(
+        "--max-classify-total",
+        type=int,
+        default=20000,
+        help="Run-level cap on classification downloads across all flagged "
+        "partitions (~2 GETs each); even-stride sampled, truncation logged "
+        "(default 20000)",
     )
     return parser.parse_args()
 
@@ -205,9 +214,15 @@ _B64_CACHE: dict[str, str] = {}
 
 
 def list_raw_objects(client, task):
-    """Full object listing (name + size) under one prefix."""
+    """List one prefix → (.pb rows, .meta counts).
+
+    Only .pb objects keep their names (the anti-join and size classification
+    need them); .meta sidecars are reduced to a per-partition counter on the
+    spot, which roughly halves peak memory on fleet-wide runs.
+    """
     ft, d, h, prefix, b64 = task
     rows = []
+    meta_counts: dict[tuple, int] = {}
     for blob in client.list_blobs(PROTOBUF_BUCKET, prefix=prefix):
         name = blob.name
         b64_val = b64
@@ -218,8 +233,12 @@ def list_raw_objects(client, task):
             except IndexError:
                 continue
             b64_val = _B64_CACHE.setdefault(parsed, parsed)
-        rows.append((ft, d, h, b64_val, name, blob.size or 0))
-    return rows
+        if name.endswith(".meta"):
+            key = (ft, d, h, b64_val)
+            meta_counts[key] = meta_counts.get(key, 0) + 1
+        elif name.endswith(".pb"):
+            rows.append((ft, d, h, b64_val, name, blob.size or 0))
+    return rows, meta_counts
 
 
 def list_parquet_partitions(client, task):
@@ -241,18 +260,20 @@ def read_footer(fs, path: str):
     return int(md.num_rows), int(md.num_row_groups)
 
 
-def read_source_files(fs, path: str) -> set[str]:
+def read_source_files(full_path: str, fs=None) -> set[str]:
     """Distinct source_file values from one parquet (single-column read).
 
-    unique() runs Arrow-side: the column arrives dictionary-encoded, so this
-    avoids materializing tens of millions of Python strings for big partitions.
+    Takes a full path (and optional filesystem) so tests can exercise it
+    against a local file. unique() runs Arrow-side: the column arrives
+    dictionary-encoded, so this avoids materializing tens of millions of
+    Python strings for big partitions.
     """
     import pyarrow.compute as pc
 
     # read_dictionary keeps the column dictionary-encoded (~150MB instead of
     # ~5GB decoded for a 36M-row partition) — essential with 8 reads in flight.
     table = pq.read_table(
-        f"{PARQUET_BUCKET}/{path}",
+        full_path,
         columns=["source_file"],
         filesystem=fs,
         read_dictionary=["source_file"],
@@ -273,7 +294,7 @@ def read_source_files(fs, path: str) -> set[str]:
     return sources
 
 
-def classify_drop(client, bucket, feed_type: str, pb_name: str):
+def classify_drop(bucket, feed_type: str, pb_name: str):
     """Label one anti-joined .pb: why did it not contribute rows?
 
     Reads the sibling .meta (response_code/content_length) and, since the
@@ -352,6 +373,20 @@ def main() -> int:
     feeds_rows = feeds.to_pylist()
     feeds_by_b64 = {r["base64url"]: r for r in feeds_rows}
     print(f"  {feeds.num_rows} feeds in feeds.parquet")
+    # feeds.parquet has no uniqueness guarantee; a duplicated (url, feed_type)
+    # would fan out every feeds join on the dashboard and silently double the
+    # charts. Surface it as a finding rather than a chart error.
+    seen_pairs: set[tuple] = set()
+    for r in feeds_rows:
+        pair = (r["base64url"], r["feed_type"])
+        if pair in seen_pairs:
+            print(
+                f"  WARNING: duplicate feeds.parquet entry for {r['url']} "
+                f"({r['feed_type']}) — dashboard joins are deduplicated, but "
+                "fix agencies.yaml",
+                file=sys.stderr,
+            )
+        seen_pairs.add(pair)
 
     agency_b64s: set[str] | None = None
     if args.agency:
@@ -390,10 +425,13 @@ def main() -> int:
         list_tasks = [(ft, d, h, prefix, None) for (ft, d, h, prefix) in hours]
     print(f"Object listing: {len(list_tasks)} prefixes")
     raw_files: list[tuple] = []
+    meta_counts: dict[tuple, int] = {}
     with ThreadPoolExecutor(LIST_WORKERS) as pool:
-        for rows in pool.map(list_raw, list_tasks):
+        for rows, metas in pool.map(list_raw, list_tasks):
             raw_files.extend(rows)
-    print(f"  {len(raw_files)} raw objects listed")
+            for key, n in metas.items():
+                meta_counts[key] = meta_counts.get(key, 0) + n
+    print(f"  {len(raw_files)} .pb objects listed ({sum(meta_counts.values())} .meta counted)")
 
     if agency_b64s is None:
         # Full-range mode: presence falls out of the object listing directly.
@@ -479,9 +517,10 @@ def main() -> int:
             flagged.append((ft, d, b64, path))
     eff_lo = max(window_lo, start.isoformat())
     eff_hi = min(window_hi, end.isoformat())
+    window_desc = f"{eff_lo}..{eff_hi}" if eff_lo <= eff_hi else "none"
     print(
         f"Escalation: {len(flagged)} flagged partitions "
-        f"(reconcilable dates in this run: {eff_lo}..{eff_hi})"
+        f"(reconcilable dates in this run: {window_desc})"
     )
 
     dropped: list[tuple] = []
@@ -500,7 +539,7 @@ def main() -> int:
 
     def safe_sources(path: str):
         try:
-            return with_retries(read_source_files)(fs, path)
+            return with_retries(read_source_files)(f"{PARQUET_BUCKET}/{path}", fs=fs)
         except Exception as e:
             print(f"  WARNING: source_file read failed for {path}: {e}", file=sys.stderr)
             return None
@@ -544,15 +583,26 @@ def main() -> int:
                 f"of {len(part)} dropped files (--max-classify cap)"
             )
             skipped_classify += len(part) - args.max_classify
-            part = part[: args.max_classify]
+            # Even stride, not head-of-list: a name-sorted prefix would sample
+            # only the earliest timestamps of the day.
+            stride = len(part) / args.max_classify
+            part = [part[int(i * stride)] for i in range(args.max_classify)]
         candidates.extend(part)
+    if len(candidates) > args.max_classify_total:
+        print(
+            f"  NOTE: classifying {args.max_classify_total} of {len(candidates)} "
+            f"total candidates (--max-classify-total)"
+        )
+        skipped_classify += len(candidates) - args.max_classify_total
+        stride = len(candidates) / args.max_classify_total
+        candidates = [candidates[int(i * stride)] for i in range(args.max_classify_total)]
     if skipped_classify:
         print(f"  NOTE: {skipped_classify} candidates skipped in total (--max-classify)")
     print(f"  classifying {len(candidates)} dropped .pb files")
 
     def safe_classify(c):
         try:
-            return with_retries(classify_drop)(client, protobuf_bucket, c[0], c[3])
+            return with_retries(classify_drop)(protobuf_bucket, c[0], c[3])
         except Exception:
             return None, None, "error"
 
@@ -619,15 +669,31 @@ def main() -> int:
                 name VARCHAR, size_bytes BIGINT)"""
         )
 
+    # .meta sidecars are counted during listing (not stored as rows) to halve
+    # peak memory; join those counts back in here.
+    mc_rows = [(k[0], k[1], k[2], k[3], n) for k, n in meta_counts.items()]
+    con.execute(
+        """CREATE TABLE meta_counts (
+            feed_type VARCHAR, date DATE, hour TINYINT, base64url VARCHAR,
+            meta_count BIGINT)"""
+    )
+    if mc_rows:
+        con.executemany("INSERT INTO meta_counts VALUES (?, ?, ?, ?, ?)", mc_rows)
+
     con.execute(
         f"""CREATE TABLE proto_files_hourly AS
         SELECT feed_type, date, hour, base64url,
-               count(*) FILTER (name LIKE '%.pb') AS pb_count,
-               count(*) FILTER (name LIKE '%.meta') AS meta_count,
-               count(*) FILTER (name LIKE '%.pb' AND size_bytes = 0) AS zero_byte_count,
-               count(*) FILTER (name LIKE '%.pb' AND size_bytes > 0
-                                AND size_bytes <= {HEADER_ONLY_MAX}) AS header_only_count
-        FROM raw_files GROUP BY ALL"""
+               count(r.name) AS pb_count,
+               coalesce(any_value(m.meta_count), 0) AS meta_count,
+               count(r.name) FILTER (r.size_bytes = 0) AS zero_byte_count,
+               count(r.name) FILTER (r.size_bytes > 0
+                                     AND r.size_bytes <= {HEADER_ONLY_MAX})
+                   AS header_only_count
+        FROM raw_files r
+        -- FULL OUTER: an hour with .meta sidecars but no .pb (or vice versa)
+        -- must still produce a row
+        FULL OUTER JOIN meta_counts m USING (feed_type, date, hour, base64url)
+        GROUP BY ALL"""
     )
 
     con.execute(
@@ -655,7 +721,7 @@ def main() -> int:
         """CREATE TABLE extract_meta AS SELECT
             ? AS start_date, ? AS end_date, ? AS agency, ? AS feed_type,
             ? AS extracted_at, ? AS window_old_days, ? AS window_new_days,
-            ? AS header_only_max""",
+            ? AS header_only_max, ? AS window_anchor_date""",
         [
             start.isoformat(),
             end.isoformat(),
@@ -665,6 +731,10 @@ def main() -> int:
             WINDOW_OLD_DAYS,
             WINDOW_NEW_DAYS,
             HEADER_ONLY_MAX,
+            # The date escalation anchored on — NOT derived from extracted_at,
+            # which is stamped at write time: a run crossing UTC midnight
+            # would otherwise annotate a different window than it escalated.
+            today_utc.isoformat(),
         ],
     )
 

@@ -8,5 +8,6 @@ select
     extracted_at,
     window_old_days,
     window_new_days,
-    header_only_max
+    header_only_max,
+    window_anchor_date
 from extract_meta

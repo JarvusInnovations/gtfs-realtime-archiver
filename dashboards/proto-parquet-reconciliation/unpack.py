@@ -4,8 +4,8 @@
 # dependencies = [
 #     "google-cloud-storage>=2.14",
 #     "gcsfs>=2024.2.0",
-#     "pyarrow>=16",
-#     "gtfs-realtime-bindings>=1.0.0",
+#     "pyarrow>=22",
+#     "gtfs-realtime-bindings>=2.2.0",
 # ]
 # ///
 """Manually inspect one .pb and its neighbors against the compacted parquet.

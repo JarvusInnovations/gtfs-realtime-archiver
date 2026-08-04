@@ -52,6 +52,7 @@ dagster = [
 dev-dagster = [
     "dagster-webserver",
     "dagster-dg-cli",
+    "duckdb>=1.5.5",
 ]
 
 # Aggregate groups - includes component groups for local dev

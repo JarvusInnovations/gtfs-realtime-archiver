@@ -214,6 +214,8 @@ select
     end as status,
     case
         when b.parquet_path is not null and b.row_count is null then ''
+        when not b.in_reconcilable_window
+            then 'outside reconcilable window — not classified'
         when d.classified is null
             then 'not classified (busy partition, or extract predates classification) — re-run is safe to try'
         when d.valid_dropped > 0
