@@ -236,9 +236,15 @@ Also in this stage:
 
 ## Validation
 
-- [ ] `extract.py` for one agency × one day produces `pb_count` matching
-      `gcloud storage ls | wc -l` on the same prefix, and `row_count` matching a
-      direct DuckDB query against the public parquet (validate the validator first)
+- [ ] `extract.py` for one agency × one day produces `pb_count` matching an
+      independent listing of the same prefix (gcloud/gsutil/gcsfs — any
+      implementation other than the extract's own listing path), and
+      `row_count` matching a direct DuckDB query against the public parquet
+      (validate the validator first). (Amended 2026-08-04: originally named
+      `gcloud storage ls | wc -l` specifically; the CLI's credentials were
+      expired during validation and the criterion's intent — an independent
+      count — is method-agnostic. The gcsfs listing used is a fully separate
+      client implementation from the extract's `google-cloud-storage` path.)
 - [ ] For one known-good feed × day, `num_row_groups` equals the number of `.pb`
       files that parse to ≥1 record (validates the parse-drop heuristic itself)
 - [ ] For at least one flagged discrepancy, the `source_file` anti-join names
