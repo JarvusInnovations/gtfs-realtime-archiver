@@ -254,8 +254,12 @@ Also in this stage:
       prose hyperlinks exempt)
 - [ ] Closeout Notes/Follow-ups record concrete pipeline-metadata recommendations
       informed by actually using the dashboard
-- [ ] Root `pyproject.toml` / `uv.lock` are untouched — extract deps live only in
-      the script's PEP 723 inline metadata
+- [ ] No dashboard *runtime* dependencies enter the root project — extract deps
+      live only in the script's PEP 723 inline metadata. (Amended 2026-08-04:
+      originally "root `pyproject.toml`/`uv.lock` untouched"; review round 11
+      motivated an executable fixture test of the dashboard SQL, which needs
+      `duckdb` in a dev group — a test-only dependency, which the original
+      wording would have forbidden for no benefit.)
 - [ ] `README.md` and `.claude/CLAUDE.md` Repository Layout updated for
       `dashboards/` in the commit that adds it
 - [ ] Dashboard renders with agency dropdown filtering every chart and table
