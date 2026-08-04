@@ -37,8 +37,8 @@ VEHICLE_POSITIONS_SCHEMA = pa.schema(
         pa.field("congestion_level", pa.int32()),
         pa.field("occupancy_status", pa.int32()),
         pa.field("occupancy_percentage", pa.uint32()),
-        # Vehicle descriptor (spec fields visible from bindings >= 2.2.0;
-        # unpopulated fleet-wide as of the #91 census, captured from day one)
+        # Added per #91: unpopulated fleet-wide as of the census, captured
+        # from day one (VehicleDescriptor.wheelchair_accessible)
         pa.field("wheelchair_accessible", pa.int32()),
     ]
 )
@@ -76,8 +76,8 @@ TRIP_UPDATES_SCHEMA = pa.schema(
         pa.field("departure_time", pa.int64()),
         pa.field("departure_uncertainty", pa.int32()),
         pa.field("stop_schedule_relationship", pa.int32()),
-        # Fields added per the #91 census (bindings >= 2.2.0 required for
-        # scheduled_time visibility)
+        # Fields added per the #91 census (scheduled_time additionally
+        # requires bindings >= 2.2.0 to be visible at parse time)
         pa.field("license_plate", pa.string()),
         pa.field("arrival_scheduled_time", pa.int64()),
         pa.field("departure_scheduled_time", pa.int64()),

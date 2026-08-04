@@ -752,11 +752,15 @@ Each feed type has a defined schema for consistent output:
 - Informed entity: `agency_id`, `route_id`, `route_type`, `stop_id`, `direction_id`, `trip_id`, `trip_route_id`, `trip_direction_id`
 
 Translated fields store the first translation only (typically English) — a
-deliberate keep-first decision (#91). Fields new in gtfs-realtime-bindings
-2.2.0 (`*_scheduled_time`, `cause_detail`, `effect_detail`, `image_url`,
-`modified_trip_*`) populate from v0.9.3 onward; earlier partitions lack the
-columns and read as NULL from the BigQuery external tables (DuckDB consumers
-should use `union_by_name`).
+deliberate keep-first decision (#91). All columns added by #91 (including the
+gtfs-realtime-bindings-2.2.0-gated `*_scheduled_time`, `cause_detail`,
+`effect_detail`, `image_url`, `modified_trip_*`) populate only from the
+release that shipped them onward; earlier partitions lack the columns and
+read as NULL from the BigQuery external tables (DuckDB consumers should use
+`union_by_name`). Within service_alerts, bare informed-entity column names
+(`agency_id`, `route_id`, `stop_id`, `direction_id`) carry EntitySelector
+semantics — distinct from the trip-descriptor meanings the same names have
+in vehicle_positions/trip_updates.
 
 ### Schedule
 

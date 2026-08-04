@@ -101,6 +101,25 @@ def test_trip_update_new_fields() -> None:
     assert r["drop_off_type"] is None  # per-field HasField, not enum default
 
 
+def test_explicit_enum_zero_is_captured_not_nulled() -> None:
+    """The sharper half of the HasField semantics: an explicitly-set enum 0
+    (REGULAR) must be captured as 0, not confused with unset."""
+    feed = _feed()
+    entity = feed.entity.add()
+    entity.id = "t-zero"
+    tu = entity.trip_update
+    tu.trip.trip_id = "trip-z"
+    stu = tu.stop_time_update.add()
+    stu.stop_id = "stop-z"
+    stu.stop_time_properties.drop_off_type = (
+        gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.StopTimeProperties.REGULAR
+    )
+
+    (r,) = extract_trip_updates(feed, "f.pb", "https://x", None)
+    assert r["drop_off_type"] == 0
+    assert r["pickup_type"] is None
+
+
 def test_service_alert_new_fields_and_multi_active_period() -> None:
     feed = _feed()
     entity = feed.entity.add()

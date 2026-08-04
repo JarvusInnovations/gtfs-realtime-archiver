@@ -279,7 +279,7 @@ def extract_trip_updates(
                 # Vehicle descriptor
                 "vehicle_id": tu.vehicle.id if tu.HasField("vehicle") else None,
                 "vehicle_label": tu.vehicle.label if tu.HasField("vehicle") else None,
-                "license_plate": (tu.vehicle.license_plate if tu.HasField("vehicle") else None),
+                "license_plate": tu.vehicle.license_plate if tu.HasField("vehicle") else None,
                 # Trip-level fields
                 "trip_timestamp": tu.timestamp if tu.HasField("timestamp") else None,
                 "trip_delay": tu.delay if tu.HasField("delay") else None,
