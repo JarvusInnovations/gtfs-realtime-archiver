@@ -723,11 +723,22 @@ with repeated structures JSON-encoded instead.
 
 ### Assets
 
-| Asset | Description | Denormalization |
-| ------- | ------------- | ----------------- |
+| Asset | Description | Grain |
+| ------- | ------------- | ------- |
 | `vehicle_positions_parquet` | Vehicle positions for a day | One row per vehicle position update |
 | `trip_updates_parquet` | Trip updates for a day | One row per stop_time_update (or base record if none) |
 | `service_alerts_parquet` | Service alerts for a day | One row per informed_entity (or base record if none) |
+| `trip_modifications_parquet` | TripModifications (detour) entities for a day (#95) | One row per entity; repeated structures JSON-encoded |
+| `shapes_parquet` | Shape (detour geometry) entities for a day (#96) | One row per entity |
+| `stops_parquet` | Ad-hoc/replacement Stop entities for a day (#97) | One row per entity |
+
+`trip_updates_parquet`, `trip_modifications_parquet`, `shapes_parquet`, and
+`stops_parquet` are the four outputs of ONE non-subsettable `@multi_asset`:
+Madison Metro and Big Blue Bus publish trip_modifications/shape/stop entities
+inside their trip_updates feed URLs (2026-08-04 census), so all four tables
+are extracted from a single download+parse pass of the trip_updates raw
+files. Re-materializing the partition rewrites all four outputs (same source
+bytes); an output with zero records uploads nothing.
 
 ### Data Flow
 
@@ -775,8 +786,49 @@ Each feed type has a defined schema for consistent output:
 - Communication/impact periods: `communication_periods_json`, `impact_periods_json` (same encoding and NULL semantics as `active_periods_json`)
 - Header/entity: `feed_version`, `incrementality`, `is_deleted`
 
-Translated fields store the first translation only (typically English) — a
-deliberate keep-first decision (#91). All columns added by #91 (including the
+**Trip Modifications** (#95):
+
+- Base: `source_file`, `feed_url`, `feed_timestamp`, `fetch_timestamp`, `entity_id`
+- Payload: `selected_trips_json`, `start_times_json`, `service_dates_json`, `modifications_json`
+- Header/entity: `feed_version`, `incrementality`, `is_deleted`
+
+**Shapes** (#96):
+
+- Base: `source_file`, `feed_url`, `feed_timestamp`, `fetch_timestamp`, `entity_id`
+- Payload: `shape_id`, `encoded_polyline` (Google encoded polyline)
+- Header/entity: `feed_version`, `incrementality`, `is_deleted`
+
+**Stops** (#97):
+
+- Base: `source_file`, `feed_url`, `feed_timestamp`, `fetch_timestamp`, `entity_id`
+- Payload: `stop_id`, `stop_code_translations_json`, `stop_name_translations_json`, `tts_stop_name_translations_json`, `stop_desc_translations_json`, `stop_lat`, `stop_lon`, `zone_id`, `stop_url_translations_json`, `parent_station`, `stop_timezone`, `wheelchair_boarding`, `level_id`, `platform_code_translations_json`
+- Header/entity: `feed_version`, `incrementality`, `is_deleted`
+
+The three entity-grain tables (trip_modifications, shapes, stops — the
+TripModifications detour family, experimental in the spec) follow different
+conventions than the original three, deliberately (see the grain-decision
+entry above): one row per FeedEntity per snapshot, with every repeated
+structure JSON-encoded whole so unnesting is a downstream transform concern.
+JSON columns are NULL when the repeated field is empty (never `"[]"`), use
+per-field presence inside objects (unset → JSON null), and keep nested empty
+lists as `[]` (the parent exists, its list is empty). Join keys:
+`trip_modifications.entity_id` is what `modified_trip_modifications_id`
+(trip_updates/vehicle_positions rows) points at;
+`Modification.service_alert_id` inside `modifications_json` references
+service_alerts entity ids; `selected_trips.shape_id` and
+`trip_properties_shape_id` reference `shapes.shape_id`. The stops table's
+`*_translations_json` columns capture ALL translations as
+`[{"text": …, "language": …}, …]` in publisher order — full fidelity from
+day one, unlike the service_alerts keep-first columns (#98); any display
+selection rule is derivable downstream. Duplication is accepted by design:
+polylines and stop definitions repeat identically in every ~20s snapshot
+for a detour's lifetime (the VP/TU every-snapshot model; zstd + dictionary
+encoding collapse repeats on disk) — dedup at query time, e.g.
+`QUALIFY ROW_NUMBER() OVER (PARTITION BY shape_id ORDER BY feed_timestamp DESC) = 1`.
+
+Service_alerts translated fields store the first translation only (typically
+English) — a deliberate keep-first decision (#91; the stops table's
+`*_translations_json` columns are exempt, see above). All columns added by #91 (including the
 gtfs-realtime-bindings-2.2.0-gated `*_scheduled_time`, `cause_detail`,
 `effect_detail`, `image_url`, `modified_trip_*`) populate only from the
 release that shipped them onward; earlier partitions lack the columns and
