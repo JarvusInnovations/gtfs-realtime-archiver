@@ -596,7 +596,7 @@ def extract_trip_updates(
                 yield record
 
 
-def _get_text(translated_string: Any) -> str | None:
+def _get_text(translated_string: gtfs_realtime_pb2.TranslatedString) -> str | None:
     """First translation of a TranslatedString (typically English) — the
     keep-first convention documented in DESIGN.md."""
     if translated_string.translation:
@@ -752,6 +752,13 @@ def compact_single_feed(
 
     Returns:
         Output with metadata about files processed and records written
+
+    Raises:
+        dg.Failure: on Parquet conversion/write failure, naming the
+            offending .pb file — the partition fails rather than shipping
+            short. Parse failures (DecodeError/ValueError) are per-file:
+            skipped with a warning, the rest of the partition still writes.
+            The contract is pinned by tests/dagster/test_compact_single_feed.py.
     """
     # Extract partition dimensions
     partition_keys = context.partition_key.keys_by_dimension

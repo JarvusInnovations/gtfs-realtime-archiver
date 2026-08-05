@@ -758,10 +758,14 @@ gtfs-realtime-bindings-2.2.0-gated `*_scheduled_time`, `cause_detail`,
 `effect_detail`, `image_url`, `modified_trip_*`) populate only from the
 release that shipped them onward; earlier partitions lack the columns and
 read as NULL from the BigQuery external tables (DuckDB consumers should use
-`union_by_name`). Note that **re-materializing any old partition backfills
-its new columns** (compaction rewrites partitions wholesale from raw, 365-day
-retention), so column presence varies partition-to-partition with re-run
-history — another reason for `union_by_name`. Within service_alerts, bare
+`union_by_name`). Note that **re-materializing any old partition whose raw
+`.pb` files are still within the 365-day retention window backfills its new
+columns** (compaction rewrites partitions wholesale from raw), so column
+presence varies partition-to-partition with re-run history — another reason
+for `union_by_name`. Past that window the remedy silently no-ops: a re-run
+over expired raw data returns success with zero records and leaves the
+existing parquet untouched (deliberate — a lifecycle expiry must not destroy
+derived data). Within service_alerts, bare
 informed-entity column names (`agency_id`, `route_id`, `stop_id`,
 `direction_id`) carry EntitySelector semantics — distinct from the
 trip-descriptor meanings the same names have in vehicle_positions/
@@ -792,16 +796,22 @@ before v0.9.3 contain `""`** for a present-descriptor/unset-plate row; this
 historical inconsistency is deliberate (accepted on PR #94 in preference to
 carrying a permanent cross-table asymmetry). Reads spanning the boundary
 should normalize with `NULLIF(license_plate, '')`; re-materializing an old
-partition (or a #91 backfill) rewrites it under the new convention.
+partition (or a #91 backfill) rewrites it under the new convention — while
+its raw `.pb` files remain within the 365-day retention window (see above).
 
 `active_periods_json` is NULL when an alert declares no active periods
 (spec: always active); `"[]"` is never emitted. It is a STRING column
 (BigQuery's native JSON type is unavailable for Parquet external tables);
 the multi-period "active at time T" recipe is
-`UNNEST(JSON_EXTRACT_ARRAY(active_periods_json)) AS p` with
-`JSON_VALUE(p, '$.start')` in BigQuery, or
-`unnest(json_transform(active_periods_json,
-'[{"start":"UBIGINT","end":"UBIGINT"}]'))` in DuckDB.
+`UNNEST(JSON_QUERY_ARRAY(active_periods_json)) AS p` with
+`(JSON_VALUE(p, '$.start') IS NULL OR CAST(JSON_VALUE(p, '$.start') AS INT64) <= @t)
+AND (JSON_VALUE(p, '$.end') IS NULL OR CAST(JSON_VALUE(p, '$.end') AS INT64) > @t)`
+in BigQuery (`JSON_VALUE` returns STRING, so the cast is required — and an
+omitted start/end means "since forever"/"until forever" per spec and is
+stored as JSON null, so the NULL checks are load-bearing, not defensive),
+or `unnest(json_transform(active_periods_json,
+'[{"start":"UBIGINT","end":"UBIGINT"}]'))` in DuckDB with the same
+NULL-means-unbounded handling.
 
 Producer-supplied text columns (`header_text`, `description_text`, `tts_*`,
 `cause_detail`, `effect_detail`, `image_url`, headsigns, etc.) are unvalidated

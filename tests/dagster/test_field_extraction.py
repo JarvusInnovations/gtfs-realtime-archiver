@@ -7,6 +7,7 @@ JSON encoding, and record↔schema key parity for all three extractors.
 
 import json
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pyarrow as pa
@@ -14,6 +15,8 @@ import pytest
 from google.transit import gtfs_realtime_pb2
 
 from dagster_pipeline.defs.assets.compaction import (
+    INFORMED_ENTITY_KEYS,
+    STOP_TIME_UPDATE_KEYS,
     extract_service_alerts,
     extract_trip_updates,
     extract_vehicle_positions,
@@ -329,6 +332,180 @@ def test_record_keys_match_schemas_exactly() -> None:
         # Round-trip through Arrow with the explicit schema: catches a
         # wrong-typed value at test time instead of at compaction write time,
         # where it would surface as a per-file warning and a short parquet.
+        table = pa.Table.from_pylist(records, schema=schema)
+        assert table.num_rows == len(records)
+
+
+def _populated_vp_feed() -> gtfs_realtime_pb2.FeedMessage:
+    feed = _feed()
+    entity = feed.entity.add()
+    entity.id = "v-full"
+    vp = entity.vehicle
+    vp.trip.trip_id = "trip-1"
+    vp.trip.route_id = "route-1"
+    vp.trip.direction_id = 1
+    vp.trip.start_time = "08:00:00"
+    vp.trip.start_date = "20260701"
+    vp.trip.schedule_relationship = gtfs_realtime_pb2.TripDescriptor.SCHEDULED
+    vp.trip.modified_trip.modifications_id = "mod-1"
+    vp.trip.modified_trip.affected_trip_id = "orig-1"
+    vp.trip.modified_trip.start_date = "20260701"
+    vp.trip.modified_trip.start_time = "08:00:00"
+    vp.vehicle.id = "bus-1"
+    vp.vehicle.label = "Bus 1"
+    vp.vehicle.license_plate = "PLATE-1"
+    vp.vehicle.wheelchair_accessible = gtfs_realtime_pb2.VehicleDescriptor.WHEELCHAIR_ACCESSIBLE
+    # Non-integral floats on purpose: pyarrow coerces integral floats into
+    # int columns silently, which would hide a float-column-typed-as-int bug
+    vp.position.latitude = 40.7
+    vp.position.longitude = -75.2
+    vp.position.bearing = 90.5
+    vp.position.odometer = 12345.6
+    vp.position.speed = 8.9
+    vp.current_stop_sequence = 3
+    vp.stop_id = "stop-3"
+    vp.current_status = gtfs_realtime_pb2.VehiclePosition.IN_TRANSIT_TO
+    vp.timestamp = 1_754_000_050
+    vp.congestion_level = gtfs_realtime_pb2.VehiclePosition.RUNNING_SMOOTHLY
+    vp.occupancy_status = gtfs_realtime_pb2.VehiclePosition.FEW_SEATS_AVAILABLE
+    vp.occupancy_percentage = 42
+    return feed
+
+
+def _populated_tu_entity(entity: gtfs_realtime_pb2.FeedEntity, with_stu: bool) -> None:
+    tu = entity.trip_update
+    tu.trip.trip_id = "trip-1"
+    tu.trip.route_id = "route-1"
+    tu.trip.direction_id = 1
+    tu.trip.start_time = "08:00:00"
+    tu.trip.start_date = "20260701"
+    tu.trip.schedule_relationship = gtfs_realtime_pb2.TripDescriptor.SCHEDULED
+    tu.trip.modified_trip.modifications_id = "mod-1"
+    tu.trip.modified_trip.affected_trip_id = "orig-1"
+    tu.trip.modified_trip.start_date = "20260701"
+    tu.trip.modified_trip.start_time = "08:00:00"
+    tu.vehicle.id = "bus-1"
+    tu.vehicle.label = "Bus 1"
+    tu.vehicle.license_plate = "PLATE-1"
+    tu.vehicle.wheelchair_accessible = gtfs_realtime_pb2.VehicleDescriptor.WHEELCHAIR_ACCESSIBLE
+    tu.timestamp = 1_754_000_050
+    tu.delay = 120
+    tu.trip_properties.trip_id = "added-1"
+    tu.trip_properties.start_date = "20260701"
+    tu.trip_properties.start_time = "08:05:00"
+    tu.trip_properties.shape_id = "shape-1"
+    tu.trip_properties.trip_headsign = "Downtown"
+    tu.trip_properties.trip_short_name = "D1"
+    if not with_stu:
+        return
+    stu = tu.stop_time_update.add()
+    stu.stop_sequence = 7
+    stu.stop_id = "stop-7"
+    stu.schedule_relationship = gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.SCHEDULED
+    stu.arrival.delay = 60
+    stu.arrival.time = 1_754_000_100
+    stu.arrival.uncertainty = 30
+    stu.arrival.scheduled_time = 1_754_000_040
+    stu.departure.delay = 90
+    stu.departure.time = 1_754_000_160
+    stu.departure.uncertainty = 45
+    stu.departure.scheduled_time = 1_754_000_070
+    stu.departure_occupancy_status = gtfs_realtime_pb2.VehiclePosition.FULL
+    stu.stop_time_properties.assigned_stop_id = "stop-7b"
+    stu.stop_time_properties.stop_headsign = "Uptown"
+    stu.stop_time_properties.pickup_type = (
+        gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.StopTimeProperties.PHONE_AGENCY
+    )
+    stu.stop_time_properties.drop_off_type = (
+        gtfs_realtime_pb2.TripUpdate.StopTimeUpdate.StopTimeProperties.COORDINATE_WITH_DRIVER
+    )
+
+
+def _populated_sa_entity(entity: gtfs_realtime_pb2.FeedEntity, with_ie: bool) -> None:
+    alert = entity.alert
+    period = alert.active_period.add()
+    period.start, period.end = 1_754_000_000, 1_754_010_000
+    alert.cause = gtfs_realtime_pb2.Alert.CONSTRUCTION
+    alert.effect = gtfs_realtime_pb2.Alert.DETOUR
+    alert.severity_level = gtfs_realtime_pb2.Alert.WARNING
+    alert.url.translation.add(text="https://x/alert", language="en")
+    alert.header_text.translation.add(text="Detour", language="en")
+    alert.description_text.translation.add(text="Details", language="en")
+    alert.tts_header_text.translation.add(text="Dee-tour", language="en")
+    alert.tts_description_text.translation.add(text="Spoken", language="en")
+    alert.cause_detail.translation.add(text="Water main", language="en")
+    alert.effect_detail.translation.add(text="Stops skipped", language="en")
+    alert.image.localized_image.add(url="https://x/i.png", media_type="image/png", language="en")
+    alert.image_alternative_text.translation.add(text="Map of detour", language="en")
+    if not with_ie:
+        return
+    ie = alert.informed_entity.add()
+    ie.agency_id = "agency-1"
+    ie.route_id = "route-1"
+    ie.route_type = 3
+    ie.stop_id = "stop-1"
+    ie.direction_id = 1
+    ie.trip.trip_id = "trip-1"
+    ie.trip.route_id = "route-1"
+    ie.trip.direction_id = 0
+
+
+def test_populated_records_have_no_nulls_and_round_trip() -> None:
+    """Feed every schema column a real value and round-trip through Arrow.
+
+    The minimal-fixture parity test above proves key parity but its records
+    are nearly all NULL — and from_pylist happily writes NULL into ANY Arrow
+    type, so it cannot catch a mis-typed column (e.g. active_periods_json
+    declared int64). Fully-populated records make the round-trip check
+    types for real.
+
+    The fallback-row assertions pin that every populated BASE field survives
+    onto no-STU / no-informed-entity rows (a presence-guard bug NULLing one
+    would surface as an extra None). A base-record/tuple key collision
+    itself is caught by the extractors' runtime disjointness asserts, which
+    the fallback entities here exercise."""
+    ts = datetime(2026, 7, 1, 12, 0, 0, tzinfo=UTC)
+
+    vp_records = list(extract_vehicle_positions(_populated_vp_feed(), "f", "u", ts))
+
+    tu_feed = _feed()
+    e = tu_feed.entity.add()
+    e.id = "t-full"
+    _populated_tu_entity(e, with_stu=True)
+    e = tu_feed.entity.add()
+    e.id = "t-no-stu"
+    _populated_tu_entity(e, with_stu=False)
+    tu_records = list(extract_trip_updates(tu_feed, "f", "u", ts))
+
+    sa_feed = _feed()
+    e = sa_feed.entity.add()
+    e.id = "a-full"
+    _populated_sa_entity(e, with_ie=True)
+    e = sa_feed.entity.add()
+    e.id = "a-no-ie"
+    _populated_sa_entity(e, with_ie=False)
+    sa_records = list(extract_service_alerts(sa_feed, "f", "u", ts))
+
+    for table_name, full_record in (
+        ("vehicle_positions", vp_records[0]),
+        ("trip_updates", tu_records[0]),
+        ("service_alerts", sa_records[0]),
+    ):
+        nones = {k for k, v in full_record.items() if v is None}
+        assert not nones, f"{table_name} populated record has NULLs: {nones}"
+
+    # Fallback rows: None for exactly the denormalized child keys, nothing else
+    tu_fallback_nones = {k for k, v in tu_records[1].items() if v is None}
+    assert tu_fallback_nones == set(STOP_TIME_UPDATE_KEYS)
+    sa_fallback_nones = {k for k, v in sa_records[1].items() if v is None}
+    assert sa_fallback_nones == set(INFORMED_ENTITY_KEYS)
+
+    # Arrow round-trip with real values in every column — the actual type check
+    for schema, records in (
+        (VEHICLE_POSITIONS_SCHEMA, vp_records),
+        (TRIP_UPDATES_SCHEMA, tu_records),
+        (SERVICE_ALERTS_SCHEMA, sa_records),
+    ):
         table = pa.Table.from_pylist(records, schema=schema)
         assert table.num_rows == len(records)
 
