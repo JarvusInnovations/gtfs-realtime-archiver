@@ -759,15 +759,18 @@ def _translations_json(translated_string: gtfs_realtime_pb2.TranslatedString) ->
 
 def _localized_images_json(localized_images: Any) -> str | None:
     """JSON-encode TranslatedImage.localized_image; NULL when empty.
-    url/media_type are proto2-required (always present on a parsed
-    message); language is optional (unset -> JSON null)."""
+    url/media_type are proto2-required, but the upb runtime does NOT
+    reject a message that omits them at ParseFromString time — so guard
+    per-field anyway, keeping JSON null consistent with the
+    HasField-guarded image_url/image_media_type compat columns on a
+    spec-violating feed."""
     if not localized_images:
         return None
     return json.dumps(
         [
             {
-                "url": li.url,
-                "media_type": li.media_type,
+                "url": li.url if li.HasField("url") else None,
+                "media_type": li.media_type if li.HasField("media_type") else None,
                 "language": li.language if li.HasField("language") else None,
             }
             for li in localized_images
