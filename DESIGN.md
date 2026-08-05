@@ -749,7 +749,7 @@ Each feed type has a defined schema for consistent output:
 
 - Base: `source_file`, `feed_url`, `feed_timestamp`, `fetch_timestamp`, `entity_id`
 - Alert: `cause`, `effect`, `severity_level`, `cause_detail`, `effect_detail`, `url`, `header_text`, `description_text`, `tts_header_text`, `tts_description_text`, `image_url`, `image_alternative_text`
-- Active period: `active_period_start`, `active_period_end` (first period), `active_periods_json` (full list)
+- Active period: `active_period_start`, `active_period_end` (first period **as published** — the spec doesn't require chronological order, so use `active_periods_json` when ordering matters), `active_periods_json` (full list)
 - Informed entity: `agency_id`, `route_id`, `route_type`, `stop_id`, `direction_id`, `trip_id`, `trip_route_id`, `trip_direction_id`
 
 Translated fields store the first translation only (typically English) — a
@@ -799,19 +799,46 @@ should normalize with `NULLIF(license_plate, '')`; re-materializing an old
 partition (or a #91 backfill) rewrites it under the new convention — while
 its raw `.pb` files remain within the 365-day retention window (see above).
 
+Enum-presence semantics: enums added by #91 (`wheelchair_accessible`,
+`pickup_type`, `drop_off_type`, `departure_occupancy_status`) and the
+pre-existing `stop_schedule_relationship` use per-field presence — unset is
+NULL, and an explicitly-set 0 is captured as 0. The exception is
+`schedule_relationship` (trip-descriptor level, both feed types): it
+predates the convention and materializes the proto default, so unset reads
+`0` (= SCHEDULED, which is what the spec says unset means) rather than NULL.
+`pickup_type IS NULL` and `schedule_relationship = 0` therefore both encode
+"the producer did not say" — in adjacent columns of the same row.
+
 `active_periods_json` is NULL when an alert declares no active periods
 (spec: always active); `"[]"` is never emitted. It is a STRING column
-(BigQuery's native JSON type is unavailable for Parquet external tables);
-the multi-period "active at time T" recipe is
-`UNNEST(JSON_QUERY_ARRAY(active_periods_json)) AS p` with
-`(JSON_VALUE(p, '$.start') IS NULL OR CAST(JSON_VALUE(p, '$.start') AS INT64) <= @t)
-AND (JSON_VALUE(p, '$.end') IS NULL OR CAST(JSON_VALUE(p, '$.end') AS INT64) > @t)`
-in BigQuery (`JSON_VALUE` returns STRING, so the cast is required — and an
-omitted start/end means "since forever"/"until forever" per spec and is
-stored as JSON null, so the NULL checks are load-bearing, not defensive),
-or `unnest(json_transform(active_periods_json,
-'[{"start":"UBIGINT","end":"UBIGINT"}]'))` in DuckDB with the same
-NULL-means-unbounded handling.
+(BigQuery's native JSON type is unavailable for Parquet external tables).
+The "active at time T" recipe has **two** load-bearing NULL rules: a NULL
+*column* means always active (a plain `UNNEST`/comma join yields zero rows
+for it, silently reporting the alert inactive — use a LEFT JOIN or EXISTS),
+and a JSON-null *start/end* means unbounded on that side (`JSON_VALUE`
+returns SQL NULL for it, and NULL comparisons filter the row). BigQuery:
+
+```sql
+FROM gtfs_rt.service_alerts a
+LEFT JOIN UNNEST(JSON_QUERY_ARRAY(a.active_periods_json)) AS p ON TRUE
+WHERE a.active_periods_json IS NULL
+   OR ((JSON_VALUE(p, '$.start') IS NULL OR CAST(JSON_VALUE(p, '$.start') AS INT64) <= @t)
+  AND  (JSON_VALUE(p, '$.end')   IS NULL OR CAST(JSON_VALUE(p, '$.end')   AS INT64) >  @t))
+```
+
+(`JSON_VALUE` returns STRING, so the casts are required.) DuckDB:
+
+```sql
+FROM service_alerts a
+WHERE a.active_periods_json IS NULL
+   OR EXISTS (
+        SELECT 1
+        FROM unnest(json_transform(a.active_periods_json,
+             '[{"start":"UBIGINT","end":"UBIGINT"}]')) AS u(p)
+        WHERE (p.start IS NULL OR p.start <= $t)
+          AND (p."end" IS NULL OR p."end" > $t)
+      )
+```
 
 Producer-supplied text columns (`header_text`, `description_text`, `tts_*`,
 `cause_detail`, `effect_detail`, `image_url`, headsigns, etc.) are unvalidated
