@@ -37,11 +37,11 @@ DROPPED_SUBTREES: dict[str, str] = {
     # NOT field drops — whole entity types outside the three archived tables.
     # The 2026-08-04 census found Madison Metro and Big Blue Bus already
     # publishing these (shape 316 / trip_modifications 312 / stop 90 entities
-    # in a 568-file sample); capturing them means new tables, tracked on #91.
-    "entity.shape": "entity type outside the three archived tables (census: PUBLISHED; #91)",
-    "entity.stop": "entity type outside the three archived tables (census: PUBLISHED; #91)",
+    # in a 568-file sample); capturing each means a new table.
+    "entity.shape": "entity type outside the three archived tables (census: PUBLISHED; #96)",
+    "entity.stop": "entity type outside the three archived tables (census: PUBLISHED; #97)",
     "entity.trip_modifications": (
-        "entity type outside the three archived tables (census: PUBLISHED; #91)"
+        "entity type outside the three archived tables (census: PUBLISHED; #95)"
     ),
 }
 
@@ -233,41 +233,41 @@ MANIFEST: dict[str, Disposition] = {
     "entity.alert.effect": ["service_alerts.effect"],
     "entity.alert.severity_level": ["service_alerts.severity_level"],
     "entity.alert.url.translation.text": ["service_alerts.url"],
-    "entity.alert.url.translation.language": "DROP: keep-first translation (#91 decision)",
+    "entity.alert.url.translation.language": "DROP: keep-first translation (#91 decision; multi-language capture: #98)",
     "entity.alert.header_text.translation.text": ["service_alerts.header_text"],
     "entity.alert.header_text.translation.language": (
-        "DROP: keep-first translation (#91 decision)"
+        "DROP: keep-first translation (#91 decision; multi-language capture: #98)"
     ),
     "entity.alert.description_text.translation.text": ["service_alerts.description_text"],
     "entity.alert.description_text.translation.language": (
-        "DROP: keep-first translation (#91 decision)"
+        "DROP: keep-first translation (#91 decision; multi-language capture: #98)"
     ),
     "entity.alert.tts_header_text.translation.text": ["service_alerts.tts_header_text"],
     "entity.alert.tts_header_text.translation.language": (
-        "DROP: keep-first translation (#91 decision)"
+        "DROP: keep-first translation (#91 decision; multi-language capture: #98)"
     ),
     "entity.alert.tts_description_text.translation.text": ["service_alerts.tts_description_text"],
     "entity.alert.tts_description_text.translation.language": (
-        "DROP: keep-first translation (#91 decision)"
+        "DROP: keep-first translation (#91 decision; multi-language capture: #98)"
     ),
     "entity.alert.cause_detail.translation.text": ["service_alerts.cause_detail"],
     "entity.alert.cause_detail.translation.language": (
-        "DROP: keep-first translation (#91 decision)"
+        "DROP: keep-first translation (#91 decision; multi-language capture: #98)"
     ),
     "entity.alert.effect_detail.translation.text": ["service_alerts.effect_detail"],
     "entity.alert.effect_detail.translation.language": (
-        "DROP: keep-first translation (#91 decision)"
+        "DROP: keep-first translation (#91 decision; multi-language capture: #98)"
     ),
     "entity.alert.image.localized_image.url": ["service_alerts.image_url"],
     "entity.alert.image.localized_image.media_type": ["service_alerts.image_media_type"],
     "entity.alert.image.localized_image.language": (
-        "DROP: keep-first localized image (#91 decision)"
+        "DROP: keep-first localized image (#91 decision; multi-language capture: #98)"
     ),
     "entity.alert.image_alternative_text.translation.text": [
         "service_alerts.image_alternative_text"
     ],
     "entity.alert.image_alternative_text.translation.language": (
-        "DROP: keep-first translation (#91 decision)"
+        "DROP: keep-first translation (#91 decision; multi-language capture: #98)"
     ),
 }
 
