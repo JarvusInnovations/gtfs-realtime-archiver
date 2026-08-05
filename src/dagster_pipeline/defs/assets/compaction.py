@@ -540,17 +540,17 @@ def extract_trip_updates(
                                 if stu.HasField("schedule_relationship")
                                 else None
                             ),
-                            # bindings >= 2.2.0 fields (#91)
+                            # bindings >= 2.2.0 fields (#91). No parent
+                            # check: an unset submessage returns the default
+                            # instance, whose per-field HasField is False.
                             "arrival_scheduled_time": (
                                 stu.arrival.scheduled_time
-                                if stu.HasField("arrival")
-                                and stu.arrival.HasField("scheduled_time")
+                                if stu.arrival.HasField("scheduled_time")
                                 else None
                             ),
                             "departure_scheduled_time": (
                                 stu.departure.scheduled_time
-                                if stu.HasField("departure")
-                                and stu.departure.HasField("scheduled_time")
+                                if stu.departure.HasField("scheduled_time")
                                 else None
                             ),
                             "departure_occupancy_status": (

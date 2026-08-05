@@ -127,3 +127,53 @@ def test_conversion_failure_fails_partition_naming_file(
         _run(monkeypatch, store, ["f1.pb", "poison.pb"], bad_extractor)
 
     assert not [k for k in store if k.endswith("data.parquet")]
+
+
+def _breaking_close(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(_self: Any) -> None:
+        # Clear is_open so ParquetWriter.__del__ doesn't re-invoke this
+        # patched close during GC and leak the error into pytest's
+        # unraisable-exception hook.
+        _self.is_open = False
+        raise RuntimeError("footer flush failed")
+
+    monkeypatch.setattr(pq.ParquetWriter, "close", boom)
+
+
+def test_close_failure_on_success_path_propagates_and_blocks_upload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If writer.close() fails after a clean loop, the error must propagate
+    (not be logged away) and nothing may be uploaded — a swallowed close
+    would ship a parquet with a missing/partial footer."""
+    _breaking_close(monkeypatch)
+    store = {"f1.pb": _vp_feed_bytes("v1")}
+
+    with pytest.raises(RuntimeError, match="footer flush failed"):
+        _run(monkeypatch, store, ["f1.pb"], compaction.extract_vehicle_positions)
+
+    assert not [k for k in store if k.endswith("data.parquet")]
+
+
+def test_close_failure_does_not_bury_in_flight_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If writer.close() fails while a dg.Failure is already unwinding, the
+    original Failure — carrying the offending file's name — must survive;
+    the close error is only logged."""
+    _breaking_close(monkeypatch)
+    store = {"f1.pb": _vp_feed_bytes("v1"), "poison.pb": _vp_feed_bytes("v2")}
+
+    def bad_extractor(_feed: Any, source_file: str, feed_url: str, _ts: Any) -> Any:
+        latitude: Any = "not-a-float" if source_file == "poison.pb" else 1.0
+        yield {
+            "source_file": source_file,
+            "feed_url": feed_url,
+            "entity_id": "x",
+            "latitude": latitude,
+        }
+
+    with pytest.raises(dg.Failure, match="poison.pb"):
+        _run(monkeypatch, store, ["f1.pb", "poison.pb"], bad_extractor)
+
+    assert not [k for k in store if k.endswith("data.parquet")]

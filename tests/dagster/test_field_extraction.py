@@ -207,6 +207,10 @@ def test_explicit_enum_zero_is_captured_not_nulled() -> None:
     (r,) = extract_trip_updates(feed, "f.pb", "https://x", None)
     assert r["drop_off_type"] == 0
     assert r["pickup_type"] is None
+    # Same shape pins the DESIGN.md string promise: stop_time_properties
+    # present (drop_off_type set) with string siblings unset -> NULL, not ""
+    assert r["assigned_stop_id"] is None
+    assert r["stop_headsign"] is None
 
 
 def test_service_alert_new_fields_and_multi_active_period() -> None:
@@ -251,6 +255,19 @@ def test_service_alert_new_fields_and_multi_active_period() -> None:
         {"start": 1_754_200_000, "end": None},
     ]
     assert r["image_alternative_text"] is None  # image set, alt text unset
+
+
+def test_active_periods_json_single_period() -> None:
+    """The overwhelmingly common one-period case emits a one-element JSON
+    array — not NULL (that means zero periods) and not a bare object."""
+    feed = _feed()
+    entity = feed.entity.add()
+    entity.id = "a-one"
+    period = entity.alert.active_period.add()
+    period.start, period.end = 1_754_000_000, 1_754_010_000
+
+    (r,) = extract_service_alerts(feed, "f.pb", "https://x", None)
+    assert json.loads(r["active_periods_json"]) == [{"start": 1_754_000_000, "end": 1_754_010_000}]
 
 
 def test_active_periods_json_null_when_no_periods() -> None:
@@ -320,7 +337,12 @@ def test_bigquery_ddl_matches_schemas() -> None:
     """Machine-check the schema -> tf/bigquery.tf leg — the one that crosses
     a language boundary with no import to break. A column added to
     schemas.py without a matching BigQuery column ships Parquet data the
-    external tables can't see."""
+    external tables can't see.
+
+    Column ORDER is enforced deliberately: BigQuery matches Parquet columns
+    by name, so order isn't semantically required — but keeping tf and
+    schemas.py as literal mirrors makes review a line-by-line diff. Insert
+    mid-list in both files or not at all."""
     tf_path = Path(__file__).parents[2] / "tf" / "bigquery.tf"
     if not tf_path.exists():
         pytest.skip("tf/ not present (e.g. pytest inside the built container)")

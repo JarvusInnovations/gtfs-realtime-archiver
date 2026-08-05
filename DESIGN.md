@@ -795,7 +795,13 @@ should normalize with `NULLIF(license_plate, '')`; re-materializing an old
 partition (or a #91 backfill) rewrites it under the new convention.
 
 `active_periods_json` is NULL when an alert declares no active periods
-(spec: always active); `"[]"` is never emitted.
+(spec: always active); `"[]"` is never emitted. It is a STRING column
+(BigQuery's native JSON type is unavailable for Parquet external tables);
+the multi-period "active at time T" recipe is
+`UNNEST(JSON_EXTRACT_ARRAY(active_periods_json)) AS p` with
+`JSON_VALUE(p, '$.start')` in BigQuery, or
+`unnest(json_transform(active_periods_json,
+'[{"start":"UBIGINT","end":"UBIGINT"}]'))` in DuckDB.
 
 Producer-supplied text columns (`header_text`, `description_text`, `tts_*`,
 `cause_detail`, `effect_detail`, `image_url`, headsigns, etc.) are unvalidated
