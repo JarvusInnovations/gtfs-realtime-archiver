@@ -7,7 +7,7 @@ import dagster as dg
 
 from dagster_pipeline.defs.assets import (
     service_alerts_parquet,
-    trip_updates_parquet,
+    trip_updates_tables,
     vehicle_positions_parquet,
 )
 from dagster_pipeline.defs.assets.compaction import (
@@ -29,6 +29,8 @@ class FeedTypeConfig(NamedTuple):
     feed_type: str  # GCS path component
     partition_name: str  # Name of the dynamic partition definition
     partition_def: dg.DynamicPartitionsDefinition  # For building add requests
+    # May carry multiple asset keys (trip_updates is a non-subsettable
+    # multi_asset) — select ALL of a config's keys, never a single .key
     asset: dg.AssetsDefinition
 
 
@@ -44,7 +46,7 @@ FEED_TYPE_CONFIGS = [
         "trip_updates",
         "trip_updates_feeds",
         trip_updates_feeds,
-        trip_updates_parquet,
+        trip_updates_tables,
     ),
     FeedTypeConfig(
         "service_alerts",
@@ -58,7 +60,7 @@ FEED_TYPE_CONFIGS = [
 @dg.sensor(
     asset_selection=[
         vehicle_positions_parquet,
-        trip_updates_parquet,
+        trip_updates_tables,
         service_alerts_parquet,
     ],
     minimum_interval_seconds=300,  # 5 minutes
@@ -121,7 +123,7 @@ def feed_discovery_sensor(
             run_requests.append(
                 dg.RunRequest(
                     run_key=f"{config.feed_type}_{yesterday}_{feed_key}",
-                    asset_selection=[config.asset.key],
+                    asset_selection=list(config.asset.keys),
                     partition_key=multi_key,
                 )
             )

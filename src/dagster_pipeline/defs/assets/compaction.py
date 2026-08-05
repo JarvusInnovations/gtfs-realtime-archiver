@@ -4,9 +4,9 @@ import base64
 import io
 import json
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator, Sequence
 from datetime import datetime
-from typing import Any
+from typing import Any, NamedTuple
 
 import dagster as dg
 import pyarrow as pa
@@ -17,6 +17,9 @@ from google.transit import gtfs_realtime_pb2
 
 from dagster_pipeline.defs.assets.schemas import (
     SERVICE_ALERTS_SCHEMA,
+    SHAPES_SCHEMA,
+    STOPS_SCHEMA,
+    TRIP_MODIFICATIONS_SCHEMA,
     TRIP_UPDATES_SCHEMA,
     VEHICLE_POSITIONS_SCHEMA,
 )
@@ -103,6 +106,45 @@ try:
         (gtfs_realtime_pb2.TranslatedImage.LocalizedImage, "media_type"),
         (gtfs_realtime_pb2.Alert, "image_alternative_text"),
         (gtfs_realtime_pb2.EntitySelector, "direction_id"),
+        # Entity-type capture (#95/#96/#97): FeedEntity.shape/stop/
+        # trip_modifications are absent from pre-2.2 bindings, so the
+        # entity.HasField dispatch itself would raise the swallowed
+        # ValueError this guard exists for.
+        (gtfs_realtime_pb2.FeedEntity, "shape"),
+        (gtfs_realtime_pb2.FeedEntity, "stop"),
+        (gtfs_realtime_pb2.FeedEntity, "trip_modifications"),
+        (gtfs_realtime_pb2.Shape, "shape_id"),
+        (gtfs_realtime_pb2.Shape, "encoded_polyline"),
+        (gtfs_realtime_pb2.Stop, "stop_id"),
+        (gtfs_realtime_pb2.Stop, "stop_code"),
+        (gtfs_realtime_pb2.Stop, "stop_name"),
+        (gtfs_realtime_pb2.Stop, "tts_stop_name"),
+        (gtfs_realtime_pb2.Stop, "stop_desc"),
+        (gtfs_realtime_pb2.Stop, "stop_lat"),
+        (gtfs_realtime_pb2.Stop, "stop_lon"),
+        (gtfs_realtime_pb2.Stop, "zone_id"),
+        (gtfs_realtime_pb2.Stop, "stop_url"),
+        (gtfs_realtime_pb2.Stop, "parent_station"),
+        (gtfs_realtime_pb2.Stop, "stop_timezone"),
+        (gtfs_realtime_pb2.Stop, "wheelchair_boarding"),
+        (gtfs_realtime_pb2.Stop, "level_id"),
+        (gtfs_realtime_pb2.Stop, "platform_code"),
+        (gtfs_realtime_pb2.TripModifications, "selected_trips"),
+        (gtfs_realtime_pb2.TripModifications, "start_times"),
+        (gtfs_realtime_pb2.TripModifications, "service_dates"),
+        (gtfs_realtime_pb2.TripModifications, "modifications"),
+        (gtfs_realtime_pb2.TripModifications.SelectedTrips, "trip_ids"),
+        (gtfs_realtime_pb2.TripModifications.SelectedTrips, "shape_id"),
+        (gtfs_realtime_pb2.TripModifications.Modification, "start_stop_selector"),
+        (gtfs_realtime_pb2.TripModifications.Modification, "end_stop_selector"),
+        (gtfs_realtime_pb2.TripModifications.Modification, "propagated_modification_delay"),
+        (gtfs_realtime_pb2.TripModifications.Modification, "replacement_stops"),
+        (gtfs_realtime_pb2.TripModifications.Modification, "service_alert_id"),
+        (gtfs_realtime_pb2.TripModifications.Modification, "last_modified_time"),
+        (gtfs_realtime_pb2.StopSelector, "stop_sequence"),
+        (gtfs_realtime_pb2.StopSelector, "stop_id"),
+        (gtfs_realtime_pb2.ReplacementStop, "travel_time_to_stop"),
+        (gtfs_realtime_pb2.ReplacementStop, "stop_id"),
     )
 except AttributeError as e:
     raise ImportError(
@@ -694,6 +736,218 @@ def _get_text(translated_string: gtfs_realtime_pb2.TranslatedString) -> str | No
     return None
 
 
+def _translations_json(translated_string: gtfs_realtime_pb2.TranslatedString) -> str | None:
+    """Full-fidelity TranslatedString capture: [{"text","language"},...];
+    NULL when there are no translations, never "[]". Unlike the
+    service_alerts keep-first columns, nothing is dropped (#98 — the stops
+    table ships complete from day one so no migration is ever owed)."""
+    if not translated_string.translation:
+        return None
+    return json.dumps(
+        [
+            {
+                "text": t.text,
+                "language": t.language if t.HasField("language") else None,
+            }
+            for t in translated_string.translation
+        ],
+        separators=(",", ":"),
+    )
+
+
+def _string_list_json(values: Any) -> str | None:
+    """JSON-encode a repeated string field; NULL when empty, never "[]"."""
+    if not values:
+        return None
+    return json.dumps(list(values), separators=(",", ":"))
+
+
+def _selected_trips_json(selected_trips: Any) -> str | None:
+    """JSON-encode repeated TripModifications.SelectedTrips; NULL when empty."""
+    if not selected_trips:
+        return None
+    return json.dumps(
+        [
+            {
+                "trip_ids": list(st.trip_ids),
+                "shape_id": st.shape_id if st.HasField("shape_id") else None,
+            }
+            for st in selected_trips
+        ],
+        separators=(",", ":"),
+    )
+
+
+def _stop_selector_obj(selector: gtfs_realtime_pb2.StopSelector) -> dict[str, Any]:
+    return {
+        "stop_sequence": selector.stop_sequence if selector.HasField("stop_sequence") else None,
+        "stop_id": selector.stop_id if selector.HasField("stop_id") else None,
+    }
+
+
+def _modifications_json(modifications: Any) -> str | None:
+    """JSON-encode repeated TripModifications.Modification; NULL when the
+    column-level list is empty. Per-field presence inside (unset -> JSON
+    null); nested empty replacement_stops stays [] — the parent exists, its
+    list is empty."""
+    if not modifications:
+        return None
+    return json.dumps(
+        [
+            {
+                "start_stop_selector": (
+                    _stop_selector_obj(m.start_stop_selector)
+                    if m.HasField("start_stop_selector")
+                    else None
+                ),
+                "end_stop_selector": (
+                    _stop_selector_obj(m.end_stop_selector)
+                    if m.HasField("end_stop_selector")
+                    else None
+                ),
+                "propagated_modification_delay": (
+                    m.propagated_modification_delay
+                    if m.HasField("propagated_modification_delay")
+                    else None
+                ),
+                "replacement_stops": [
+                    {
+                        "travel_time_to_stop": (
+                            rs.travel_time_to_stop if rs.HasField("travel_time_to_stop") else None
+                        ),
+                        "stop_id": rs.stop_id if rs.HasField("stop_id") else None,
+                    }
+                    for rs in m.replacement_stops
+                ],
+                "service_alert_id": (
+                    m.service_alert_id if m.HasField("service_alert_id") else None
+                ),
+                "last_modified_time": (
+                    m.last_modified_time if m.HasField("last_modified_time") else None
+                ),
+            }
+            for m in modifications
+        ],
+        separators=(",", ":"),
+    )
+
+
+def extract_trip_modifications(
+    feed: gtfs_realtime_pb2.FeedMessage,
+    source_file: str,
+    feed_url: str,
+    fetch_timestamp: datetime | None,
+) -> Iterator[dict[str, Any]]:
+    """Extract trip_modifications entities (#95). Entity/message grain —
+    one row per entity, repeated structures JSON-encoded whole; unnesting
+    is a downstream transform concern (DESIGN.md grain-decision entry).
+    entity_id is the join target of the trip_updates/vehicle_positions
+    modified_trip_modifications_id columns."""
+    feed_timestamp = feed.header.timestamp if feed.header.timestamp else None
+    header_fields = _header_fields(feed)
+
+    for entity in feed.entity:
+        if entity.HasField("trip_modifications"):
+            tm = entity.trip_modifications
+            yield {
+                # Source metadata
+                "source_file": source_file,
+                "feed_url": feed_url,
+                "feed_timestamp": feed_timestamp,
+                "fetch_timestamp": fetch_timestamp,
+                "entity_id": entity.id,
+                # TripModifications payload
+                "selected_trips_json": _selected_trips_json(tm.selected_trips),
+                "start_times_json": _string_list_json(tm.start_times),
+                "service_dates_json": _string_list_json(tm.service_dates),
+                "modifications_json": _modifications_json(tm.modifications),
+                # Header / entity-level fields (all tables)
+                **header_fields,
+                "is_deleted": entity.is_deleted if entity.HasField("is_deleted") else None,
+            }
+
+
+def extract_shapes(
+    feed: gtfs_realtime_pb2.FeedMessage,
+    source_file: str,
+    feed_url: str,
+    fetch_timestamp: datetime | None,
+) -> Iterator[dict[str, Any]]:
+    """Extract shape entities (#96) — detour replacement geometry. One row
+    per entity per snapshot; identical polylines repeat across a detour's
+    lifetime, dedup belongs at query time."""
+    feed_timestamp = feed.header.timestamp if feed.header.timestamp else None
+    header_fields = _header_fields(feed)
+
+    for entity in feed.entity:
+        if entity.HasField("shape"):
+            shape = entity.shape
+            yield {
+                # Source metadata
+                "source_file": source_file,
+                "feed_url": feed_url,
+                "feed_timestamp": feed_timestamp,
+                "fetch_timestamp": fetch_timestamp,
+                "entity_id": entity.id,
+                # Shape payload
+                "shape_id": shape.shape_id if shape.HasField("shape_id") else None,
+                "encoded_polyline": (
+                    shape.encoded_polyline if shape.HasField("encoded_polyline") else None
+                ),
+                # Header / entity-level fields (all tables)
+                **header_fields,
+                "is_deleted": entity.is_deleted if entity.HasField("is_deleted") else None,
+            }
+
+
+def extract_stops(
+    feed: gtfs_realtime_pb2.FeedMessage,
+    source_file: str,
+    feed_url: str,
+    fetch_timestamp: datetime | None,
+) -> Iterator[dict[str, Any]]:
+    """Extract stop entities (#97) — ad-hoc/replacement stop definitions
+    for detours, possibly absent from static GTFS. Per-field presence for
+    scalars; the six TranslatedString fields are captured full-fidelity as
+    translations JSON (no keep-first selection baked in — #98)."""
+    feed_timestamp = feed.header.timestamp if feed.header.timestamp else None
+    header_fields = _header_fields(feed)
+
+    for entity in feed.entity:
+        if entity.HasField("stop"):
+            stop = entity.stop
+            yield {
+                # Source metadata
+                "source_file": source_file,
+                "feed_url": feed_url,
+                "feed_timestamp": feed_timestamp,
+                "fetch_timestamp": fetch_timestamp,
+                "entity_id": entity.id,
+                # Stop payload (proto field order)
+                "stop_id": stop.stop_id if stop.HasField("stop_id") else None,
+                "stop_code_translations_json": _translations_json(stop.stop_code),
+                "stop_name_translations_json": _translations_json(stop.stop_name),
+                "tts_stop_name_translations_json": _translations_json(stop.tts_stop_name),
+                "stop_desc_translations_json": _translations_json(stop.stop_desc),
+                "stop_lat": stop.stop_lat if stop.HasField("stop_lat") else None,
+                "stop_lon": stop.stop_lon if stop.HasField("stop_lon") else None,
+                "zone_id": stop.zone_id if stop.HasField("zone_id") else None,
+                "stop_url_translations_json": _translations_json(stop.stop_url),
+                "parent_station": (
+                    stop.parent_station if stop.HasField("parent_station") else None
+                ),
+                "stop_timezone": stop.stop_timezone if stop.HasField("stop_timezone") else None,
+                "wheelchair_boarding": (
+                    stop.wheelchair_boarding if stop.HasField("wheelchair_boarding") else None
+                ),
+                "level_id": stop.level_id if stop.HasField("level_id") else None,
+                "platform_code_translations_json": _translations_json(stop.platform_code),
+                # Header / entity-level fields (all tables)
+                **header_fields,
+                "is_deleted": entity.is_deleted if entity.HasField("is_deleted") else None,
+            }
+
+
 def extract_service_alerts(
     feed: gtfs_realtime_pb2.FeedMessage,
     source_file: str,
@@ -871,31 +1125,54 @@ def extract_service_alerts(
                 yield record
 
 
-def compact_single_feed(
+class TableSpec(NamedTuple):
+    """One output table of a compaction pass.
+
+    table_name doubles as the destination prefix in the parquet bucket
+    (`{table_name}/date=.../base64url=.../data.parquet`); the READ prefix
+    in the protobuf bucket is the feed_type passed to compact_feed_tables —
+    the two differ for the tables extracted out of trip_updates raw files.
+    """
+
+    table_name: str
+    schema: pa.Schema
+    extractor: Callable[
+        [gtfs_realtime_pb2.FeedMessage, str, str, datetime | None],
+        Iterator[dict[str, Any]],
+    ]
+
+
+def compact_feed_tables(
     context: dg.AssetExecutionContext,
     gcs: GCSResource,
     feed_type: str,
-    schema: pa.Schema,
-    extractor: Any,
-) -> dg.Output[dict[str, int]]:
-    """Compact a single feed for a single date partition.
+    tables: Sequence[TableSpec],
+) -> dict[str, tuple[dict[str, int], dict[str, Any]]]:
+    """Compact one feed's raw .pb files for one date partition into one or
+    more Parquet tables, downloading and parsing each file exactly once.
 
     Args:
         context: Dagster asset execution context with MultiPartitionKey
         gcs: GCS resource
-        feed_type: Feed type (vehicle_positions, trip_updates, service_alerts)
-        schema: PyArrow schema for this feed type
-        extractor: Function to extract records from protobuf
+        feed_type: Raw-file prefix in the protobuf bucket
+            (vehicle_positions, trip_updates, service_alerts)
+        tables: Output tables; each extractor runs against every parsed
+            FeedMessage
 
     Returns:
-        Output with metadata about files processed and records written
+        {table_name: (output_value, metadata)} — files_processed and
+        files_failed are shared across tables (one parse per file),
+        records_written and output_path are per table. A table with zero
+        records uploads nothing and has no output_path.
 
     Raises:
         dg.Failure: on Parquet conversion/write failure, naming the
-            offending .pb file — the partition fails rather than shipping
-            short. Parse failures (DecodeError/ValueError) are per-file:
-            skipped with a warning, the rest of the partition still writes.
-            The contract is pinned by tests/dagster/test_compact_single_feed.py.
+            offending .pb file and table — the partition fails (all
+            tables) rather than shipping short. Parse failures
+            (DecodeError/ValueError) are per-file: skipped with a warning
+            for every table consistently, the rest of the partition still
+            writes. The contract is pinned by
+            tests/dagster/test_compact_single_feed.py.
     """
     # Extract partition dimensions
     partition_keys = context.partition_key.keys_by_dimension
@@ -915,17 +1192,20 @@ def compact_single_feed(
 
     if not pb_files:
         context.log.info(f"No data found for feed {feed_key} on {date}")
-        return dg.Output(
-            {"files_processed": 0, "records_written": 0, "files_failed": 0},
-            metadata={
-                "files_processed": 0,
-                "records_written": 0,
-                "files_failed": 0,
-                "date": date,
-                "feed": feed_key,
-                "feed_url": feed_url,
-            },
-        )
+        return {
+            spec.table_name: (
+                {"files_processed": 0, "records_written": 0, "files_failed": 0},
+                {
+                    "files_processed": 0,
+                    "records_written": 0,
+                    "files_failed": 0,
+                    "date": date,
+                    "feed": feed_key,
+                    "feed_url": feed_url,
+                },
+            )
+            for spec in tables
+        }
 
     context.log.info(f"Processing {len(pb_files)} files for feed {feed_key}")
 
@@ -933,10 +1213,9 @@ def compact_single_feed(
     protobuf_bucket = client.bucket(gcs.protobuf_bucket)
     parquet_bucket = client.bucket(gcs.parquet_bucket)
 
-    output_path = f"{feed_type}/date={date}/base64url={feed_url_encoded}/data.parquet"
-    buffer = io.BytesIO()
-    writer: pq.ParquetWriter | None = None
-    records_count = 0
+    buffers = {spec.table_name: io.BytesIO() for spec in tables}
+    writers: dict[str, pq.ParquetWriter | None] = {spec.table_name: None for spec in tables}
+    records_counts = {spec.table_name: 0 for spec in tables}
     files_failed = 0
     loop_completed = False
 
@@ -952,98 +1231,133 @@ def compact_single_feed(
             # Arrow conversion sits outside it because pyarrow.ArrowInvalid
             # subclasses ValueError — a schema/type bug caught here would
             # otherwise masquerade as "every file failed to parse" and let a
-            # successful run write an empty partition.
+            # successful run write an empty partition. ALL tables' extraction
+            # sits inside it so a failing file is skipped consistently for
+            # every output, keeping the tables' row provenance in step.
             try:
                 feed = parse_protobuf(content)
-                records = list(extractor(feed, pb_file, feed_url, fetch_timestamp))
+                extracted = {
+                    spec.table_name: list(spec.extractor(feed, pb_file, feed_url, fetch_timestamp))
+                    for spec in tables
+                }
             except (DecodeError, ValueError) as e:
                 context.log.warning(f"Failed to parse {pb_file}: {e}")
                 files_failed += 1
                 continue
-            if not records:
-                continue
 
-            # Write batch to parquet stream. Fail the partition with the
-            # offending file named — any error escaping here bare gives no
-            # clue which of ~thousands of .pb files produced it. Broad on
-            # purpose: from_pylist raises ArrowInvalid/ArrowTypeError (which
-            # straddle ValueError/TypeError) and bare TypeError/OverflowError
-            # depending on the conversion path; the intent is "fail the
-            # partition, loudly, naming the file", not enumerating classes.
-            try:
-                batch = pa.Table.from_pylist(records, schema=schema)
-                if writer is None:
-                    writer = pq.ParquetWriter(
-                        buffer, schema, compression="zstd", compression_level=9
-                    )
-                writer.write_table(batch)
-            except MemoryError:
-                # Not a schema bug — don't send the operator after one. The
-                # identified path is active_periods_json replication on a
-                # worst-case alert (see #92 watch item).
-                raise
-            except Exception as e:
-                raise dg.Failure(f"Parquet conversion/write failed for {pb_file}: {e}") from e
-            records_count += len(records)
+            # Write batches to the per-table parquet streams. Fail the
+            # partition with the offending file and table named — any error
+            # escaping here bare gives no clue which of ~thousands of .pb
+            # files produced it. Broad on purpose: from_pylist raises
+            # ArrowInvalid/ArrowTypeError (which straddle ValueError/
+            # TypeError) and bare TypeError/OverflowError depending on the
+            # conversion path; the intent is "fail the partition, loudly,
+            # naming the file", not enumerating classes.
+            for spec in tables:
+                records = extracted[spec.table_name]
+                if not records:
+                    continue
+                try:
+                    batch = pa.Table.from_pylist(records, schema=spec.schema)
+                    writer = writers[spec.table_name]
+                    if writer is None:
+                        writer = pq.ParquetWriter(
+                            buffers[spec.table_name],
+                            spec.schema,
+                            compression="zstd",
+                            compression_level=9,
+                        )
+                        writers[spec.table_name] = writer
+                    writer.write_table(batch)
+                except MemoryError:
+                    # Not a schema bug — don't send the operator after one.
+                    # The identified path is active_periods_json replication
+                    # on a worst-case alert (see #92 watch item).
+                    raise
+                except Exception as e:
+                    raise dg.Failure(
+                        f"Parquet conversion/write failed for {pb_file} ({spec.table_name}): {e}"
+                    ) from e
+                records_counts[spec.table_name] += len(records)
         loop_completed = True
     finally:
-        if writer is not None:
-            try:
-                writer.close()
-            except Exception as close_err:
-                # An exception raised in a finally REPLACES the in-flight
-                # one — a close() failure after a write_table failure would
-                # bury the dg.Failure naming the offending file. Swallow only
-                # when the loop did NOT complete (an exception is unwinding);
-                # a close failure on the success path must stay loud, or the
-                # buffer would be uploaded with a missing/partial footer.
-                # (A local flag, not sys.exc_info(): that reflects the whole
-                # handler stack, so a caller's except block would wrongly
-                # mute a success-path close error.)
-                if loop_completed:
-                    raise
+        # An exception raised in a finally REPLACES the in-flight one — a
+        # close() failure after a write_table failure would bury the
+        # dg.Failure naming the offending file. Close EVERY writer first
+        # (an unclosed ParquetWriter re-raises from __del__ during GC),
+        # collecting errors; then swallow them only when the loop did NOT
+        # complete (an exception is unwinding). A close failure on the
+        # success path must stay loud, or a buffer would be uploaded with a
+        # missing/partial footer. (A local flag, not sys.exc_info(): that
+        # reflects the whole handler stack, so a caller's except block
+        # would wrongly mute a success-path close error.)
+        close_errors: list[tuple[str, Exception]] = []
+        for table_name, table_writer in writers.items():
+            if table_writer is not None:
+                try:
+                    table_writer.close()
+                except Exception as close_err:
+                    close_errors.append((table_name, close_err))
+        if close_errors:
+            if loop_completed:
+                for table_name, err in close_errors[1:]:
+                    context.log.warning(
+                        f"ParquetWriter.close() also failed for {table_name}: {err}"
+                    )
+                raise close_errors[0][1]
+            for table_name, err in close_errors:
                 context.log.warning(
-                    f"ParquetWriter.close() failed after earlier error: {close_err}"
+                    f"ParquetWriter.close() failed for {table_name} after earlier error: {err}"
                 )
 
-    if writer is None:
-        context.log.info(f"No records extracted for feed {feed_key}")
-        return dg.Output(
-            {"files_processed": len(pb_files), "records_written": 0, "files_failed": files_failed},
-            metadata={
-                "files_processed": len(pb_files),
-                "records_written": 0,
-                "files_failed": files_failed,
-                "date": date,
-                "feed": feed_key,
-                "feed_url": feed_url,
-            },
-        )
-
-    # Upload parquet file
-    buffer.seek(0)
-
-    output_blob = parquet_bucket.blob(output_path)
-    output_blob.upload_from_file(buffer, content_type="application/octet-stream")
-
-    context.log.info(f"Wrote {records_count} records to gs://{gcs.parquet_bucket}/{output_path}")
-
-    return dg.Output(
-        {
+    # Upload per table; a table with zero records uploads nothing (any
+    # previously-materialized parquet for the partition is left in place —
+    # the existing zero-records convention, applied per output).
+    results: dict[str, tuple[dict[str, int], dict[str, Any]]] = {}
+    for spec in tables:
+        value = {
             "files_processed": len(pb_files),
-            "records_written": records_count,
+            "records_written": records_counts[spec.table_name],
             "files_failed": files_failed,
-        },
-        metadata={
-            "files_processed": len(pb_files),
-            "records_written": records_count,
-            "files_failed": files_failed,
+        }
+        metadata: dict[str, Any] = {
+            **value,
             "date": date,
             "feed": feed_key,
             "feed_url": feed_url,
-            "output_path": f"gs://{gcs.parquet_bucket}/{output_path}",
-        },
+        }
+        if writers[spec.table_name] is None:
+            context.log.info(f"No {spec.table_name} records extracted for feed {feed_key}")
+        else:
+            output_path = f"{spec.table_name}/date={date}/base64url={feed_url_encoded}/data.parquet"
+            buffer = buffers[spec.table_name]
+            buffer.seek(0)
+            output_blob = parquet_bucket.blob(output_path)
+            output_blob.upload_from_file(buffer, content_type="application/octet-stream")
+            context.log.info(
+                f"Wrote {records_counts[spec.table_name]} records "
+                f"to gs://{gcs.parquet_bucket}/{output_path}"
+            )
+            metadata["output_path"] = f"gs://{gcs.parquet_bucket}/{output_path}"
+        results[spec.table_name] = (value, metadata)
+    return results
+
+
+def compact_single_feed(
+    context: dg.AssetExecutionContext,
+    gcs: GCSResource,
+    feed_type: str,
+    schema: pa.Schema,
+    extractor: Any,
+) -> dg.Output[dict[str, int]]:
+    """Compact a single feed into a single table for one date partition —
+    a one-table wrapper over compact_feed_tables (which carries the
+    error contract)."""
+    results = compact_feed_tables(
+        context, gcs, feed_type, (TableSpec(feed_type, schema, extractor),)
     )
+    value, metadata = results[feed_type]
+    return dg.Output(value, metadata=metadata)
 
 
 @dg.asset(
@@ -1066,24 +1380,60 @@ def vehicle_positions_parquet(
     )
 
 
-@dg.asset(
+# Tables produced from ONE parse of the trip_updates raw files. Madison
+# Metro and Big Blue Bus publish trip_modifications/shape/stop entities
+# inside their trip_updates feed URLs (2026-08-04 census; #95/#96/#97);
+# download + parse are the dominant costs and are already paid, so all four
+# tables are extracted in a single pass rather than re-reading ~thousands
+# of .pb files per additional table.
+TRIP_UPDATES_TABLES: tuple[TableSpec, ...] = (
+    TableSpec("trip_updates", TRIP_UPDATES_SCHEMA, extract_trip_updates),
+    TableSpec("trip_modifications", TRIP_MODIFICATIONS_SCHEMA, extract_trip_modifications),
+    TableSpec("shapes", SHAPES_SCHEMA, extract_shapes),
+    TableSpec("stops", STOPS_SCHEMA, extract_stops),
+)
+
+
+@dg.multi_asset(
     partitions_def=trip_updates_partitions,
     compute_kind="pyarrow",
     group_name="compaction",
-    description="Compacted trip updates data in Parquet format",
+    outs={
+        "trip_updates_parquet": dg.AssetOut(
+            description="Compacted trip updates data in Parquet format",
+        ),
+        "trip_modifications_parquet": dg.AssetOut(
+            description=(
+                "TripModifications (detour) entities published inside "
+                "trip_updates feeds, in Parquet format (#95)"
+            ),
+        ),
+        "shapes_parquet": dg.AssetOut(
+            description=(
+                "Shape (detour geometry) entities published inside "
+                "trip_updates feeds, in Parquet format (#96)"
+            ),
+        ),
+        "stops_parquet": dg.AssetOut(
+            description=(
+                "Ad-hoc/replacement Stop entities published inside "
+                "trip_updates feeds, in Parquet format (#97)"
+            ),
+        ),
+    },
 )
-def trip_updates_parquet(
+def trip_updates_tables(
     context: dg.AssetExecutionContext,
     gcs: GCSResource,
-) -> dg.Output[dict[str, int]]:
-    """Compact trip updates protobuf files into Parquet for a given date and feed."""
-    return compact_single_feed(
-        context,
-        gcs,
-        "trip_updates",
-        TRIP_UPDATES_SCHEMA,
-        extract_trip_updates,
-    )
+) -> Iterator[dg.Output[dict[str, int]]]:
+    """Compact trip updates protobuf files into four Parquet tables for a
+    given date and feed — one download/parse pass, one output per table.
+    Not subsettable: re-materializing the partition rewrites all four
+    outputs (correct — same source bytes)."""
+    results = compact_feed_tables(context, gcs, "trip_updates", TRIP_UPDATES_TABLES)
+    for spec in TRIP_UPDATES_TABLES:
+        value, metadata = results[spec.table_name]
+        yield dg.Output(value, output_name=f"{spec.table_name}_parquet", metadata=metadata)
 
 
 @dg.asset(

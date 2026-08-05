@@ -8,7 +8,7 @@ from dagster_pipeline.defs.assets import (
     bucket_inventory,
     feeds_metadata,
     service_alerts_parquet,
-    trip_updates_parquet,
+    trip_updates_tables,
     vehicle_positions_parquet,
 )
 from dagster_pipeline.defs.resources import GCSResource, SecretManagerResource
@@ -27,7 +27,7 @@ from dagster_pipeline.defs.sensors import feed_discovery_sensor
 defs = dg.Definitions(
     assets=[
         vehicle_positions_parquet,
-        trip_updates_parquet,
+        trip_updates_tables,
         service_alerts_parquet,
         feeds_metadata,
         bucket_inventory,
