@@ -42,17 +42,17 @@ migration. Ships as its own PR stacked on #99 (reuses its
 
 ## Validation criteria
 
-- [ ] Manifest: zero remaining keep-first DROP entries; reverse coverage
+- [x] Manifest: zero remaining keep-first DROP entries; reverse coverage
       green for the 9 new columns
-- [ ] Behavior test: AC Transit case (es first, en second) keeps both;
+- [x] Behavior test: AC Transit case (es first, en second) keeps both;
       en-html variant preserved; untagged translation → language null;
       unset fields → NULL never "[]"
-- [ ] Populated round-trip covers all 9 columns; record↔schema and DDL
+- [x] Populated round-trip covers all 9 columns; record↔schema and DDL
       parity green
-- [ ] ruff + mypy strict + full pytest green
-- [ ] Real-data spot check: 511.org (5 languages) and AC Transit alerts
+- [x] ruff + mypy strict + full pytest green
+- [x] Real-data spot check: 511.org (5 languages) and AC Transit alerts
       through the extractor
-- [ ] Targeted `tofu plan`: service_alerts update in-place, 0 destroy
+- [x] Targeted `tofu plan`: service_alerts update in-place, 0 destroy
 
 ## Risks / unknowns
 
