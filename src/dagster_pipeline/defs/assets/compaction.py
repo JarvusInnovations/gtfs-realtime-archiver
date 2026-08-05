@@ -59,6 +59,10 @@ HTTP_FEED_PREFIX = "~"
 # the failure still says "upgrade" instead of a bare AttributeError.
 try:
     REQUIRED_BINDINGS_FIELDS: tuple[tuple[type[Message], str], ...] = (
+        # FeedHeader.feed_version is a late spec addition (absent from
+        # 1.x bindings — verified empirically) and a live HasField target
+        # in _header_fields (PR #94 round 14)
+        (gtfs_realtime_pb2.FeedHeader, "feed_version"),
         (gtfs_realtime_pb2.VehicleDescriptor, "wheelchair_accessible"),
         # CarriageDetails is 2.1.0-gated; _carriages_json dereferences all
         # five fields (PR #94 round 13)
@@ -249,7 +253,9 @@ def extract_vehicle_positions(
     fetch_timestamp: datetime | None,
 ) -> Iterator[dict[str, Any]]:
     """Extract vehicle positions from a FeedMessage."""
-    feed_timestamp = feed.header.timestamp if feed.header.timestamp else None
+    # Per-field presence like _header_fields on the same message — an
+    # explicit timestamp=0 is captured, not NULLed (PR #94 round 14)
+    feed_timestamp = feed.header.timestamp if feed.header.HasField("timestamp") else None
     header_fields = _header_fields(feed)
 
     for entity in feed.entity:
@@ -416,7 +422,9 @@ def extract_trip_updates(
     fetch_timestamp: datetime | None,
 ) -> Iterator[dict[str, Any]]:
     """Extract trip updates from a FeedMessage (denormalized by stop_time_update)."""
-    feed_timestamp = feed.header.timestamp if feed.header.timestamp else None
+    # Per-field presence like _header_fields on the same message — an
+    # explicit timestamp=0 is captured, not NULLed (PR #94 round 14)
+    feed_timestamp = feed.header.timestamp if feed.header.HasField("timestamp") else None
     header_fields = _header_fields(feed)
 
     for entity in feed.entity:
@@ -700,7 +708,9 @@ def extract_service_alerts(
     fetch_timestamp: datetime | None,
 ) -> Iterator[dict[str, Any]]:
     """Extract service alerts from a FeedMessage (denormalized by informed_entity)."""
-    feed_timestamp = feed.header.timestamp if feed.header.timestamp else None
+    # Per-field presence like _header_fields on the same message — an
+    # explicit timestamp=0 is captured, not NULLed (PR #94 round 14)
+    feed_timestamp = feed.header.timestamp if feed.header.HasField("timestamp") else None
     header_fields = _header_fields(feed)
 
     for entity in feed.entity:

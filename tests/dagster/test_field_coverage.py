@@ -11,6 +11,12 @@ records a decision for each new field — capture it or document why not.
 The reverse direction is also pinned: every schema column must be produced
 by at least one proto field (or be pipeline-synthesized), so stale manifest
 entries and orphan columns both surface.
+
+Scope: the BASE schema only. Every GTFS-RT message also declares proto2
+extension ranges, and producer extensions (e.g. MTA-NYCT's
+nyct_subway.proto) arrive as unknown fields a descriptor walk cannot see —
+a recorded blind spot (#101), pinned by
+test_extension_ranges_are_a_recorded_blind_spot below.
 """
 
 from google.protobuf.descriptor import Descriptor, FieldDescriptor
@@ -323,6 +329,33 @@ def test_manifest_has_no_stale_entries() -> None:
 
     stale_subtrees = [p for p in DROPPED_SUBTREES if not _prefix_exists(p)]
     assert not stale_subtrees, f"dropped-subtree prefixes not in bindings: {stale_subtrees}"
+
+
+def test_extension_ranges_are_a_recorded_blind_spot() -> None:
+    """The walk iterates desc.fields, which by construction cannot see
+    proto2 extension ranges — producer extension payloads (MTA-NYCT et al.)
+    land in unknown fields and are dropped at compaction, surviving only in
+    the raw .pb archive (#101). Pin that this blind spot applies to every
+    reachable message, so the manifest's "nothing unaccounted for" claim is
+    honestly scoped to the base schema; if a bindings release ever removes
+    the extension ranges, this fails and the caveat can be retired."""
+
+    def _messages(desc: Descriptor, seen: dict[str, Descriptor]) -> None:
+        if desc.full_name in seen:
+            return
+        seen[desc.full_name] = desc
+        for field in desc.fields:
+            if field.type == FieldDescriptor.TYPE_MESSAGE:
+                _messages(field.message_type, seen)
+
+    seen: dict[str, Descriptor] = {}
+    _messages(gtfs_realtime_pb2.FeedMessage.DESCRIPTOR, seen)
+    assert len(seen) > 10, "message walk found suspiciously few types"
+    without_ranges = sorted(n for n, d in seen.items() if not d.extension_ranges)
+    assert not without_ranges, (
+        f"messages without extension ranges appeared: {without_ranges} — "
+        "revisit the #101 blind-spot caveat"
+    )
 
 
 def test_manifest_columns_exist_and_cover_schemas() -> None:

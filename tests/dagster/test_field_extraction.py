@@ -33,14 +33,90 @@ def test_bindings_expose_required_fields() -> None:
     """Drive the guard from the extractor's own REQUIRED_BINDINGS_FIELDS
     table (which compaction.py also asserts at import, so a bindings
     downgrade fails the code server at startup rather than silently writing
-    empty partitions). Iterating the shared table means this test cannot
-    drift from what the extractors actually dereference."""
+    empty partitions — the import-time call is the real net; this test
+    documents the surface)."""
     from dagster_pipeline.defs.assets.compaction import REQUIRED_BINDINGS_FIELDS
 
     for message, field in REQUIRED_BINDINGS_FIELDS:
         assert field in message.DESCRIPTOR.fields_by_name, (
             f"{message.DESCRIPTOR.full_name}.{field} missing from installed bindings"
         )
+
+
+# HasField targets present in every bindings release this code could
+# plausibly meet (spec-1.0/2.0-era fields) — deliberately NOT in
+# REQUIRED_BINDINGS_FIELDS, per its "long-stable fields" exclusion.
+# Kept disjoint from the guard: promote an entry there when in doubt.
+STABLE_HASFIELD_TARGETS = frozenset(
+    {
+        "agency_id",
+        "alert",
+        "arrival",
+        "bearing",
+        "cause",
+        "congestion_level",
+        "current_status",
+        "current_stop_sequence",
+        "delay",
+        "departure",
+        "description_text",
+        "effect",
+        "end",
+        "header_text",
+        "incrementality",
+        "is_deleted",
+        "license_plate",
+        "odometer",
+        "position",
+        "route_id",
+        "route_type",
+        "schedule_relationship",
+        "severity_level",
+        "speed",
+        "start",
+        "stop_id",
+        "stop_sequence",
+        "time",
+        "timestamp",
+        "trip",
+        "trip_update",
+        "uncertainty",
+        "url",
+        "vehicle",
+    }
+)
+
+
+def test_every_hasfield_target_is_dispositioned_for_bindings_drift() -> None:
+    """Reverse direction of the bindings guard: every HasField("...")
+    literal in compaction.py must be either in REQUIRED_BINDINGS_FIELDS
+    (import-time guard) or in STABLE_HASFIELD_TARGETS (recorded as
+    everywhere-stable). A new HasField site fails here until someone
+    decides which bucket it belongs to — previously nothing checked this
+    direction, and FeedHeader.feed_version drifted through it (PR #94
+    round 14). Matching is by field NAME: a name shared by a guarded and
+    an unguarded message is conflated — acceptable for a tripwire whose
+    job is to force the decision, not adjudicate it."""
+    from dagster_pipeline.defs.assets import compaction
+
+    source = Path(compaction.__file__).read_text()
+    literals = set(re.findall(r'\.HasField\("([a-z_]+)"\)', source))
+    assert literals, "no HasField literals found — regex broken?"
+    guarded = {field for _message, field in compaction.REQUIRED_BINDINGS_FIELDS}
+
+    unaccounted = literals - guarded - STABLE_HASFIELD_TARGETS
+    assert not unaccounted, (
+        f"HasField targets with no bindings-drift disposition: {sorted(unaccounted)} — "
+        "add to REQUIRED_BINDINGS_FIELDS (version-gated field) or "
+        "STABLE_HASFIELD_TARGETS (predates every plausible bindings release)"
+    )
+    promoted = STABLE_HASFIELD_TARGETS & guarded
+    assert not promoted, (
+        f"in both the guard and the stable allowlist — remove from the allowlist: "
+        f"{sorted(promoted)}"
+    )
+    unused = STABLE_HASFIELD_TARGETS - literals
+    assert not unused, f"stale allowlist entries with no HasField call site: {sorted(unused)}"
 
 
 def _feed() -> gtfs_realtime_pb2.FeedMessage:
@@ -342,6 +418,25 @@ def test_active_periods_json_null_when_no_periods() -> None:
     (r,) = extract_service_alerts(feed, "f.pb", "https://x", None)
     assert r["active_periods_json"] is None
     assert r["active_period_start"] is None
+
+
+def test_image_columns_come_from_same_first_localized_image() -> None:
+    """image_url and image_media_type are keep-first from the SAME
+    localized_image[0] — a first image lacking media_type yields NULL
+    media_type, never the second image's value (a first-non-null-across-
+    the-list refactor would silently mix images; PR #94 round 14)."""
+    feed = _feed()
+    entity = feed.entity.add()
+    entity.id = "a-img"
+    li = entity.alert.image.localized_image.add()
+    li.url = "https://example.com/first.png"  # media_type unset
+    li2 = entity.alert.image.localized_image.add()
+    li2.url = "https://example.com/second.png"
+    li2.media_type = "image/png"
+
+    (r,) = extract_service_alerts(feed, "f.pb", "u", None)
+    assert r["image_url"] == "https://example.com/first.png"
+    assert r["image_media_type"] is None
 
 
 def test_record_keys_match_schemas_exactly() -> None:

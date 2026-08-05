@@ -827,6 +827,11 @@ Complete-capture policy (PR #94): every leaf field of the three archived
 entity types maps to a column or carries a recorded drop reason, enforced by
 a descriptor-walk manifest test — so adding a feed never requires a field
 audit, and a bindings bump that adds fields fails CI until dispositioned.
+Scope caveat: this covers the **base schema** only. Every GTFS-RT message
+also declares proto2 extension ranges, and producer extensions (e.g.
+MTA-NYCT's `nyct_subway.proto` train/track fields) arrive as unknown fields
+that compaction drops — they survive only in the raw `.pb` archive within
+its 365-day retention (#101).
 Header/entity columns: `feed_version` (free-form producer version;
 unpopulated fleet-wide as of the 2026-08-04 census), `incrementality`
 (per-field presence — explicit FULL_DATASET reads 0, unset NULL; the
