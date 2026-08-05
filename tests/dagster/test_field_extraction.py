@@ -74,7 +74,6 @@ STABLE_HASFIELD_TARGETS = frozenset(
         "header_text",
         "incrementality",
         "is_deleted",
-        "language",
         "license_plate",
         "odometer",
         "position",
