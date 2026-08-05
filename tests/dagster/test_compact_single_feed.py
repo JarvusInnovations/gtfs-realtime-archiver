@@ -106,6 +106,22 @@ def test_decode_error_file_skipped_rest_of_partition_written(
     assert metadata.num_row_groups == 2  # one per non-empty .pb
 
 
+def test_all_files_failed_parse_fails_partition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every file failing to parse is systemic (garbage feed content or a
+    parser regression), not per-file flakiness: the partition must raise
+    dg.Failure instead of reporting a green zero-record run whose only
+    trace is metadata (PR #94 round 13). Partial failure staying per-file
+    is pinned by test_decode_error_file_skipped_rest_of_partition_written."""
+    store = {"bad1.pb": b"\x08", "bad2.pb": b"\xff\xff"}
+
+    with pytest.raises(dg.Failure, match=r"All 2 \.pb files failed to parse"):
+        _run(monkeypatch, store, ["bad1.pb", "bad2.pb"], compaction.extract_vehicle_positions)
+
+    assert not [k for k in store if k.endswith("data.parquet")]
+
+
 def test_conversion_failure_fails_partition_naming_file(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

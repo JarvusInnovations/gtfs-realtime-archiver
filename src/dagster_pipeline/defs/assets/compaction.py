@@ -1171,7 +1171,9 @@ def compact_feed_tables(
             tables) rather than shipping short. Parse failures
             (DecodeError/ValueError) are per-file: skipped with a warning
             for every table consistently, the rest of the partition still
-            writes. The contract is pinned by
+            writes — UNLESS every file failed, which is systemic and
+            fails the partition rather than reporting a green
+            zero-record run. The contract is pinned by
             tests/dagster/test_compact_single_feed.py.
     """
     # Extract partition dimensions
@@ -1309,6 +1311,19 @@ def compact_feed_tables(
                 context.log.warning(
                     f"ParquetWriter.close() failed for {table_name} after earlier error: {err}"
                 )
+
+    # EVERY file failing to parse is not per-file flakiness — it's systemic
+    # (garbage feed content archived all day, or a parser regression the
+    # import guard didn't cover) and a green zero-record run would hide it
+    # behind metadata nobody is forced to read. Partial failure stays
+    # per-file (skip + files_failed); total failure fails the partition.
+    # (PR #94 round 13.)
+    if files_failed == len(pb_files):
+        raise dg.Failure(
+            f"All {len(pb_files)} .pb files failed to parse for {feed_type} "
+            f"feed {feed_key} on {date} — systemic failure, refusing to "
+            f"report a successful zero-record run"
+        )
 
     # Upload per table; a table with zero records uploads nothing (any
     # previously-materialized parquet for the partition is left in place —
