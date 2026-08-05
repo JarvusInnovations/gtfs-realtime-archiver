@@ -262,6 +262,63 @@ def test_service_alert_new_fields_and_multi_active_period() -> None:
     assert r["image_alternative_text"] is None  # image set, alt text unset
 
 
+def test_complete_capture_fields() -> None:
+    """Round-12 complete-capture columns: header fields, is_deleted,
+    carriage JSON, communication/impact period JSON, IE trip tail."""
+    feed = _feed()
+    feed.header.feed_version = "v42"
+    feed.header.incrementality = gtfs_realtime_pb2.FeedHeader.FULL_DATASET
+    vp_entity = feed.entity.add()
+    vp_entity.id = "v1"
+    vp_entity.is_deleted = False  # explicit false, like MTA
+    vp_entity.vehicle.position.latitude = 1.5
+    vp_entity.vehicle.position.longitude = 2.5
+    carriage = vp_entity.vehicle.multi_carriage_details.add()
+    carriage.label = "Front"  # id/occupancy unset -> JSON nulls
+    carriage.carriage_sequence = 1
+    sa_entity = feed.entity.add()
+    sa_entity.id = "a1"
+    alert = sa_entity.alert
+    comm = alert.communication_period.add()
+    comm.start = 100  # open end
+    ie = alert.informed_entity.add()
+    ie.trip.trip_id = "trip-9"
+    ie.trip.start_date = "20260804"  # the MTA-populated field (census)
+
+    (vp_record, sa_record) = (
+        next(extract_vehicle_positions(feed, "f", "u", None)),
+        next(extract_service_alerts(feed, "f", "u", None)),
+    )
+    assert vp_record["feed_version"] == "v42"
+    assert vp_record["incrementality"] == 0  # explicit FULL_DATASET, not NULL
+    assert vp_record["is_deleted"] is False  # explicit false, not NULL
+    assert json.loads(vp_record["multi_carriage_details_json"]) == [
+        {
+            "id": None,
+            "label": "Front",
+            "occupancy_status": None,
+            "occupancy_percentage": None,
+            "carriage_sequence": 1,
+        }
+    ]
+    assert json.loads(sa_record["communication_periods_json"]) == [{"start": 100, "end": None}]
+    assert sa_record["impact_periods_json"] is None  # none declared
+    assert sa_record["trip_start_date"] == "20260804"
+    assert sa_record["trip_start_time"] is None
+    assert sa_record["trip_modified_trip_modifications_id"] is None
+    # Unset header/entity fields -> NULL, not defaults
+    bare_feed = _feed()
+    bare = bare_feed.entity.add()
+    bare.id = "v-bare"
+    bare.vehicle.position.latitude = 1.0
+    bare.vehicle.position.longitude = 2.0
+    (bare_record,) = extract_vehicle_positions(bare_feed, "f", "u", None)
+    assert bare_record["feed_version"] is None
+    assert bare_record["incrementality"] is None
+    assert bare_record["is_deleted"] is None
+    assert bare_record["multi_carriage_details_json"] is None
+
+
 def test_active_periods_json_single_period() -> None:
     """The overwhelmingly common one-period case emits a one-element JSON
     array — not NULL (that means zero periods) and not a bare object."""
@@ -340,9 +397,18 @@ def test_record_keys_match_schemas_exactly() -> None:
 
 def _populated_vp_feed() -> gtfs_realtime_pb2.FeedMessage:
     feed = _feed()
+    feed.header.feed_version = "producer-v1"
+    feed.header.incrementality = gtfs_realtime_pb2.FeedHeader.FULL_DATASET
     entity = feed.entity.add()
     entity.id = "v-full"
+    entity.is_deleted = False  # explicit, like MTA (census 2026-08-04)
     vp = entity.vehicle
+    carriage = vp.multi_carriage_details.add()
+    carriage.id = "car-1"
+    carriage.label = "Front"
+    carriage.occupancy_status = gtfs_realtime_pb2.VehiclePosition.FEW_SEATS_AVAILABLE
+    carriage.occupancy_percentage = 55
+    carriage.carriage_sequence = 1
     vp.trip.trip_id = "trip-1"
     vp.trip.route_id = "route-1"
     vp.trip.direction_id = 1
@@ -375,6 +441,7 @@ def _populated_vp_feed() -> gtfs_realtime_pb2.FeedMessage:
 
 
 def _populated_tu_entity(entity: gtfs_realtime_pb2.FeedEntity, with_stu: bool) -> None:
+    entity.is_deleted = False
     tu = entity.trip_update
     tu.trip.trip_id = "trip-1"
     tu.trip.route_id = "route-1"
@@ -424,9 +491,14 @@ def _populated_tu_entity(entity: gtfs_realtime_pb2.FeedEntity, with_stu: bool) -
 
 
 def _populated_sa_entity(entity: gtfs_realtime_pb2.FeedEntity, with_ie: bool) -> None:
+    entity.is_deleted = False
     alert = entity.alert
     period = alert.active_period.add()
     period.start, period.end = 1_754_000_000, 1_754_010_000
+    comm = alert.communication_period.add()
+    comm.start, comm.end = 1_753_990_000, 1_754_020_000
+    impact = alert.impact_period.add()
+    impact.start, impact.end = 1_754_000_000, 1_754_005_000
     alert.cause = gtfs_realtime_pb2.Alert.CONSTRUCTION
     alert.effect = gtfs_realtime_pb2.Alert.DETOUR
     alert.severity_level = gtfs_realtime_pb2.Alert.WARNING
@@ -450,6 +522,13 @@ def _populated_sa_entity(entity: gtfs_realtime_pb2.FeedEntity, with_ie: bool) ->
     ie.trip.trip_id = "trip-1"
     ie.trip.route_id = "route-1"
     ie.trip.direction_id = 0
+    ie.trip.start_time = "08:00:00"
+    ie.trip.start_date = "20260701"
+    ie.trip.schedule_relationship = gtfs_realtime_pb2.TripDescriptor.SCHEDULED
+    ie.trip.modified_trip.modifications_id = "mod-ie"
+    ie.trip.modified_trip.affected_trip_id = "orig-ie"
+    ie.trip.modified_trip.start_date = "20260701"
+    ie.trip.modified_trip.start_time = "08:00:00"
 
 
 def test_populated_records_have_no_nulls_and_round_trip() -> None:
@@ -471,6 +550,8 @@ def test_populated_records_have_no_nulls_and_round_trip() -> None:
     vp_records = list(extract_vehicle_positions(_populated_vp_feed(), "f", "u", ts))
 
     tu_feed = _feed()
+    tu_feed.header.feed_version = "producer-v1"
+    tu_feed.header.incrementality = gtfs_realtime_pb2.FeedHeader.FULL_DATASET
     e = tu_feed.entity.add()
     e.id = "t-full"
     _populated_tu_entity(e, with_stu=True)
@@ -480,6 +561,8 @@ def test_populated_records_have_no_nulls_and_round_trip() -> None:
     tu_records = list(extract_trip_updates(tu_feed, "f", "u", ts))
 
     sa_feed = _feed()
+    sa_feed.header.feed_version = "producer-v1"
+    sa_feed.header.incrementality = gtfs_realtime_pb2.FeedHeader.FULL_DATASET
     e = sa_feed.entity.add()
     e.id = "a-full"
     _populated_sa_entity(e, with_ie=True)
@@ -564,6 +647,7 @@ def test_bigquery_ddl_matches_schemas() -> None:
             "float": "FLOAT64",
             "double": "FLOAT64",
             "timestamp[us, tz=UTC]": "TIMESTAMP",
+            "bool": "BOOL",
         }
         bq_entries = {name: (type_, mode) for name, type_, mode in entries}
         for field in schema:

@@ -48,6 +48,14 @@ VEHICLE_POSITIONS_SCHEMA = pa.schema(
         pa.field("modified_trip_affected_trip_id", pa.string()),
         pa.field("modified_trip_start_date", pa.string()),
         pa.field("modified_trip_start_time", pa.string()),
+        # Complete-capture fields (PR #94 round 12 — nothing deferred).
+        # Repeated CarriageDetails JSON-encoded; unpopulated fleet-wide
+        # (2026-08-04 census)
+        pa.field("multi_carriage_details_json", pa.string()),
+        # Header / entity-level (all three feed types)
+        pa.field("feed_version", pa.string()),
+        pa.field("incrementality", pa.int32()),
+        pa.field("is_deleted", pa.bool_()),
     ]
 )
 
@@ -110,6 +118,10 @@ TRIP_UPDATES_SCHEMA = pa.schema(
         # VehicleDescriptor.wheelchair_accessible — same field captured in
         # vehicle_positions; kept symmetric (PR #94 review round 7)
         pa.field("wheelchair_accessible", pa.int32()),
+        # Header / entity-level (all three feed types; PR #94 round 12)
+        pa.field("feed_version", pa.string()),
+        pa.field("incrementality", pa.int32()),
+        pa.field("is_deleted", pa.bool_()),
     ]
 )
 
@@ -157,5 +169,22 @@ SERVICE_ALERTS_SCHEMA = pa.schema(
         # 172 fleet alerts carry >1 period (max 251); active_period_start/end
         # remain the first period for compatibility (#91 granularity decision)
         pa.field("active_periods_json", pa.string()),
+        # Complete-capture fields (PR #94 round 12 — nothing deferred).
+        # communication/impact periods: 2.2.0 experimental, unpopulated
+        # fleet-wide (2026-08-04 census); same JSON encoding as active_periods
+        pa.field("communication_periods_json", pa.string()),
+        pa.field("impact_periods_json", pa.string()),
+        # Informed-entity trip descriptor tail (MTA populates trip_start_date)
+        pa.field("trip_start_time", pa.string()),
+        pa.field("trip_start_date", pa.string()),
+        pa.field("trip_schedule_relationship", pa.int32()),
+        pa.field("trip_modified_trip_modifications_id", pa.string()),
+        pa.field("trip_modified_trip_affected_trip_id", pa.string()),
+        pa.field("trip_modified_trip_start_date", pa.string()),
+        pa.field("trip_modified_trip_start_time", pa.string()),
+        # Header / entity-level (all three feed types)
+        pa.field("feed_version", pa.string()),
+        pa.field("incrementality", pa.int32()),
+        pa.field("is_deleted", pa.bool_()),
     ]
 )

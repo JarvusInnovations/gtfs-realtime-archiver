@@ -734,6 +734,8 @@ Each feed type has a defined schema for consistent output:
 - `latitude`, `longitude`, `bearing`, `odometer`, `speed`
 - `current_stop_sequence`, `stop_id`, `current_status`, `timestamp`, `congestion_level`, `occupancy_status`, `occupancy_percentage`
 - Modified trip: `modified_trip_modifications_id`, `modified_trip_affected_trip_id`, `modified_trip_start_date`, `modified_trip_start_time`
+- Carriages: `multi_carriage_details_json` (repeated CarriageDetails, JSON-encoded)
+- Header/entity: `feed_version`, `incrementality`, `is_deleted`
 
 **Trip Updates:**
 
@@ -744,13 +746,16 @@ Each feed type has a defined schema for consistent output:
 - Trip properties: `trip_properties_trip_id`, `trip_properties_start_date`, `trip_properties_start_time`, `trip_properties_shape_id`, `trip_properties_trip_headsign`, `trip_properties_trip_short_name`
 - Modified trip: `modified_trip_modifications_id`, `modified_trip_affected_trip_id`, `modified_trip_start_date`, `modified_trip_start_time`
 - Stop time: `stop_sequence`, `stop_id`, `arrival_delay`, `arrival_time`, `arrival_uncertainty`, `arrival_scheduled_time`, `departure_delay`, `departure_time`, `departure_uncertainty`, `departure_scheduled_time`, `departure_occupancy_status`, `stop_schedule_relationship`, `assigned_stop_id`, `stop_headsign`, `pickup_type`, `drop_off_type`
+- Header/entity: `feed_version`, `incrementality`, `is_deleted`
 
 **Service Alerts:**
 
 - Base: `source_file`, `feed_url`, `feed_timestamp`, `fetch_timestamp`, `entity_id`
 - Alert: `cause`, `effect`, `severity_level`, `cause_detail`, `effect_detail`, `url`, `header_text`, `description_text`, `tts_header_text`, `tts_description_text`, `image_url`, `image_media_type`, `image_alternative_text`
 - Active period: `active_period_start`, `active_period_end` (first period **as published** — the spec doesn't require chronological order, so use `active_periods_json` when ordering matters), `active_periods_json` (full list)
-- Informed entity: `agency_id`, `route_id`, `route_type`, `stop_id`, `direction_id`, `trip_id`, `trip_route_id`, `trip_direction_id`
+- Informed entity: `agency_id`, `route_id`, `route_type`, `stop_id`, `direction_id`, `trip_id`, `trip_route_id`, `trip_direction_id`, `trip_start_time`, `trip_start_date`, `trip_schedule_relationship`, `trip_modified_trip_modifications_id`, `trip_modified_trip_affected_trip_id`, `trip_modified_trip_start_date`, `trip_modified_trip_start_time`
+- Communication/impact periods: `communication_periods_json`, `impact_periods_json` (same encoding and NULL semantics as `active_periods_json`)
+- Header/entity: `feed_version`, `incrementality`, `is_deleted`
 
 Translated fields store the first translation only (typically English) — a
 deliberate keep-first decision (#91). All columns added by #91 (including the
@@ -810,6 +815,26 @@ predates the convention and materializes the proto default, so unset reads
 `0` (= SCHEDULED, which is what the spec says unset means) rather than NULL.
 `pickup_type IS NULL` and `schedule_relationship = 0` therefore both encode
 "the producer did not say" — in adjacent columns of the same row.
+
+Complete-capture policy (PR #94): every leaf field of the three archived
+entity types maps to a column or carries a recorded drop reason, enforced by
+a descriptor-walk manifest test — so adding a feed never requires a field
+audit, and a bindings bump that adds fields fails CI until dispositioned.
+Header/entity columns: `feed_version` (free-form producer version;
+unpopulated fleet-wide as of the 2026-08-04 census), `incrementality`
+(per-field presence — explicit FULL_DATASET reads 0, unset NULL; the
+extractors assume FULL_DATASET semantics, so a non-zero value here is the
+signal that a DIFFERENTIAL feed appeared), and `is_deleted` (captured on
+payload-bearing entities — MTA sets it explicitly false; bare deletion
+tombstones carry no payload and yield no row, which only matters for
+DIFFERENTIAL feeds). Repeated messages ride as JSON columns:
+`multi_carriage_details_json`, `communication_periods_json`,
+`impact_periods_json` (both period columns share `active_periods_json`'s
+encoding, NULL semantics, and query recipe). Feeds can also carry entity
+types outside these three tables entirely — the 2026-08-04 census found
+Madison Metro and Big Blue Bus publishing `shape`, `stop`, and
+`trip_modifications` entities, which compaction skips; capturing them means
+new tables (tracked on #91).
 
 `active_periods_json` is NULL when an alert declares no active periods
 (spec: always active); `"[]"` is never emitted. It is a STRING column

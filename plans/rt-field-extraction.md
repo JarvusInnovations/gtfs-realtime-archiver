@@ -178,8 +178,8 @@ nullable everywhere).
   service_alerts now 29 columns); (2) **field-coverage manifest test**
   (`tests/dagster/test_field_coverage.py`) walks the installed bindings'
   descriptor tree from FeedMessage down and requires every reachable leaf
-  field (105 today, plus 7 dropped subtrees = 112 dispositions) to have an
-  explicit disposition — captured to named
+  field (as of round 11: 105 leaves + 7 dropped subtrees; round 12 grew it
+  to 118 leaves + 3 subtrees) to have an explicit disposition — captured to named
   columns or dropped for a recorded reason — so a future bindings bump
   fails CI until each new field gets a decision; the walk immediately
   surfaced `Alert.communication_period` / `Alert.impact_period`
@@ -189,10 +189,27 @@ nullable everywhere).
   output/metadata so wholesale extraction failure (all files unparseable,
   green run, zero records) is queryable and alertable instead of log-only
   (#92's recording direction).
-- **Additional deferral**: `FeedHeader.incrementality` stays uncaptured (all
-  three extractors implicitly treat feeds as FULL_DATASET). DIFFERENTIAL
-  publishers are vanishingly rare and none exist in the fleet; recorded on
-  #91 with the other deferrals.
+- **Post-review amendments (round 12 — user decision: NOTHING deferred,
+  2026-08-05)**: the user overturned the remaining field deferrals —
+  always-null columns are cheaper than requiring a field audit every time a
+  feed is added. A fresh fleet census (568 files, all feeds, 2026-08-04) ran
+  first; capture landed regardless of its results. Added: `feed_version`,
+  `incrementality`, `is_deleted` (all three tables — census: MTA sets
+  is_deleted explicitly on payload-bearing entities; incrementality is
+  explicitly FULL_DATASET in 480/568 files, zero DIFFERENTIAL);
+  `multi_carriage_details_json` (VP; census: unpopulated);
+  `communication_periods_json` / `impact_periods_json` (SA; census:
+  unpopulated); the informed-entity trip tail `trip_start_time` /
+  `trip_start_date` / `trip_schedule_relationship` /
+  `trip_modified_trip_*` ×4 (SA; census: **MTA populates trip_start_date**).
+  This supersedes the earlier `FeedHeader.incrementality` and
+  `multi_carriage_details` deferrals, and round 11's communication/impact
+  period and IE-trip-tail drops. Final columns **35/46/41**. The
+  earlier "Out of scope" bullet on multi_carriage_details is amended by
+  this note. **Census discovery beyond fields**: Madison Metro and Big Blue
+  Bus publish `shape`, `stop`, and `trip_modifications` ENTITIES (316/90/312
+  in sample) that compaction skips entirely — new-table work, surfaced on
+  #91; the manifest test records the drop with census evidence.
 
 ## Follow-ups
 

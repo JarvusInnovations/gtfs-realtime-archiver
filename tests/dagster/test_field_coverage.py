@@ -34,21 +34,14 @@ SYNTHESIZED_COLUMNS = {"source_file", "feed_url", "fetch_timestamp"}
 # Whole subtrees dropped as a unit; the walk does not descend into them.
 # Every entry must name a reason (and an issue where a decision is pending).
 DROPPED_SUBTREES: dict[str, str] = {
-    "entity.shape": "separate feed type, not archived (GTFS-RT Shape entities)",
-    "entity.stop": "separate feed type, not archived (GTFS-RT Stop entities)",
-    "entity.trip_modifications": "separate feed type, not archived (TripModifications)",
-    "entity.vehicle.multi_carriage_details": (
-        "repeated message, zero fleet publishers; granularity decision deferred to #91"
-    ),
-    "entity.alert.communication_period": (
-        "experimental 2.2.0 repeated TimeRange; census + capture decision on #91"
-    ),
-    "entity.alert.impact_period": (
-        "experimental 2.2.0 repeated TimeRange; census + capture decision on #91"
-    ),
-    "entity.alert.informed_entity.trip.modified_trip": (
-        "EntitySelector trip descriptors carry trip_id/route_id/direction_id in "
-        "practice; capture with the rest of the IE trip tail if a publisher appears (#91)"
+    # NOT field drops — whole entity types outside the three archived tables.
+    # The 2026-08-04 census found Madison Metro and Big Blue Bus already
+    # publishing these (shape 316 / trip_modifications 312 / stop 90 entities
+    # in a 568-file sample); capturing them means new tables, tracked on #91.
+    "entity.shape": "entity type outside the three archived tables (census: PUBLISHED; #91)",
+    "entity.stop": "entity type outside the three archived tables (census: PUBLISHED; #91)",
+    "entity.trip_modifications": (
+        "entity type outside the three archived tables (census: PUBLISHED; #91)"
     ),
 }
 
@@ -59,22 +52,36 @@ Disposition = list[str] | str
 MANIFEST: dict[str, Disposition] = {
     # ---- FeedHeader ----
     "header.gtfs_realtime_version": "DROP: spec version constant, no analytic value",
-    "header.incrementality": (
-        "DROP: extractors assume FULL_DATASET; DIFFERENTIAL unsupported, recorded on #91"
-    ),
+    "header.incrementality": [
+        "vehicle_positions.incrementality",
+        "trip_updates.incrementality",
+        "service_alerts.incrementality",
+    ],
     "header.timestamp": [
         "vehicle_positions.feed_timestamp",
         "trip_updates.feed_timestamp",
         "service_alerts.feed_timestamp",
     ],
-    "header.feed_version": "DROP: free-form producer version string; not in #91 census",
+    "header.feed_version": [
+        "vehicle_positions.feed_version",
+        "trip_updates.feed_version",
+        "service_alerts.feed_version",
+    ],
     # ---- FeedEntity ----
     "entity.id": [
         "vehicle_positions.entity_id",
         "trip_updates.entity_id",
         "service_alerts.entity_id",
     ],
-    "entity.is_deleted": "DROP: meaningful only in DIFFERENTIAL feeds (see header.incrementality)",
+    # Captured on payload-bearing entities (MTA sets it explicitly, census
+    # 2026-08-04); bare deletion tombstones (id + is_deleted, no payload) are
+    # still skipped — that is DIFFERENTIAL row-shape support, and the
+    # incrementality column makes any DIFFERENTIAL feed visible in data.
+    "entity.is_deleted": [
+        "vehicle_positions.is_deleted",
+        "trip_updates.is_deleted",
+        "service_alerts.is_deleted",
+    ],
     # ---- VehiclePosition ----
     "entity.vehicle.trip.trip_id": ["vehicle_positions.trip_id"],
     "entity.vehicle.trip.route_id": ["vehicle_positions.route_id"],
@@ -106,6 +113,19 @@ MANIFEST: dict[str, Disposition] = {
     "entity.vehicle.congestion_level": ["vehicle_positions.congestion_level"],
     "entity.vehicle.occupancy_status": ["vehicle_positions.occupancy_status"],
     "entity.vehicle.occupancy_percentage": ["vehicle_positions.occupancy_percentage"],
+    "entity.vehicle.multi_carriage_details.id": ["vehicle_positions.multi_carriage_details_json"],
+    "entity.vehicle.multi_carriage_details.label": [
+        "vehicle_positions.multi_carriage_details_json"
+    ],
+    "entity.vehicle.multi_carriage_details.occupancy_status": [
+        "vehicle_positions.multi_carriage_details_json"
+    ],
+    "entity.vehicle.multi_carriage_details.occupancy_percentage": [
+        "vehicle_positions.multi_carriage_details_json"
+    ],
+    "entity.vehicle.multi_carriage_details.carriage_sequence": [
+        "vehicle_positions.multi_carriage_details_json"
+    ],
     # ---- TripUpdate ----
     "entity.trip_update.trip.trip_id": ["trip_updates.trip_id"],
     "entity.trip_update.trip.route_id": ["trip_updates.route_id"],
@@ -180,6 +200,10 @@ MANIFEST: dict[str, Disposition] = {
         "service_alerts.active_period_end",
         "service_alerts.active_periods_json",
     ],
+    "entity.alert.communication_period.start": ["service_alerts.communication_periods_json"],
+    "entity.alert.communication_period.end": ["service_alerts.communication_periods_json"],
+    "entity.alert.impact_period.start": ["service_alerts.impact_periods_json"],
+    "entity.alert.impact_period.end": ["service_alerts.impact_periods_json"],
     "entity.alert.informed_entity.agency_id": ["service_alerts.agency_id"],
     "entity.alert.informed_entity.route_id": ["service_alerts.route_id"],
     "entity.alert.informed_entity.route_type": ["service_alerts.route_type"],
@@ -188,15 +212,23 @@ MANIFEST: dict[str, Disposition] = {
     "entity.alert.informed_entity.trip.trip_id": ["service_alerts.trip_id"],
     "entity.alert.informed_entity.trip.route_id": ["service_alerts.trip_route_id"],
     "entity.alert.informed_entity.trip.direction_id": ["service_alerts.trip_direction_id"],
-    "entity.alert.informed_entity.trip.start_time": (
-        "DROP: IE trip descriptor tail unused by fleet; capture on publisher evidence (#91)"
-    ),
-    "entity.alert.informed_entity.trip.start_date": (
-        "DROP: IE trip descriptor tail unused by fleet; capture on publisher evidence (#91)"
-    ),
-    "entity.alert.informed_entity.trip.schedule_relationship": (
-        "DROP: IE trip descriptor tail unused by fleet; capture on publisher evidence (#91)"
-    ),
+    "entity.alert.informed_entity.trip.start_time": ["service_alerts.trip_start_time"],
+    "entity.alert.informed_entity.trip.start_date": ["service_alerts.trip_start_date"],
+    "entity.alert.informed_entity.trip.schedule_relationship": [
+        "service_alerts.trip_schedule_relationship"
+    ],
+    "entity.alert.informed_entity.trip.modified_trip.modifications_id": [
+        "service_alerts.trip_modified_trip_modifications_id"
+    ],
+    "entity.alert.informed_entity.trip.modified_trip.affected_trip_id": [
+        "service_alerts.trip_modified_trip_affected_trip_id"
+    ],
+    "entity.alert.informed_entity.trip.modified_trip.start_date": [
+        "service_alerts.trip_modified_trip_start_date"
+    ],
+    "entity.alert.informed_entity.trip.modified_trip.start_time": [
+        "service_alerts.trip_modified_trip_start_time"
+    ],
     "entity.alert.cause": ["service_alerts.cause"],
     "entity.alert.effect": ["service_alerts.effect"],
     "entity.alert.severity_level": ["service_alerts.severity_level"],

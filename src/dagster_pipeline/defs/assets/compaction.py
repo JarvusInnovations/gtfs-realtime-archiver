@@ -83,6 +83,8 @@ try:
         (gtfs_realtime_pb2.Alert, "effect_detail"),
         (gtfs_realtime_pb2.Alert, "tts_header_text"),
         (gtfs_realtime_pb2.Alert, "tts_description_text"),
+        (gtfs_realtime_pb2.Alert, "communication_period"),
+        (gtfs_realtime_pb2.Alert, "impact_period"),
         (gtfs_realtime_pb2.Alert, "image"),
         (gtfs_realtime_pb2.TranslatedImage, "localized_image"),
         (gtfs_realtime_pb2.TranslatedImage.LocalizedImage, "media_type"),
@@ -240,6 +242,7 @@ def extract_vehicle_positions(
 ) -> Iterator[dict[str, Any]]:
     """Extract vehicle positions from a FeedMessage."""
     feed_timestamp = feed.header.timestamp if feed.header.timestamp else None
+    header_fields = _header_fields(feed)
 
     for entity in feed.entity:
         if entity.HasField("vehicle"):
@@ -338,6 +341,12 @@ def extract_vehicle_positions(
                     if vp.trip.modified_trip.HasField("start_time")
                     else None
                 ),
+                # Repeated CarriageDetails, JSON-encoded (unpopulated
+                # fleet-wide as of the 2026-08-04 census — day-one capture)
+                "multi_carriage_details_json": _carriages_json(vp.multi_carriage_details),
+                # Header / entity-level fields (all three feed types)
+                **header_fields,
+                "is_deleted": entity.is_deleted if entity.HasField("is_deleted") else None,
             }
 
 
@@ -375,6 +384,13 @@ INFORMED_ENTITY_KEYS = (
     "trip_route_id",
     "trip_direction_id",
     "direction_id",
+    "trip_start_time",
+    "trip_start_date",
+    "trip_schedule_relationship",
+    "trip_modified_trip_modifications_id",
+    "trip_modified_trip_affected_trip_id",
+    "trip_modified_trip_start_date",
+    "trip_modified_trip_start_time",
 )
 
 # Frozen sets for the fallback-branch disjointness asserts (a base-record
@@ -393,6 +409,7 @@ def extract_trip_updates(
 ) -> Iterator[dict[str, Any]]:
     """Extract trip updates from a FeedMessage (denormalized by stop_time_update)."""
     feed_timestamp = feed.header.timestamp if feed.header.timestamp else None
+    header_fields = _header_fields(feed)
 
     for entity in feed.entity:
         if entity.HasField("trip_update"):
@@ -494,6 +511,9 @@ def extract_trip_updates(
                     if tu.vehicle.HasField("wheelchair_accessible")
                     else None
                 ),
+                # Header / entity-level fields (all three feed types)
+                **header_fields,
+                "is_deleted": entity.is_deleted if entity.HasField("is_deleted") else None,
             }
 
             # Denormalize: one row per stop_time_update
@@ -601,6 +621,62 @@ def extract_trip_updates(
                 yield record
 
 
+def _periods_json(periods: Any) -> str | None:
+    """JSON-encode a repeated TimeRange ([{start, end}, ...]); NULL when the
+    list is empty — deliberately distinct from "[]", which is never emitted.
+    Compact separators: the string replicates onto every denormalized row."""
+    if not periods:
+        return None
+    return json.dumps(
+        [
+            {
+                "start": p.start if p.HasField("start") else None,
+                "end": p.end if p.HasField("end") else None,
+            }
+            for p in periods
+        ],
+        separators=(",", ":"),
+    )
+
+
+def _carriages_json(carriages: Any) -> str | None:
+    """JSON-encode repeated CarriageDetails; NULL when the list is empty.
+    Per-field presence inside each carriage (unset -> JSON null)."""
+    if not carriages:
+        return None
+    return json.dumps(
+        [
+            {
+                "id": c.id if c.HasField("id") else None,
+                "label": c.label if c.HasField("label") else None,
+                "occupancy_status": (
+                    c.occupancy_status if c.HasField("occupancy_status") else None
+                ),
+                "occupancy_percentage": (
+                    c.occupancy_percentage if c.HasField("occupancy_percentage") else None
+                ),
+                "carriage_sequence": (
+                    c.carriage_sequence if c.HasField("carriage_sequence") else None
+                ),
+            }
+            for c in carriages
+        ],
+        separators=(",", ":"),
+    )
+
+
+def _header_fields(feed: gtfs_realtime_pb2.FeedMessage) -> dict[str, Any]:
+    """Header-level columns shared by all three feed types. incrementality
+    uses per-field presence: an explicit FULL_DATASET (0) is captured as 0,
+    unset is NULL — and a DIFFERENTIAL publisher becomes visible in data
+    (the extractors otherwise assume FULL_DATASET)."""
+    header = feed.header
+    return {
+        "feed_version": header.feed_version if header.HasField("feed_version") else None,
+        "incrementality": header.incrementality if header.HasField("incrementality") else None,
+    }
+
+
 def _get_text(translated_string: gtfs_realtime_pb2.TranslatedString) -> str | None:
     """First translation of a TranslatedString (typically English) — the
     keep-first convention documented in DESIGN.md."""
@@ -617,6 +693,7 @@ def extract_service_alerts(
 ) -> Iterator[dict[str, Any]]:
     """Extract service alerts from a FeedMessage (denormalized by informed_entity)."""
     feed_timestamp = feed.header.timestamp if feed.header.timestamp else None
+    header_fields = _header_fields(feed)
 
     for entity in feed.entity:
         if entity.HasField("alert"):
@@ -628,25 +705,13 @@ def extract_service_alerts(
             # for all of them (#91).
             active_start = None
             active_end = None
-            active_periods_json = None
             if alert.active_period:
                 ap = alert.active_period[0]
                 active_start = ap.start if ap.HasField("start") else None
                 active_end = ap.end if ap.HasField("end") else None
-                # NULL means "no active periods declared" (spec: alert is
-                # always active) — deliberately distinct from "[]", which is
-                # never emitted. Compact separators: the string replicates
-                # onto every informed-entity row.
-                active_periods_json = json.dumps(
-                    [
-                        {
-                            "start": p.start if p.HasField("start") else None,
-                            "end": p.end if p.HasField("end") else None,
-                        }
-                        for p in alert.active_period
-                    ],
-                    separators=(",", ":"),
-                )
+            active_periods_json = _periods_json(alert.active_period)
+            communication_periods_json = _periods_json(alert.communication_period)
+            impact_periods_json = _periods_json(alert.impact_period)
 
             header_text = _get_text(alert.header_text) if alert.HasField("header_text") else None
             description_text = (
@@ -714,6 +779,13 @@ def extract_service_alerts(
                 "image_url": image_url,
                 "image_media_type": image_media_type,
                 "image_alternative_text": image_alternative_text,
+                # Communication/impact periods (2.2.0 experimental; unpopulated
+                # fleet-wide as of the 2026-08-04 census — day-one capture)
+                "communication_periods_json": communication_periods_json,
+                "impact_periods_json": impact_periods_json,
+                # Header / entity-level fields (all three feed types)
+                **header_fields,
+                "is_deleted": entity.is_deleted if entity.HasField("is_deleted") else None,
             }
 
             # Denormalize: one row per informed_entity
@@ -735,6 +807,43 @@ def extract_service_alerts(
                             ),
                             "direction_id": (
                                 ie.direction_id if ie.HasField("direction_id") else None
+                            ),
+                            # IE trip descriptor tail (MTA populates start_date
+                            # — 2026-08-04 census)
+                            "trip_start_time": (
+                                ie.trip.start_time
+                                if ie.HasField("trip") and ie.trip.HasField("start_time")
+                                else None
+                            ),
+                            "trip_start_date": (
+                                ie.trip.start_date
+                                if ie.HasField("trip") and ie.trip.HasField("start_date")
+                                else None
+                            ),
+                            "trip_schedule_relationship": (
+                                ie.trip.schedule_relationship
+                                if ie.HasField("trip") and ie.trip.HasField("schedule_relationship")
+                                else None
+                            ),
+                            "trip_modified_trip_modifications_id": (
+                                ie.trip.modified_trip.modifications_id
+                                if ie.trip.modified_trip.HasField("modifications_id")
+                                else None
+                            ),
+                            "trip_modified_trip_affected_trip_id": (
+                                ie.trip.modified_trip.affected_trip_id
+                                if ie.trip.modified_trip.HasField("affected_trip_id")
+                                else None
+                            ),
+                            "trip_modified_trip_start_date": (
+                                ie.trip.modified_trip.start_date
+                                if ie.trip.modified_trip.HasField("start_date")
+                                else None
+                            ),
+                            "trip_modified_trip_start_time": (
+                                ie.trip.modified_trip.start_time
+                                if ie.trip.modified_trip.HasField("start_time")
+                                else None
                             ),
                         }
                     )

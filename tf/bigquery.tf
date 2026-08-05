@@ -67,6 +67,10 @@ resource "google_bigquery_table" "vehicle_positions" {
     { name = "modified_trip_affected_trip_id", type = "STRING", mode = "NULLABLE" },
     { name = "modified_trip_start_date", type = "STRING", mode = "NULLABLE" },
     { name = "modified_trip_start_time", type = "STRING", mode = "NULLABLE" },
+    { name = "multi_carriage_details_json", type = "STRING", mode = "NULLABLE" },
+    { name = "feed_version", type = "STRING", mode = "NULLABLE" },
+    { name = "incrementality", type = "INT64", mode = "NULLABLE" },
+    { name = "is_deleted", type = "BOOL", mode = "NULLABLE" },
   ])
 }
 
@@ -135,6 +139,9 @@ resource "google_bigquery_table" "trip_updates" {
     { name = "modified_trip_start_date", type = "STRING", mode = "NULLABLE" },
     { name = "modified_trip_start_time", type = "STRING", mode = "NULLABLE" },
     { name = "wheelchair_accessible", type = "INT64", mode = "NULLABLE" },
+    { name = "feed_version", type = "STRING", mode = "NULLABLE" },
+    { name = "incrementality", type = "INT64", mode = "NULLABLE" },
+    { name = "is_deleted", type = "BOOL", mode = "NULLABLE" },
   ])
 }
 
@@ -189,6 +196,18 @@ resource "google_bigquery_table" "service_alerts" {
     { name = "image_media_type", type = "STRING", mode = "NULLABLE" },
     { name = "image_alternative_text", type = "STRING", mode = "NULLABLE" },
     { name = "active_periods_json", type = "STRING", mode = "NULLABLE" },
+    { name = "communication_periods_json", type = "STRING", mode = "NULLABLE" },
+    { name = "impact_periods_json", type = "STRING", mode = "NULLABLE" },
+    { name = "trip_start_time", type = "STRING", mode = "NULLABLE" },
+    { name = "trip_start_date", type = "STRING", mode = "NULLABLE" },
+    { name = "trip_schedule_relationship", type = "INT64", mode = "NULLABLE" },
+    { name = "trip_modified_trip_modifications_id", type = "STRING", mode = "NULLABLE" },
+    { name = "trip_modified_trip_affected_trip_id", type = "STRING", mode = "NULLABLE" },
+    { name = "trip_modified_trip_start_date", type = "STRING", mode = "NULLABLE" },
+    { name = "trip_modified_trip_start_time", type = "STRING", mode = "NULLABLE" },
+    { name = "feed_version", type = "STRING", mode = "NULLABLE" },
+    { name = "incrementality", type = "INT64", mode = "NULLABLE" },
+    { name = "is_deleted", type = "BOOL", mode = "NULLABLE" },
   ])
 }
 
