@@ -21,9 +21,16 @@ class BucketScanResult:
         self.schedule_metadata: list[dict[str, str]] = []  # [{path, base64url, feed_digest}]
 
 
-# RT pattern: {feed_type}/date={YYYY-MM-DD}/base64url={encoded}/data.parquet
+# RT pattern: {feed_type}/date={YYYY-MM-DD}/base64url={encoded}/data.parquet.
+# Feed-type prefixes are an explicit allowlist of the PRIMARY per-feed
+# tables: the inventory aggregates by base64url alone, and the entity-grain
+# tables (trip_modifications/shapes/stops, #95-#97) share base64urls with
+# trip_updates feeds — an open [^/]+ match would silently sum their rows
+# into the feeds' trip_updates counts. Surfacing the derived tables in the
+# inventory is follow-up work, not an accident of the scan regex.
 _RT_PATTERN = re.compile(
-    r"^(?P<feed_type>[^/]+)/date=(?P<date>\d{4}-\d{2}-\d{2})/base64url=(?P<base64url>[A-Za-z0-9_-]+)/data\.parquet$"
+    r"^(?P<feed_type>vehicle_positions|trip_updates|service_alerts)"
+    r"/date=(?P<date>\d{4}-\d{2}-\d{2})/base64url=(?P<base64url>[A-Za-z0-9_-]+)/data\.parquet$"
 )
 
 # Schedule pattern: schedules/base64url={encoded}/_feed_digest={hash}/metadata.json
