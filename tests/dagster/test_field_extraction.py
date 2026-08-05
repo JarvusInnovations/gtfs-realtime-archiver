@@ -53,6 +53,9 @@ def test_bindings_expose_required_fields() -> None:
 # plausibly meet (spec-1.0/2.0-era fields) — deliberately NOT in
 # REQUIRED_BINDINGS_FIELDS, per its "long-stable fields" exclusion.
 # Kept disjoint from the guard: promote an entry there when in doubt.
+# Name-level conflation cuts both ways: once ANY message promotes a name
+# into the guard (e.g. Stop.stop_id, 2.2-gated), the name leaves this list
+# even though ancient same-named fields (VehiclePosition.stop_id) exist.
 STABLE_HASFIELD_TARGETS = frozenset(
     {
         "agency_id",
@@ -71,6 +74,7 @@ STABLE_HASFIELD_TARGETS = frozenset(
         "header_text",
         "incrementality",
         "is_deleted",
+        "language",
         "license_plate",
         "odometer",
         "position",
@@ -80,8 +84,6 @@ STABLE_HASFIELD_TARGETS = frozenset(
         "severity_level",
         "speed",
         "start",
-        "stop_id",
-        "stop_sequence",
         "time",
         "timestamp",
         "trip",

@@ -843,7 +843,7 @@ def extract_trip_modifications(
     is a downstream transform concern (DESIGN.md grain-decision entry).
     entity_id is the join target of the trip_updates/vehicle_positions
     modified_trip_modifications_id columns."""
-    feed_timestamp = feed.header.timestamp if feed.header.timestamp else None
+    feed_timestamp = feed.header.timestamp if feed.header.HasField("timestamp") else None
     header_fields = _header_fields(feed)
 
     for entity in feed.entity:
@@ -876,7 +876,7 @@ def extract_shapes(
     """Extract shape entities (#96) — detour replacement geometry. One row
     per entity per snapshot; identical polylines repeat across a detour's
     lifetime, dedup belongs at query time."""
-    feed_timestamp = feed.header.timestamp if feed.header.timestamp else None
+    feed_timestamp = feed.header.timestamp if feed.header.HasField("timestamp") else None
     header_fields = _header_fields(feed)
 
     for entity in feed.entity:
@@ -910,7 +910,7 @@ def extract_stops(
     for detours, possibly absent from static GTFS. Per-field presence for
     scalars; the six TranslatedString fields are captured full-fidelity as
     translations JSON (no keep-first selection baked in — #98)."""
-    feed_timestamp = feed.header.timestamp if feed.header.timestamp else None
+    feed_timestamp = feed.header.timestamp if feed.header.HasField("timestamp") else None
     header_fields = _header_fields(feed)
 
     for entity in feed.entity:
