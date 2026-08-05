@@ -99,6 +99,7 @@ try:
         (gtfs_realtime_pb2.Alert, "impact_period"),
         (gtfs_realtime_pb2.Alert, "image"),
         (gtfs_realtime_pb2.TranslatedImage, "localized_image"),
+        (gtfs_realtime_pb2.TranslatedImage.LocalizedImage, "url"),
         (gtfs_realtime_pb2.TranslatedImage.LocalizedImage, "media_type"),
         (gtfs_realtime_pb2.Alert, "image_alternative_text"),
         (gtfs_realtime_pb2.EntitySelector, "direction_id"),
@@ -407,13 +408,6 @@ INFORMED_ENTITY_KEYS = (
     "trip_modified_trip_start_time",
 )
 
-# Frozen sets for the fallback-branch disjointness asserts (a base-record
-# key landing in one of the tuples would be silently NULLed on fallback
-# rows while key-parity still passes). Precomputed so the per-row assert
-# costs one set intersection, not a set build.
-_STOP_TIME_UPDATE_KEY_SET = frozenset(STOP_TIME_UPDATE_KEYS)
-_INFORMED_ENTITY_KEY_SET = frozenset(INFORMED_ENTITY_KEYS)
-
 
 def extract_trip_updates(
     feed: gtfs_realtime_pb2.FeedMessage,
@@ -626,13 +620,12 @@ def extract_trip_updates(
                     yield record
             else:
                 # Trip update with no stop time updates - still yield the base record.
-                # A base-record key landing in STOP_TIME_UPDATE_KEYS would be
-                # silently NULLed here while the key-parity test still passes.
+                # A base-record key colliding with STOP_TIME_UPDATE_KEYS would
+                # be silently NULLed here while key-parity still passes — that
+                # static invariant is pinned by the fallback-row assertions in
+                # test_populated_records_have_no_nulls_and_round_trip (which,
+                # unlike an inline assert, survive python -O).
                 record = base_record.copy()
-                assert not record.keys() & _STOP_TIME_UPDATE_KEY_SET, (
-                    f"base-record keys collide with STOP_TIME_UPDATE_KEYS: "
-                    f"{record.keys() & _STOP_TIME_UPDATE_KEY_SET}"
-                )
                 record.update(dict.fromkeys(STOP_TIME_UPDATE_KEYS))
                 yield record
 
@@ -868,13 +861,12 @@ def extract_service_alerts(
                     yield record
             else:
                 # Alert with no informed entities - still yield the base record.
-                # A base-record key landing in INFORMED_ENTITY_KEYS would be
-                # silently NULLed here while the key-parity test still passes.
+                # A base-record key colliding with INFORMED_ENTITY_KEYS would
+                # be silently NULLed here while key-parity still passes — that
+                # static invariant is pinned by the fallback-row assertions in
+                # test_populated_records_have_no_nulls_and_round_trip (which,
+                # unlike an inline assert, survive python -O).
                 record = base_record.copy()
-                assert not record.keys() & _INFORMED_ENTITY_KEY_SET, (
-                    f"base-record keys collide with INFORMED_ENTITY_KEYS: "
-                    f"{record.keys() & _INFORMED_ENTITY_KEY_SET}"
-                )
                 record.update(dict.fromkeys(INFORMED_ENTITY_KEYS))
                 yield record
 

@@ -81,7 +81,6 @@ STABLE_HASFIELD_TARGETS = frozenset(
         "trip",
         "trip_update",
         "uncertainty",
-        "url",
         "vehicle",
     }
 )
@@ -738,6 +737,11 @@ def test_bigquery_ddl_matches_schemas() -> None:
             "int32": "INT64",
             "int64": "INT64",
             "uint32": "INT64",
+            # BigQuery's DEFAULT Parquet conversion for UINT_64 is NUMERIC,
+            # but with autodetect=false the explicit INT64 declaration wins —
+            # verified empirically 2026-08-05 (live query over feed_timestamp/
+            # active_period_start on gtfs_rt.service_alerts read clean; epoch
+            # values sit far below the int64 boundary)
             "uint64": "INT64",
             "float": "FLOAT64",
             "double": "FLOAT64",
