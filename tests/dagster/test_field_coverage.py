@@ -251,43 +251,72 @@ MANIFEST: dict[str, Disposition] = {
     "entity.alert.cause": ["service_alerts.cause"],
     "entity.alert.effect": ["service_alerts.effect"],
     "entity.alert.severity_level": ["service_alerts.severity_level"],
-    "entity.alert.url.translation.text": ["service_alerts.url"],
-    "entity.alert.url.translation.language": "DROP: keep-first translation (#91 decision; multi-language capture: #98)",
-    "entity.alert.header_text.translation.text": ["service_alerts.header_text"],
-    "entity.alert.header_text.translation.language": (
-        "DROP: keep-first translation (#91 decision; multi-language capture: #98)"
-    ),
-    "entity.alert.description_text.translation.text": ["service_alerts.description_text"],
-    "entity.alert.description_text.translation.language": (
-        "DROP: keep-first translation (#91 decision; multi-language capture: #98)"
-    ),
-    "entity.alert.tts_header_text.translation.text": ["service_alerts.tts_header_text"],
-    "entity.alert.tts_header_text.translation.language": (
-        "DROP: keep-first translation (#91 decision; multi-language capture: #98)"
-    ),
-    "entity.alert.tts_description_text.translation.text": ["service_alerts.tts_description_text"],
-    "entity.alert.tts_description_text.translation.language": (
-        "DROP: keep-first translation (#91 decision; multi-language capture: #98)"
-    ),
-    "entity.alert.cause_detail.translation.text": ["service_alerts.cause_detail"],
-    "entity.alert.cause_detail.translation.language": (
-        "DROP: keep-first translation (#91 decision; multi-language capture: #98)"
-    ),
-    "entity.alert.effect_detail.translation.text": ["service_alerts.effect_detail"],
-    "entity.alert.effect_detail.translation.language": (
-        "DROP: keep-first translation (#91 decision; multi-language capture: #98)"
-    ),
-    "entity.alert.image.localized_image.url": ["service_alerts.image_url"],
-    "entity.alert.image.localized_image.media_type": ["service_alerts.image_media_type"],
-    "entity.alert.image.localized_image.language": (
-        "DROP: keep-first localized image (#91 decision; multi-language capture: #98)"
-    ),
-    "entity.alert.image_alternative_text.translation.text": [
-        "service_alerts.image_alternative_text"
+    # Translated fields (#98 option c): .text feeds the keep-first compat
+    # column AND the full-fidelity translations JSON; .language is captured
+    # in the JSON (the pre-#98 keep-first DROPs are gone).
+    "entity.alert.url.translation.text": [
+        "service_alerts.url",
+        "service_alerts.url_translations_json",
     ],
-    "entity.alert.image_alternative_text.translation.language": (
-        "DROP: keep-first translation (#91 decision; multi-language capture: #98)"
-    ),
+    "entity.alert.url.translation.language": ["service_alerts.url_translations_json"],
+    "entity.alert.header_text.translation.text": [
+        "service_alerts.header_text",
+        "service_alerts.header_text_translations_json",
+    ],
+    "entity.alert.header_text.translation.language": [
+        "service_alerts.header_text_translations_json"
+    ],
+    "entity.alert.description_text.translation.text": [
+        "service_alerts.description_text",
+        "service_alerts.description_text_translations_json",
+    ],
+    "entity.alert.description_text.translation.language": [
+        "service_alerts.description_text_translations_json"
+    ],
+    "entity.alert.tts_header_text.translation.text": [
+        "service_alerts.tts_header_text",
+        "service_alerts.tts_header_text_translations_json",
+    ],
+    "entity.alert.tts_header_text.translation.language": [
+        "service_alerts.tts_header_text_translations_json"
+    ],
+    "entity.alert.tts_description_text.translation.text": [
+        "service_alerts.tts_description_text",
+        "service_alerts.tts_description_text_translations_json",
+    ],
+    "entity.alert.tts_description_text.translation.language": [
+        "service_alerts.tts_description_text_translations_json"
+    ],
+    "entity.alert.cause_detail.translation.text": [
+        "service_alerts.cause_detail",
+        "service_alerts.cause_detail_translations_json",
+    ],
+    "entity.alert.cause_detail.translation.language": [
+        "service_alerts.cause_detail_translations_json"
+    ],
+    "entity.alert.effect_detail.translation.text": [
+        "service_alerts.effect_detail",
+        "service_alerts.effect_detail_translations_json",
+    ],
+    "entity.alert.effect_detail.translation.language": [
+        "service_alerts.effect_detail_translations_json"
+    ],
+    "entity.alert.image.localized_image.url": [
+        "service_alerts.image_url",
+        "service_alerts.image_localized_images_json",
+    ],
+    "entity.alert.image.localized_image.media_type": [
+        "service_alerts.image_media_type",
+        "service_alerts.image_localized_images_json",
+    ],
+    "entity.alert.image.localized_image.language": ["service_alerts.image_localized_images_json"],
+    "entity.alert.image_alternative_text.translation.text": [
+        "service_alerts.image_alternative_text",
+        "service_alerts.image_alternative_text_translations_json",
+    ],
+    "entity.alert.image_alternative_text.translation.language": [
+        "service_alerts.image_alternative_text_translations_json"
+    ],
     # ---- TripModifications (#95) ----
     # Entity/message grain: repeated structures JSON-encoded whole
     "entity.trip_modifications.selected_trips.trip_ids": ["trip_modifications.selected_trips_json"],

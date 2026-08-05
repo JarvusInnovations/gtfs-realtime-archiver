@@ -104,6 +104,7 @@ try:
         (gtfs_realtime_pb2.TranslatedImage, "localized_image"),
         (gtfs_realtime_pb2.TranslatedImage.LocalizedImage, "url"),
         (gtfs_realtime_pb2.TranslatedImage.LocalizedImage, "media_type"),
+        (gtfs_realtime_pb2.TranslatedImage.LocalizedImage, "language"),
         (gtfs_realtime_pb2.Alert, "image_alternative_text"),
         (gtfs_realtime_pb2.EntitySelector, "direction_id"),
         # Entity-type capture (#95/#96/#97): FeedEntity.shape/stop/
@@ -738,9 +739,10 @@ def _get_text(translated_string: gtfs_realtime_pb2.TranslatedString) -> str | No
 
 def _translations_json(translated_string: gtfs_realtime_pb2.TranslatedString) -> str | None:
     """Full-fidelity TranslatedString capture: [{"text","language"},...];
-    NULL when there are no translations, never "[]". Unlike the
-    service_alerts keep-first columns, nothing is dropped (#98 — the stops
-    table ships complete from day one so no migration is ever owed)."""
+    NULL when there are no translations, never "[]". Unlike the keep-first
+    compat columns, nothing is dropped (#98 option c): every language
+    survives in publisher order, so display selection (prefer-en etc.) is
+    derivable downstream."""
     if not translated_string.translation:
         return None
     return json.dumps(
@@ -750,6 +752,25 @@ def _translations_json(translated_string: gtfs_realtime_pb2.TranslatedString) ->
                 "language": t.language if t.HasField("language") else None,
             }
             for t in translated_string.translation
+        ],
+        separators=(",", ":"),
+    )
+
+
+def _localized_images_json(localized_images: Any) -> str | None:
+    """JSON-encode TranslatedImage.localized_image; NULL when empty.
+    url/media_type are proto2-required (always present on a parsed
+    message); language is optional (unset -> JSON null)."""
+    if not localized_images:
+        return None
+    return json.dumps(
+        [
+            {
+                "url": li.url,
+                "media_type": li.media_type,
+                "language": li.language if li.HasField("language") else None,
+            }
+            for li in localized_images
         ],
         separators=(",", ":"),
     )
@@ -1048,6 +1069,25 @@ def extract_service_alerts(
                 # fleet-wide as of the 2026-08-04 census — day-one capture)
                 "communication_periods_json": communication_periods_json,
                 "impact_periods_json": impact_periods_json,
+                # Full-fidelity translation capture (#98 option c). The
+                # keep-first columns above stay as-is — semantics documented
+                # as "first translation AS PUBLISHED" (producer whim; AC
+                # Transit's first is Spanish). Unset parents fall through:
+                # a default-instance TranslatedString has an empty
+                # translation list, which the helper maps to NULL.
+                "header_text_translations_json": _translations_json(alert.header_text),
+                "description_text_translations_json": _translations_json(alert.description_text),
+                "url_translations_json": _translations_json(alert.url),
+                "tts_header_text_translations_json": _translations_json(alert.tts_header_text),
+                "tts_description_text_translations_json": _translations_json(
+                    alert.tts_description_text
+                ),
+                "cause_detail_translations_json": _translations_json(alert.cause_detail),
+                "effect_detail_translations_json": _translations_json(alert.effect_detail),
+                "image_alternative_text_translations_json": _translations_json(
+                    alert.image_alternative_text
+                ),
+                "image_localized_images_json": _localized_images_json(alert.image.localized_image),
                 # Header / entity-level fields (all three feed types)
                 **header_fields,
                 "is_deleted": entity.is_deleted if entity.HasField("is_deleted") else None,
