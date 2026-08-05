@@ -87,11 +87,11 @@ try:
         (gtfs_realtime_pb2.Alert, "image_alternative_text"),
         (gtfs_realtime_pb2.EntitySelector, "direction_id"),
     )
-except AttributeError as _e:
+except AttributeError as e:
     raise ImportError(
         "gtfs-realtime-bindings is too old for this extraction code; "
-        f"missing message type: {_e} (need >= 2.2.0)"
-    ) from _e
+        f"missing message type: {e} (need >= 2.2.0)"
+    ) from e
 
 
 def _assert_required_bindings_fields() -> None:
@@ -266,7 +266,13 @@ def extract_vehicle_positions(
                 # Vehicle descriptor
                 "vehicle_id": vp.vehicle.id if vp.HasField("vehicle") else None,
                 "vehicle_label": vp.vehicle.label if vp.HasField("vehicle") else None,
-                "license_plate": vp.vehicle.license_plate if vp.HasField("vehicle") else None,
+                # Per-field presence from v0.9.3 (matching trip_updates —
+                # user decision on PR #94): unset plate is NULL, never "".
+                # Partitions materialized before v0.9.3 contain "" for a
+                # present-descriptor/unset-plate row; see DESIGN.md.
+                "license_plate": (
+                    vp.vehicle.license_plate if vp.vehicle.HasField("license_plate") else None
+                ),
                 # Position
                 "latitude": vp.position.latitude if vp.HasField("position") else None,
                 "longitude": vp.position.longitude if vp.HasField("position") else None,
@@ -308,6 +314,28 @@ def extract_vehicle_positions(
                     if vp.vehicle.HasField("wheelchair_accessible")
                     else None
                 ),
+                # ModifiedTripSelector — same TripDescriptor field captured
+                # in trip_updates, kept symmetric across feed types
+                "modified_trip_modifications_id": (
+                    vp.trip.modified_trip.modifications_id
+                    if vp.trip.modified_trip.HasField("modifications_id")
+                    else None
+                ),
+                "modified_trip_affected_trip_id": (
+                    vp.trip.modified_trip.affected_trip_id
+                    if vp.trip.modified_trip.HasField("affected_trip_id")
+                    else None
+                ),
+                "modified_trip_start_date": (
+                    vp.trip.modified_trip.start_date
+                    if vp.trip.modified_trip.HasField("start_date")
+                    else None
+                ),
+                "modified_trip_start_time": (
+                    vp.trip.modified_trip.start_time
+                    if vp.trip.modified_trip.HasField("start_time")
+                    else None
+                ),
             }
 
 
@@ -347,6 +375,13 @@ INFORMED_ENTITY_KEYS = (
     "direction_id",
 )
 
+# Frozen sets for the fallback-branch disjointness asserts (a base-record
+# key landing in one of the tuples would be silently NULLed on fallback
+# rows while key-parity still passes). Precomputed so the per-row assert
+# costs one set intersection, not a set build.
+_STOP_TIME_UPDATE_KEY_SET = frozenset(STOP_TIME_UPDATE_KEYS)
+_INFORMED_ENTITY_KEY_SET = frozenset(INFORMED_ENTITY_KEYS)
+
 
 def extract_trip_updates(
     feed: gtfs_realtime_pb2.FeedMessage,
@@ -385,11 +420,10 @@ def extract_trip_updates(
                 # Vehicle descriptor
                 "vehicle_id": tu.vehicle.id if tu.HasField("vehicle") else None,
                 "vehicle_label": tu.vehicle.label if tu.HasField("vehicle") else None,
-                # Per-field presence, unlike vehicle_positions' license_plate:
-                # that column has history frozen on the parent-"" convention,
-                # while this one is brand-new and would otherwise read "" on
-                # nearly every row (plates are rarely published). The
-                # asymmetry is documented in DESIGN.md.
+                # Per-field presence (both feed types, from v0.9.3): unset
+                # plate is NULL — plates are rarely published, and parent-only
+                # guards would read "" on nearly every row. See DESIGN.md for
+                # the pre-v0.9.3 vehicle_positions "" history.
                 "license_plate": (
                     tu.vehicle.license_plate if tu.vehicle.HasField("license_plate") else None
                 ),
@@ -449,6 +483,13 @@ def extract_trip_updates(
                 "modified_trip_start_time": (
                     tu.trip.modified_trip.start_time
                     if tu.trip.modified_trip.HasField("start_time")
+                    else None
+                ),
+                # VehicleDescriptor.wheelchair_accessible — same field
+                # captured in vehicle_positions, kept symmetric
+                "wheelchair_accessible": (
+                    tu.vehicle.wheelchair_accessible
+                    if tu.vehicle.HasField("wheelchair_accessible")
                     else None
                 ),
             }
@@ -550,7 +591,7 @@ def extract_trip_updates(
                 # A base-record key landing in STOP_TIME_UPDATE_KEYS would be
                 # silently NULLed here while the key-parity test still passes.
                 record = base_record.copy()
-                assert not record.keys() & set(STOP_TIME_UPDATE_KEYS)
+                assert not record.keys() & _STOP_TIME_UPDATE_KEY_SET
                 record.update(dict.fromkeys(STOP_TIME_UPDATE_KEYS))
                 yield record
 
@@ -688,7 +729,7 @@ def extract_service_alerts(
                 # A base-record key landing in INFORMED_ENTITY_KEYS would be
                 # silently NULLed here while the key-parity test still passes.
                 record = base_record.copy()
-                assert not record.keys() & set(INFORMED_ENTITY_KEYS)
+                assert not record.keys() & _INFORMED_ENTITY_KEY_SET
                 record.update(dict.fromkeys(INFORMED_ENTITY_KEYS))
                 yield record
 
@@ -751,6 +792,7 @@ def compact_single_feed(
     buffer = io.BytesIO()
     writer: pq.ParquetWriter | None = None
     records_count = 0
+    loop_completed = False
 
     try:
         for pb_file in pb_files:
@@ -788,12 +830,34 @@ def compact_single_feed(
                         buffer, schema, compression="zstd", compression_level=9
                     )
                 writer.write_table(batch)
+            except MemoryError:
+                # Not a schema bug — don't send the operator after one. The
+                # identified path is active_periods_json replication on a
+                # worst-case alert (see #92 watch item).
+                raise
             except Exception as e:
                 raise dg.Failure(f"Parquet conversion/write failed for {pb_file}: {e}") from e
             records_count += len(records)
+        loop_completed = True
     finally:
         if writer is not None:
-            writer.close()
+            try:
+                writer.close()
+            except Exception as close_err:
+                # An exception raised in a finally REPLACES the in-flight
+                # one — a close() failure after a write_table failure would
+                # bury the dg.Failure naming the offending file. Swallow only
+                # when the loop did NOT complete (an exception is unwinding);
+                # a close failure on the success path must stay loud, or the
+                # buffer would be uploaded with a missing/partial footer.
+                # (A local flag, not sys.exc_info(): that reflects the whole
+                # handler stack, so a caller's except block would wrongly
+                # mute a success-path close error.)
+                if loop_completed:
+                    raise
+                context.log.warning(
+                    f"ParquetWriter.close() failed after earlier error: {close_err}"
+                )
 
     if writer is None:
         context.log.info(f"No records extracted for feed {feed_key}")

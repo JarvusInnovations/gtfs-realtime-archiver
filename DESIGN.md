@@ -733,12 +733,13 @@ Each feed type has a defined schema for consistent output:
 - `vehicle_id`, `vehicle_label`, `license_plate`, `wheelchair_accessible`
 - `latitude`, `longitude`, `bearing`, `odometer`, `speed`
 - `current_stop_sequence`, `stop_id`, `current_status`, `timestamp`, `congestion_level`, `occupancy_status`, `occupancy_percentage`
+- Modified trip: `modified_trip_modifications_id`, `modified_trip_affected_trip_id`, `modified_trip_start_date`, `modified_trip_start_time`
 
 **Trip Updates:**
 
 - Base: `source_file`, `feed_url`, `feed_timestamp`, `fetch_timestamp`, `entity_id`
 - Trip: `trip_id`, `route_id`, `direction_id`, `start_date`, `start_time`, `schedule_relationship`
-- Vehicle: `vehicle_id`, `vehicle_label`, `license_plate`
+- Vehicle: `vehicle_id`, `vehicle_label`, `license_plate`, `wheelchair_accessible`
 - Update: `trip_delay`, `trip_timestamp`
 - Trip properties: `trip_properties_trip_id`, `trip_properties_start_date`, `trip_properties_start_time`, `trip_properties_shape_id`, `trip_properties_trip_headsign`, `trip_properties_trip_short_name`
 - Modified trip: `modified_trip_modifications_id`, `modified_trip_affected_trip_id`, `modified_trip_start_date`, `modified_trip_start_time`
@@ -771,24 +772,30 @@ STU-level fields take row-level names, and only fields hoisted from
 trip-level nested messages (`trip_properties_*`, `modified_trip_*`) carry a
 provenance prefix. Note `pickup_type`/`drop_off_type`/`stop_headsign` also
 name GTFS **static** `stop_times.txt` columns; qualify columns when joining
-static and RT tables.
+static and RT tables. The proto messages shared by vehicle_positions and
+trip_updates (`VehicleDescriptor`, `TripDescriptor`) are captured
+symmetrically — `license_plate`, `wheelchair_accessible`, and
+`modified_trip_*` appear in both tables — so columnset differences between
+the two reflect feed-type-specific messages only.
 
 String-presence semantics: fields of sparse-by-design nested messages
 (`trip_properties_*`, `modified_trip_*`, `assigned_stop_id`, `stop_headsign`)
 use per-field presence — unset is NULL, never `""`. Strings on
 routinely-populated parents (`vehicle_id`, `vehicle_label`, trip-descriptor
 strings) keep the long-standing parent-presence convention, where an unset
-field on a present parent reads as `""`. One deliberate asymmetry:
-`license_plate` is parent-`""` in **vehicle_positions** and per-field NULL in
-**trip_updates** (a brand-new column that would otherwise read `""` on nearly
-every row, since plates are rarely published). The reason for not normalizing
-VP to NULL: partitions are re-materialized individually, so switching an
-existing column's convention makes its value for identical source data depend
-on *when* each partition was written — `""` pre-switch, NULL post-switch —
-a within-column inconsistency worse than the cross-table asymmetry (which a
-full backfill could fix, but that is #91's separate decision). Unions across
-the two feed types should normalize with `NULLIF(license_plate, '')`. `active_periods_json` is NULL when an alert
-declares no active periods (spec: always active); `"[]"` is never emitted.
+field on a present parent reads as `""`. One migrated
+convention: `license_plate` uses per-field presence (unset → NULL, never `""`)
+in **both** feed types from v0.9.3 onward — plates are rarely published, and
+the old parent-presence convention read `""` on nearly every row. The
+vehicle_positions column predates the switch, so **partitions materialized
+before v0.9.3 contain `""`** for a present-descriptor/unset-plate row; this
+historical inconsistency is deliberate (accepted on PR #94 in preference to
+carrying a permanent cross-table asymmetry). Reads spanning the boundary
+should normalize with `NULLIF(license_plate, '')`; re-materializing an old
+partition (or a #91 backfill) rewrites it under the new convention.
+
+`active_periods_json` is NULL when an alert declares no active periods
+(spec: always active); `"[]"` is never emitted.
 
 Producer-supplied text columns (`header_text`, `description_text`, `tts_*`,
 `cause_detail`, `effect_detail`, `image_url`, headsigns, etc.) are unvalidated

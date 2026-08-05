@@ -81,12 +81,12 @@ def test_wheelchair_accessible_edge_cases() -> None:
     assert records[1]["wheelchair_accessible"] == 0
 
 
-def test_license_plate_presence_asymmetry() -> None:
-    """Pin the documented VP-""/TU-NULL split (DESIGN.md): with a vehicle
-    descriptor present but no plate, vehicle_positions keeps the historical
-    parent-presence convention ("" for unset) while trip_updates — a
-    brand-new column — uses per-field presence (NULL). A silent flip either
-    way changes query semantics for readers relying on the documented shape."""
+def test_license_plate_null_when_unset_in_both_feed_types() -> None:
+    """Pin the migrated convention (DESIGN.md): from v0.9.3 license_plate
+    uses per-field presence in BOTH feed types — a vehicle descriptor
+    present with no plate reads NULL, never "". (Pre-v0.9.3
+    vehicle_positions partitions contain "" — the documented historical
+    inconsistency accepted on PR #94.)"""
     feed = _feed()
     vp_entity = feed.entity.add()
     vp_entity.id = "v1"
@@ -100,8 +100,42 @@ def test_license_plate_presence_asymmetry() -> None:
 
     (vp_record,) = extract_vehicle_positions(feed, "f.pb", "https://x", None)
     (tu_record,) = extract_trip_updates(feed, "f.pb", "https://x", None)
-    assert vp_record["license_plate"] == ""
+    assert vp_record["license_plate"] is None
     assert tu_record["license_plate"] is None
+
+
+def test_shared_message_fields_symmetric_across_feed_types() -> None:
+    """VehicleDescriptor.wheelchair_accessible and TripDescriptor.
+    modified_trip_* are captured in BOTH tables (review round 7): a
+    vehicle's live position can join to the trip modification that created
+    its trip, and wheelchair data isn't lost when an agency publishes it
+    on trip_updates."""
+    feed = _feed()
+    vp_entity = feed.entity.add()
+    vp_entity.id = "v1"
+    vp_entity.vehicle.position.latitude = 1.0
+    vp_entity.vehicle.position.longitude = 2.0
+    vp_entity.vehicle.trip.modified_trip.modifications_id = "mod-7"
+    vp_entity.vehicle.trip.modified_trip.affected_trip_id = "orig-9"
+    tu_entity = feed.entity.add()
+    tu_entity.id = "t1"
+    tu_entity.trip_update.trip.trip_id = "trip-1"
+    tu_entity.trip_update.vehicle.wheelchair_accessible = (
+        gtfs_realtime_pb2.VehicleDescriptor.WHEELCHAIR_ACCESSIBLE
+    )
+
+    (vp_record,) = extract_vehicle_positions(feed, "f.pb", "https://x", None)
+    (tu_record,) = extract_trip_updates(feed, "f.pb", "https://x", None)
+    assert vp_record["modified_trip_modifications_id"] == "mod-7"
+    assert vp_record["modified_trip_affected_trip_id"] == "orig-9"
+    assert vp_record["modified_trip_start_date"] is None  # per-field presence
+    assert (
+        tu_record["wheelchair_accessible"]
+        == gtfs_realtime_pb2.VehicleDescriptor.WHEELCHAIR_ACCESSIBLE
+    )
+    # Unset in the opposite table -> NULL
+    assert vp_record["wheelchair_accessible"] is None
+    assert tu_record["modified_trip_modifications_id"] is None
 
 
 def test_trip_update_new_fields() -> None:

@@ -40,6 +40,14 @@ VEHICLE_POSITIONS_SCHEMA = pa.schema(
         # Added per #91: unpopulated fleet-wide as of the census, captured
         # from day one (VehicleDescriptor.wheelchair_accessible)
         pa.field("wheelchair_accessible", pa.int32()),
+        # ModifiedTripSelector (trip-modifications linkage) — same
+        # TripDescriptor field captured in trip_updates; kept symmetric so a
+        # vehicle's live position can join to the modification that created
+        # its trip (PR #94 review round 7)
+        pa.field("modified_trip_modifications_id", pa.string()),
+        pa.field("modified_trip_affected_trip_id", pa.string()),
+        pa.field("modified_trip_start_date", pa.string()),
+        pa.field("modified_trip_start_time", pa.string()),
     ]
 )
 
@@ -99,6 +107,9 @@ TRIP_UPDATES_SCHEMA = pa.schema(
         pa.field("modified_trip_affected_trip_id", pa.string()),
         pa.field("modified_trip_start_date", pa.string()),
         pa.field("modified_trip_start_time", pa.string()),
+        # VehicleDescriptor.wheelchair_accessible — same field captured in
+        # vehicle_positions; kept symmetric (PR #94 review round 7)
+        pa.field("wheelchair_accessible", pa.int32()),
     ]
 )
 

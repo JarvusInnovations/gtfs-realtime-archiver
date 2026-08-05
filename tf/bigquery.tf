@@ -63,6 +63,10 @@ resource "google_bigquery_table" "vehicle_positions" {
     { name = "occupancy_percentage", type = "INT64", mode = "NULLABLE" },
     # Added per #91; absent in pre-v0.9.3 partitions (read as NULL)
     { name = "wheelchair_accessible", type = "INT64", mode = "NULLABLE" },
+    { name = "modified_trip_modifications_id", type = "STRING", mode = "NULLABLE" },
+    { name = "modified_trip_affected_trip_id", type = "STRING", mode = "NULLABLE" },
+    { name = "modified_trip_start_date", type = "STRING", mode = "NULLABLE" },
+    { name = "modified_trip_start_time", type = "STRING", mode = "NULLABLE" },
   ])
 }
 
@@ -130,6 +134,7 @@ resource "google_bigquery_table" "trip_updates" {
     { name = "modified_trip_affected_trip_id", type = "STRING", mode = "NULLABLE" },
     { name = "modified_trip_start_date", type = "STRING", mode = "NULLABLE" },
     { name = "modified_trip_start_time", type = "STRING", mode = "NULLABLE" },
+    { name = "wheelchair_accessible", type = "INT64", mode = "NULLABLE" },
   ])
 }
 

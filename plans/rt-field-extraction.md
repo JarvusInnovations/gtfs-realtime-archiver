@@ -113,10 +113,13 @@ nullable everywhere).
   `COUNT(wheelchair_accessible) = 0` with old columns intact and **no error**
   — BigQuery PARQUET external tables read declared-but-absent columns as
   NULL. The Risks bullet's failure mode ("every query errors") does not
-  occur. Release checklist still re-runs the query against the real tables
-  post-apply.
+  occur. The release checklist re-runs the query against the real tables
+  post-apply **spanning the release boundary** (a date range covering both
+  pre- and post-v0.9.3 partitions in one wildcard scan — the mix the ad-hoc
+  test could not exercise), on vehicle_positions and service_alerts.
 - Verification beyond the checklist: three-way schema ↔ extractor ↔ BigQuery
-  parity checked programmatically (27/42/28 columns incl.
+  parity checked programmatically (31/43/28 columns after the round-7
+  symmetry additions below; originally 27/42/28 incl.
   `image_alternative_text`, names AND types machine-checked in CI); proto2 `HasField`
   semantics confirmed empirically on bindings 2.2.0 (explicit enum 0 captured,
   unset → NULL); targeted `tofu plan` shows all three external tables
@@ -126,9 +129,11 @@ nullable everywhere).
   `stop_headsign`) use per-field `HasField` — unset is NULL, never `""` (a
   parent-only guard would poison the IS NOT NULL queries these columns exist
   for, and unset `stop_headsign` means "inherit the scheduled headsign").
-  Strings on routinely-populated parents (`license_plate` et al.) keep the
-  existing parent-presence convention. Documented in DESIGN.md; pinned by
-  tests.
+  Strings on routinely-populated parents (`vehicle_id`, `vehicle_label`
+  et al.) keep the existing parent-presence convention. (`license_plate`
+  originally shipped in this bucket — superseded by the round-7 amendment
+  below, which migrates it to per-field NULL in both feed types.)
+  Documented in DESIGN.md; pinned by tests.
 - **`image_alternative_text` added** (accessibility sibling of the `tts_*`
   fields — capturing it was cheaper than justifying its absence);
   `LocalizedImage.media_type`/`language` stay keep-first-dropped alongside the
@@ -153,6 +158,24 @@ nullable everywhere).
   unguarded `trip.schedule_relationship` reads (the #93 review's enum-0
   hazard) were left as-is — fleet probe found no unknown values in flight, and
   changing existing column semantics belongs to its own change if ever.
+- **Post-review amendments (round 7 + user decisions, 2026-08-05)**:
+  (1) `license_plate` normalized to per-field NULL in **both** feed types —
+  the user chose a documented historical inconsistency (pre-v0.9.3 VP
+  partitions contain `""`) over a permanent cross-table asymmetry;
+  (2) shared-message symmetry: `wheelchair_accessible` added to trip_updates
+  and `modified_trip_*` to vehicle_positions, so the VehicleDescriptor /
+  TripDescriptor capture is uniform across feed types (final columns
+  **31/43/28**); (3) `compact_single_feed` error contract now pinned by
+  `tests/dagster/test_compact_single_feed.py` (parse failure skips the file,
+  conversion failure raises `dg.Failure` naming it, nothing uploaded) —
+  closing the recurring review finding rather than deferring it to #92;
+  (4) `MemoryError` passes through the write guard un-wrapped (an OOM is not
+  a schema bug), and a `writer.close()` failure can no longer bury the
+  in-flight `dg.Failure` that names the offending file.
+- **Additional deferral**: `FeedHeader.incrementality` stays uncaptured (all
+  three extractors implicitly treat feeds as FULL_DATASET). DIFFERENTIAL
+  publishers are vanishingly rare and none exist in the fleet; recorded on
+  #91 with the other deferrals.
 
 ## Follow-ups
 
