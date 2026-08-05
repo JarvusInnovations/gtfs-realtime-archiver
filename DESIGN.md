@@ -804,17 +804,24 @@ should normalize with `NULLIF(license_plate, '')`; re-materializing an old
 partition (or a #91 backfill) rewrites it under the new convention — while
 its raw `.pb` files remain within the 365-day retention window (see above).
 
-Enum-presence semantics: enums added by #91 (`wheelchair_accessible`,
-`pickup_type`, `drop_off_type`, `departure_occupancy_status`) and the
+Enum-presence semantics: enums added by #91/#94 (`wheelchair_accessible`,
+`pickup_type`, `drop_off_type`, `departure_occupancy_status`,
+`incrementality`, `service_alerts.trip_schedule_relationship`) and the
 pre-existing per-field enums (`stop_schedule_relationship`, `cause`,
 `effect`, `severity_level`, `current_status`, `congestion_level`,
 `occupancy_status`) — an exhaustive list — use per-field presence — unset is
-NULL, and an explicitly-set 0 is captured as 0. The exception is
-`schedule_relationship` (trip-descriptor level, both feed types): it
-predates the convention and materializes the proto default, so unset reads
-`0` (= SCHEDULED, which is what the spec says unset means) rather than NULL.
-`pickup_type IS NULL` and `schedule_relationship = 0` therefore both encode
-"the producer did not say" — in adjacent columns of the same row.
+NULL, and an explicitly-set 0 is captured as 0. The exception is exactly two
+columns: `vehicle_positions.schedule_relationship` and
+`trip_updates.schedule_relationship`. They predate the convention and
+materialize the proto default, so unset reads `0` (= SCHEDULED, which is
+what the spec says unset means) rather than NULL. Note the resulting split
+on the *same proto field*: `service_alerts.trip_schedule_relationship` is
+the identical `TripDescriptor.schedule_relationship`, captured later under
+the per-field convention — unset reads NULL there but `0` in VP/TU.
+Normalize with `COALESCE(trip_schedule_relationship, 0)` when unioning trip
+descriptors across tables. `pickup_type IS NULL` and
+`schedule_relationship = 0` therefore both encode "the producer did not
+say" — in adjacent columns of the same row.
 
 Complete-capture policy (PR #94): every leaf field of the three archived
 entity types maps to a column or carries a recorded drop reason, enforced by
@@ -841,16 +848,23 @@ new tables (tracked on #91).
 (BigQuery's native JSON type is unavailable for Parquet external tables).
 The "active at time T" recipe has **two** load-bearing NULL rules: a NULL
 *column* means always active (a plain `UNNEST`/comma join yields zero rows
-for it, silently reporting the alert inactive — use a LEFT JOIN or EXISTS),
-and a JSON-null *start/end* means unbounded on that side (`JSON_VALUE`
-returns SQL NULL for it, and NULL comparisons filter the row). BigQuery:
+for it, silently reporting the alert inactive — wrap the period check in
+`EXISTS`), and a JSON-null *start/end* means unbounded on that side
+(`JSON_VALUE` returns SQL NULL for it, and NULL comparisons filter the
+row). Both recipes use `EXISTS` so each alert row is returned **at most
+once** — a `LEFT JOIN UNNEST ... ON TRUE` form fans out one row per
+matching period (overlapping periods are legal and observed), silently
+inflating any aggregation over the result. BigQuery:
 
 ```sql
 FROM gtfs_rt.service_alerts a
-LEFT JOIN UNNEST(JSON_QUERY_ARRAY(a.active_periods_json)) AS p ON TRUE
 WHERE a.active_periods_json IS NULL
-   OR ((JSON_VALUE(p, '$.start') IS NULL OR CAST(JSON_VALUE(p, '$.start') AS INT64) <= @t)
-  AND  (JSON_VALUE(p, '$.end')   IS NULL OR CAST(JSON_VALUE(p, '$.end')   AS INT64) >  @t))
+   OR EXISTS (
+        SELECT 1
+        FROM UNNEST(JSON_QUERY_ARRAY(a.active_periods_json)) AS p
+        WHERE (JSON_VALUE(p, '$.start') IS NULL OR CAST(JSON_VALUE(p, '$.start') AS INT64) <= @t)
+          AND (JSON_VALUE(p, '$.end')   IS NULL OR CAST(JSON_VALUE(p, '$.end')   AS INT64) >  @t)
+      )
 ```
 
 (`JSON_VALUE` returns STRING, so the casts are required.) DuckDB:

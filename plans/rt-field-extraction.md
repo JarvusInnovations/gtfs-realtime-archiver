@@ -214,10 +214,23 @@ nullable everywhere).
 ## Follow-ups
 
 - Issue [#91](https://github.com/JarvusInnovations/gtfs-realtime-archiver/issues/91) —
-  remaining after this plan: the historical-backfill decision (365-day raw
-  retention horizon; re-materializing partitions populates the new columns for
-  history), and the two recorded deferrals (multi-language translations =
-  keep-first; `multi_carriage_details` = decide when a publisher appears).
+  remaining after this plan: the historical-backfill decision only (365-day
+  raw retention horizon; re-materializing partitions populates the new
+  columns for history). *(Amended per round 12: the deferrals this bullet
+  originally recorded are gone — `multi_carriage_details_json` is captured
+  by this plan, and multi-language translations moved to their own issue.)*
+- The census findings this PR spawned into dedicated issues:
+  [#95](https://github.com/JarvusInnovations/gtfs-realtime-archiver/issues/95)
+  (TripModifications entities),
+  [#96](https://github.com/JarvusInnovations/gtfs-realtime-archiver/issues/96)
+  (Shape entities),
+  [#97](https://github.com/JarvusInnovations/gtfs-realtime-archiver/issues/97)
+  (Stop entities) — the three uncaptured entity types Madison Metro and Big
+  Blue Bus publish inside trip_updates feeds (plan:
+  `entity-type-capture`) — and
+  [#98](https://github.com/JarvusInnovations/gtfs-realtime-archiver/issues/98)
+  (multi-language translations; the manifest's keep-first DROP reasons cite
+  it; plan: `alert-translations-capture`).
 - Issue [#86](https://github.com/JarvusInnovations/gtfs-realtime-archiver/issues/86) —
   the columnset contract docs must include the new columns, the
   pre-release-NULL / `union_by_name` mixed-schema note, and the SA

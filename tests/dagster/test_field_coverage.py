@@ -272,14 +272,26 @@ MANIFEST: dict[str, Disposition] = {
 }
 
 
-def _walk_leaves(desc: Descriptor, prefix: str) -> list[str]:
+def _walk_leaves(
+    desc: Descriptor, prefix: str, ancestors: frozenset[str] = frozenset()
+) -> list[str]:
+    ancestors = ancestors | {desc.full_name}
     leaves: list[str] = []
     for field in desc.fields:
         path = f"{prefix}.{field.name}" if prefix else field.name
         if path in DROPPED_SUBTREES:
             continue
         if field.type == FieldDescriptor.TYPE_MESSAGE:
-            leaves.extend(_walk_leaves(field.message_type, path))
+            # A self/mutually-recursive message type would recurse forever,
+            # turning "fails until dispositioned" into "hangs CI" — the
+            # worst failure mode for a test whose job is to fail loudly.
+            # Acyclic today; assert so a future bindings release breaks
+            # loudly instead.
+            assert field.message_type.full_name not in ancestors, (
+                f"recursive message type {field.message_type.full_name} at {path}; "
+                "record it as a DROPPED_SUBTREES entry with a capture decision"
+            )
+            leaves.extend(_walk_leaves(field.message_type, path, ancestors))
         else:
             leaves.append(path)
     return leaves

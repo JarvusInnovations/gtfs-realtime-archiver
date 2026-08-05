@@ -60,6 +60,14 @@ HTTP_FEED_PREFIX = "~"
 try:
     REQUIRED_BINDINGS_FIELDS: tuple[tuple[type[Message], str], ...] = (
         (gtfs_realtime_pb2.VehicleDescriptor, "wheelchair_accessible"),
+        # CarriageDetails is 2.1.0-gated; _carriages_json dereferences all
+        # five fields (PR #94 round 13)
+        (gtfs_realtime_pb2.VehiclePosition, "multi_carriage_details"),
+        (gtfs_realtime_pb2.VehiclePosition.CarriageDetails, "id"),
+        (gtfs_realtime_pb2.VehiclePosition.CarriageDetails, "label"),
+        (gtfs_realtime_pb2.VehiclePosition.CarriageDetails, "occupancy_status"),
+        (gtfs_realtime_pb2.VehiclePosition.CarriageDetails, "occupancy_percentage"),
+        (gtfs_realtime_pb2.VehiclePosition.CarriageDetails, "carriage_sequence"),
         (gtfs_realtime_pb2.TripUpdate, "trip_properties"),
         (gtfs_realtime_pb2.TripUpdate.TripProperties, "trip_id"),
         (gtfs_realtime_pb2.TripUpdate.TripProperties, "start_date"),
