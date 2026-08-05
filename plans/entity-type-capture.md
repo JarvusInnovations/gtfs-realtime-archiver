@@ -95,27 +95,33 @@ question, unchanged).
 
 ## Validation criteria
 
-- [ ] Manifest test passes with zero `DROPPED_SUBTREES` entity types — every
+- [x] Manifest test passes with zero `DROPPED_SUBTREES` entity types — every
       leaf of the three subtrees dispositioned to a real column
-- [ ] Extraction tests: populated fixtures (no NULLs, Arrow round-trip),
+- [x] Extraction tests: populated fixtures (no NULLs, Arrow round-trip),
       unset → NULL, JSON encodings exact, record↔schema key parity
-- [ ] compact tests: multi-output run writes four parquets from mixed-entity
+- [x] compact tests: multi-output run writes four parquets from mixed-entity
       feeds; zero-entity tables upload nothing; error contract (parse-skip /
       dg.Failure naming file+table / close semantics) preserved
-- [ ] DDL parity test covers all six tables; targeted `tofu plan`
-      shows 3 creates, 0 destroys, no changes to existing tables
-- [ ] ruff + mypy strict + full pytest green
-- [ ] End-to-end against real Madison/BBB data: materialize one partition
-      locally, inspect all four outputs (also seeds the GCS prefixes so
-      external-table creation at deploy cannot hit an empty prefix)
-- [ ] DESIGN.md: grain-decision entry + new-table sections; README table list
+- [x] DDL parity test covers all six tables; targeted `tofu plan`
+      shows 3 creates, 0 destroys, no changes to existing tables (verified
+      2026-08-05)
+- [x] ruff + mypy strict + full pytest green (239 tests)
+- [x] End-to-end against real Madison/BBB data (2026-08-04 snapshots,
+      read-only): Madison 34 trip_modifications / 34 shapes / 11 stops per
+      snapshot, BBB 4/4/0; live service_alert_id join keys (`CWDetour-…`)
+      and multi-week service_dates captured; Arrow round-trip clean.
+      Producer quirk recorded: BBB publishes last_modified_time in
+      MILLISECONDS (1785797872000) — captured verbatim in JSON, consumers
+      beware
+- [x] DESIGN.md: grain-decision entry + new-table sections; README table list
 
 ## Risks / unknowns
 
-- **BigQuery external-table creation over an empty GCS prefix** may fail at
-  deploy-time `tofu apply` (CUSTOM hive mode + explicit schema probably fine,
-  but unverified). Mitigation: the end-to-end validation step seeds real
-  parquet under all three prefixes before the release merges.
+- ~~**BigQuery external-table creation over an empty GCS prefix** may fail at
+  deploy-time `tofu apply`.~~ **Disproven 2026-08-05**: a probe external
+  table with CUSTOM hive partitioning + explicit schema created cleanly over
+  the empty `trip_modifications/` prefix (0 objects) and was deleted; the
+  deploy-time apply cannot hit this. No pre-seeding needed.
 - **Reconciliation dashboard** (local-only) counts rows per `.pb` for TU
   feeds; TM/shape/stop rows come from the same protos and must not be
   reconciled against TU expectations. Not release-blocking; noted for the
