@@ -703,6 +703,24 @@ The Dagster pipeline compacts raw protobuf archives into daily Parquet files for
 | **Streaming parquet writer** | Process feeds in batches to limit memory usage (vs. accumulating all records) |
 | **Denormalization** | Flatten nested GTFS-RT structures for SQL-friendly analytics |
 
+**On the denormalized grain (recorded 2026-08-05, retroactively):** the
+one-row-per-innermost-repeated-element grain (trip_updates rows are
+stop_time_updates, service_alerts rows are informed_entities) was set in the
+original compaction commit (e4a11e1) **without articulated rationale** — the
+alternative of one row per feed-entity message, with unnesting handled
+downstream in a transform layer, was never weighed. TripModifications
+entities existed in the spec at that time and were seemingly not
+supported or considered by the decision. The tradeoff that choice bought is
+now visible: a producer's single feed message splits across multiple tables
+(a TripUpdate's trip-level fields replicate across its STU rows, and the
+TripModifications family lands in separate tables), and table schemas are
+fixed at compaction time — where changes require re-materialization — rather
+than in a downstream transform layer (dbt) where changes are cheap. The
+grain is **retained as-is** for the original three tables because changing
+it now would be disruptive to every existing consumer and partition; tables
+added later (trip_modifications, shapes, stops) use the entity/message grain
+with repeated structures JSON-encoded instead.
+
 ### Assets
 
 | Asset | Description | Denormalization |
