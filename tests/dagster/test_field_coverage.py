@@ -1,0 +1,299 @@
+"""Exhaustive GTFS-RT field-coverage manifest (issue #91, PR #94 round 11).
+
+Walks the installed bindings' own descriptor tree from FeedMessage down and
+requires every reachable leaf field to have an explicit disposition: either
+it feeds one or more Parquet columns, or it is dropped for a recorded
+reason. Nothing may be silently unaccounted for.
+
+This is the durable answer to "are we capturing everything?": when a future
+gtfs-realtime-bindings bump adds fields, this test FAILS until someone
+records a decision for each new field — capture it or document why not.
+The reverse direction is also pinned: every schema column must be produced
+by at least one proto field (or be pipeline-synthesized), so stale manifest
+entries and orphan columns both surface.
+"""
+
+from google.protobuf.descriptor import Descriptor, FieldDescriptor
+from google.transit import gtfs_realtime_pb2
+
+from dagster_pipeline.defs.assets.schemas import (
+    SERVICE_ALERTS_SCHEMA,
+    TRIP_UPDATES_SCHEMA,
+    VEHICLE_POSITIONS_SCHEMA,
+)
+
+SCHEMAS = {
+    "vehicle_positions": VEHICLE_POSITIONS_SCHEMA,
+    "trip_updates": TRIP_UPDATES_SCHEMA,
+    "service_alerts": SERVICE_ALERTS_SCHEMA,
+}
+
+# Columns not produced from any proto field: pipeline provenance metadata.
+SYNTHESIZED_COLUMNS = {"source_file", "feed_url", "fetch_timestamp"}
+
+# Whole subtrees dropped as a unit; the walk does not descend into them.
+# Every entry must name a reason (and an issue where a decision is pending).
+DROPPED_SUBTREES: dict[str, str] = {
+    "entity.shape": "separate feed type, not archived (GTFS-RT Shape entities)",
+    "entity.stop": "separate feed type, not archived (GTFS-RT Stop entities)",
+    "entity.trip_modifications": "separate feed type, not archived (TripModifications)",
+    "entity.vehicle.multi_carriage_details": (
+        "repeated message, zero fleet publishers; granularity decision deferred to #91"
+    ),
+    "entity.alert.communication_period": (
+        "experimental 2.2.0 repeated TimeRange; census + capture decision on #91"
+    ),
+    "entity.alert.impact_period": (
+        "experimental 2.2.0 repeated TimeRange; census + capture decision on #91"
+    ),
+    "entity.alert.informed_entity.trip.modified_trip": (
+        "EntitySelector trip descriptors carry trip_id/route_id/direction_id in "
+        "practice; capture with the rest of the IE trip tail if a publisher appears (#91)"
+    ),
+}
+
+# Leaf dispositions: path -> list of "table.column" targets, or a
+# "DROP: reason" string. A path may feed multiple columns.
+Disposition = list[str] | str
+
+MANIFEST: dict[str, Disposition] = {
+    # ---- FeedHeader ----
+    "header.gtfs_realtime_version": "DROP: spec version constant, no analytic value",
+    "header.incrementality": (
+        "DROP: extractors assume FULL_DATASET; DIFFERENTIAL unsupported, recorded on #91"
+    ),
+    "header.timestamp": [
+        "vehicle_positions.feed_timestamp",
+        "trip_updates.feed_timestamp",
+        "service_alerts.feed_timestamp",
+    ],
+    "header.feed_version": "DROP: free-form producer version string; not in #91 census",
+    # ---- FeedEntity ----
+    "entity.id": [
+        "vehicle_positions.entity_id",
+        "trip_updates.entity_id",
+        "service_alerts.entity_id",
+    ],
+    "entity.is_deleted": "DROP: meaningful only in DIFFERENTIAL feeds (see header.incrementality)",
+    # ---- VehiclePosition ----
+    "entity.vehicle.trip.trip_id": ["vehicle_positions.trip_id"],
+    "entity.vehicle.trip.route_id": ["vehicle_positions.route_id"],
+    "entity.vehicle.trip.direction_id": ["vehicle_positions.direction_id"],
+    "entity.vehicle.trip.start_time": ["vehicle_positions.start_time"],
+    "entity.vehicle.trip.start_date": ["vehicle_positions.start_date"],
+    "entity.vehicle.trip.schedule_relationship": ["vehicle_positions.schedule_relationship"],
+    "entity.vehicle.trip.modified_trip.modifications_id": [
+        "vehicle_positions.modified_trip_modifications_id"
+    ],
+    "entity.vehicle.trip.modified_trip.affected_trip_id": [
+        "vehicle_positions.modified_trip_affected_trip_id"
+    ],
+    "entity.vehicle.trip.modified_trip.start_time": ["vehicle_positions.modified_trip_start_time"],
+    "entity.vehicle.trip.modified_trip.start_date": ["vehicle_positions.modified_trip_start_date"],
+    "entity.vehicle.vehicle.id": ["vehicle_positions.vehicle_id"],
+    "entity.vehicle.vehicle.label": ["vehicle_positions.vehicle_label"],
+    "entity.vehicle.vehicle.license_plate": ["vehicle_positions.license_plate"],
+    "entity.vehicle.vehicle.wheelchair_accessible": ["vehicle_positions.wheelchair_accessible"],
+    "entity.vehicle.position.latitude": ["vehicle_positions.latitude"],
+    "entity.vehicle.position.longitude": ["vehicle_positions.longitude"],
+    "entity.vehicle.position.bearing": ["vehicle_positions.bearing"],
+    "entity.vehicle.position.odometer": ["vehicle_positions.odometer"],
+    "entity.vehicle.position.speed": ["vehicle_positions.speed"],
+    "entity.vehicle.current_stop_sequence": ["vehicle_positions.current_stop_sequence"],
+    "entity.vehicle.stop_id": ["vehicle_positions.stop_id"],
+    "entity.vehicle.current_status": ["vehicle_positions.current_status"],
+    "entity.vehicle.timestamp": ["vehicle_positions.timestamp"],
+    "entity.vehicle.congestion_level": ["vehicle_positions.congestion_level"],
+    "entity.vehicle.occupancy_status": ["vehicle_positions.occupancy_status"],
+    "entity.vehicle.occupancy_percentage": ["vehicle_positions.occupancy_percentage"],
+    # ---- TripUpdate ----
+    "entity.trip_update.trip.trip_id": ["trip_updates.trip_id"],
+    "entity.trip_update.trip.route_id": ["trip_updates.route_id"],
+    "entity.trip_update.trip.direction_id": ["trip_updates.direction_id"],
+    "entity.trip_update.trip.start_time": ["trip_updates.start_time"],
+    "entity.trip_update.trip.start_date": ["trip_updates.start_date"],
+    "entity.trip_update.trip.schedule_relationship": ["trip_updates.schedule_relationship"],
+    "entity.trip_update.trip.modified_trip.modifications_id": [
+        "trip_updates.modified_trip_modifications_id"
+    ],
+    "entity.trip_update.trip.modified_trip.affected_trip_id": [
+        "trip_updates.modified_trip_affected_trip_id"
+    ],
+    "entity.trip_update.trip.modified_trip.start_time": ["trip_updates.modified_trip_start_time"],
+    "entity.trip_update.trip.modified_trip.start_date": ["trip_updates.modified_trip_start_date"],
+    "entity.trip_update.vehicle.id": ["trip_updates.vehicle_id"],
+    "entity.trip_update.vehicle.label": ["trip_updates.vehicle_label"],
+    "entity.trip_update.vehicle.license_plate": ["trip_updates.license_plate"],
+    "entity.trip_update.vehicle.wheelchair_accessible": ["trip_updates.wheelchair_accessible"],
+    "entity.trip_update.stop_time_update.stop_sequence": ["trip_updates.stop_sequence"],
+    "entity.trip_update.stop_time_update.stop_id": ["trip_updates.stop_id"],
+    "entity.trip_update.stop_time_update.arrival.delay": ["trip_updates.arrival_delay"],
+    "entity.trip_update.stop_time_update.arrival.time": ["trip_updates.arrival_time"],
+    "entity.trip_update.stop_time_update.arrival.uncertainty": ["trip_updates.arrival_uncertainty"],
+    "entity.trip_update.stop_time_update.arrival.scheduled_time": [
+        "trip_updates.arrival_scheduled_time"
+    ],
+    "entity.trip_update.stop_time_update.departure.delay": ["trip_updates.departure_delay"],
+    "entity.trip_update.stop_time_update.departure.time": ["trip_updates.departure_time"],
+    "entity.trip_update.stop_time_update.departure.uncertainty": [
+        "trip_updates.departure_uncertainty"
+    ],
+    "entity.trip_update.stop_time_update.departure.scheduled_time": [
+        "trip_updates.departure_scheduled_time"
+    ],
+    "entity.trip_update.stop_time_update.departure_occupancy_status": [
+        "trip_updates.departure_occupancy_status"
+    ],
+    "entity.trip_update.stop_time_update.schedule_relationship": [
+        "trip_updates.stop_schedule_relationship"
+    ],
+    "entity.trip_update.stop_time_update.stop_time_properties.assigned_stop_id": [
+        "trip_updates.assigned_stop_id"
+    ],
+    "entity.trip_update.stop_time_update.stop_time_properties.stop_headsign": [
+        "trip_updates.stop_headsign"
+    ],
+    "entity.trip_update.stop_time_update.stop_time_properties.pickup_type": [
+        "trip_updates.pickup_type"
+    ],
+    "entity.trip_update.stop_time_update.stop_time_properties.drop_off_type": [
+        "trip_updates.drop_off_type"
+    ],
+    "entity.trip_update.timestamp": ["trip_updates.trip_timestamp"],
+    "entity.trip_update.delay": ["trip_updates.trip_delay"],
+    "entity.trip_update.trip_properties.trip_id": ["trip_updates.trip_properties_trip_id"],
+    "entity.trip_update.trip_properties.start_date": ["trip_updates.trip_properties_start_date"],
+    "entity.trip_update.trip_properties.start_time": ["trip_updates.trip_properties_start_time"],
+    "entity.trip_update.trip_properties.shape_id": ["trip_updates.trip_properties_shape_id"],
+    "entity.trip_update.trip_properties.trip_headsign": [
+        "trip_updates.trip_properties_trip_headsign"
+    ],
+    "entity.trip_update.trip_properties.trip_short_name": [
+        "trip_updates.trip_properties_trip_short_name"
+    ],
+    # ---- Alert ----
+    "entity.alert.active_period.start": [
+        "service_alerts.active_period_start",
+        "service_alerts.active_periods_json",
+    ],
+    "entity.alert.active_period.end": [
+        "service_alerts.active_period_end",
+        "service_alerts.active_periods_json",
+    ],
+    "entity.alert.informed_entity.agency_id": ["service_alerts.agency_id"],
+    "entity.alert.informed_entity.route_id": ["service_alerts.route_id"],
+    "entity.alert.informed_entity.route_type": ["service_alerts.route_type"],
+    "entity.alert.informed_entity.stop_id": ["service_alerts.stop_id"],
+    "entity.alert.informed_entity.direction_id": ["service_alerts.direction_id"],
+    "entity.alert.informed_entity.trip.trip_id": ["service_alerts.trip_id"],
+    "entity.alert.informed_entity.trip.route_id": ["service_alerts.trip_route_id"],
+    "entity.alert.informed_entity.trip.direction_id": ["service_alerts.trip_direction_id"],
+    "entity.alert.informed_entity.trip.start_time": (
+        "DROP: IE trip descriptor tail unused by fleet; capture on publisher evidence (#91)"
+    ),
+    "entity.alert.informed_entity.trip.start_date": (
+        "DROP: IE trip descriptor tail unused by fleet; capture on publisher evidence (#91)"
+    ),
+    "entity.alert.informed_entity.trip.schedule_relationship": (
+        "DROP: IE trip descriptor tail unused by fleet; capture on publisher evidence (#91)"
+    ),
+    "entity.alert.cause": ["service_alerts.cause"],
+    "entity.alert.effect": ["service_alerts.effect"],
+    "entity.alert.severity_level": ["service_alerts.severity_level"],
+    "entity.alert.url.translation.text": ["service_alerts.url"],
+    "entity.alert.url.translation.language": "DROP: keep-first translation (#91 decision)",
+    "entity.alert.header_text.translation.text": ["service_alerts.header_text"],
+    "entity.alert.header_text.translation.language": (
+        "DROP: keep-first translation (#91 decision)"
+    ),
+    "entity.alert.description_text.translation.text": ["service_alerts.description_text"],
+    "entity.alert.description_text.translation.language": (
+        "DROP: keep-first translation (#91 decision)"
+    ),
+    "entity.alert.tts_header_text.translation.text": ["service_alerts.tts_header_text"],
+    "entity.alert.tts_header_text.translation.language": (
+        "DROP: keep-first translation (#91 decision)"
+    ),
+    "entity.alert.tts_description_text.translation.text": ["service_alerts.tts_description_text"],
+    "entity.alert.tts_description_text.translation.language": (
+        "DROP: keep-first translation (#91 decision)"
+    ),
+    "entity.alert.cause_detail.translation.text": ["service_alerts.cause_detail"],
+    "entity.alert.cause_detail.translation.language": (
+        "DROP: keep-first translation (#91 decision)"
+    ),
+    "entity.alert.effect_detail.translation.text": ["service_alerts.effect_detail"],
+    "entity.alert.effect_detail.translation.language": (
+        "DROP: keep-first translation (#91 decision)"
+    ),
+    "entity.alert.image.localized_image.url": ["service_alerts.image_url"],
+    "entity.alert.image.localized_image.media_type": ["service_alerts.image_media_type"],
+    "entity.alert.image.localized_image.language": (
+        "DROP: keep-first localized image (#91 decision)"
+    ),
+    "entity.alert.image_alternative_text.translation.text": [
+        "service_alerts.image_alternative_text"
+    ],
+    "entity.alert.image_alternative_text.translation.language": (
+        "DROP: keep-first translation (#91 decision)"
+    ),
+}
+
+
+def _walk_leaves(desc: Descriptor, prefix: str) -> list[str]:
+    leaves: list[str] = []
+    for field in desc.fields:
+        path = f"{prefix}.{field.name}" if prefix else field.name
+        if path in DROPPED_SUBTREES:
+            continue
+        if field.type == FieldDescriptor.TYPE_MESSAGE:
+            leaves.extend(_walk_leaves(field.message_type, path))
+        else:
+            leaves.append(path)
+    return leaves
+
+
+def test_every_reachable_proto_field_has_a_disposition() -> None:
+    """A bindings bump that adds fields fails here until each new field is
+    either captured or given a recorded DROP reason."""
+    leaves = _walk_leaves(gtfs_realtime_pb2.FeedMessage.DESCRIPTOR, "")
+    unaccounted = [leaf for leaf in leaves if leaf not in MANIFEST]
+    assert not unaccounted, f"proto fields with no recorded capture/drop decision: {unaccounted}"
+
+
+def test_manifest_has_no_stale_entries() -> None:
+    """Manifest paths and dropped-subtree prefixes must exist in the
+    installed bindings — a renamed or removed field surfaces here."""
+    leaves = set(_walk_leaves(gtfs_realtime_pb2.FeedMessage.DESCRIPTOR, ""))
+    stale = [path for path in MANIFEST if path not in leaves]
+    assert not stale, f"manifest entries for nonexistent proto fields: {stale}"
+
+    def _prefix_exists(prefix: str) -> bool:
+        desc: Descriptor = gtfs_realtime_pb2.FeedMessage.DESCRIPTOR
+        for part in prefix.split("."):
+            field = desc.fields_by_name.get(part)
+            if field is None or field.type != FieldDescriptor.TYPE_MESSAGE:
+                return False
+            desc = field.message_type
+        return True
+
+    stale_subtrees = [p for p in DROPPED_SUBTREES if not _prefix_exists(p)]
+    assert not stale_subtrees, f"dropped-subtree prefixes not in bindings: {stale_subtrees}"
+
+
+def test_manifest_columns_exist_and_cover_schemas() -> None:
+    """Every capture target must be a real schema column, and every schema
+    column must be fed by at least one proto field or be synthesized."""
+    covered: dict[str, set[str]] = {name: set() for name in SCHEMAS}
+    for path, disposition in MANIFEST.items():
+        if isinstance(disposition, str):
+            assert disposition.startswith("DROP: "), f"{path}: bad disposition"
+            continue
+        for target in disposition:
+            table, column = target.split(".", 1)
+            assert column in SCHEMAS[table].names, f"{path} -> {target}: no such column"
+            covered[table].add(column)
+
+    for table, schema in SCHEMAS.items():
+        orphans = set(schema.names) - covered[table] - SYNTHESIZED_COLUMNS
+        assert not orphans, f"{table} columns fed by no proto field: {orphans}"

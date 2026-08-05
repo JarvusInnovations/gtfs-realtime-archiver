@@ -96,7 +96,7 @@ def test_decode_error_file_skipped_rest_of_partition_written(
         monkeypatch, store, ["f1.pb", "bad.pb", "f3.pb"], compaction.extract_vehicle_positions
     )
 
-    assert result.value == {"files_processed": 3, "records_written": 2}
+    assert result.value == {"files_processed": 3, "records_written": 2, "files_failed": 1}
     uploaded = [k for k in store if k.endswith("data.parquet")]
     assert len(uploaded) == 1
     table = pq.read_table(io.BytesIO(store[uploaded[0]]))

@@ -186,6 +186,7 @@ resource "google_bigquery_table" "service_alerts" {
     { name = "tts_header_text", type = "STRING", mode = "NULLABLE" },
     { name = "tts_description_text", type = "STRING", mode = "NULLABLE" },
     { name = "image_url", type = "STRING", mode = "NULLABLE" },
+    { name = "image_media_type", type = "STRING", mode = "NULLABLE" },
     { name = "image_alternative_text", type = "STRING", mode = "NULLABLE" },
     { name = "active_periods_json", type = "STRING", mode = "NULLABLE" },
   ])

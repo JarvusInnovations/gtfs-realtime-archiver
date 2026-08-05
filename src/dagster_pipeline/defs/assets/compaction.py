@@ -45,7 +45,7 @@ HTTP_FEED_PREFIX = "~"
 # The (message, field) pairs the extractors dereference that are absent from
 # older bindings releases, plus the parent fields of the nested messages they
 # read. Deliberately NOT every field the extractors touch: long-stable fields
-# (TranslatedString.translation, TranslatedImage.localized_image, ...) predate
+# (TranslatedString.translation, StopTimeEvent.delay, ...) predate
 # every bindings release this code could plausibly meet.
 # HasField on a field the installed bindings don't know raises ValueError —
 # which the per-file parse handler would swallow, turning a bindings
@@ -84,6 +84,8 @@ try:
         (gtfs_realtime_pb2.Alert, "tts_header_text"),
         (gtfs_realtime_pb2.Alert, "tts_description_text"),
         (gtfs_realtime_pb2.Alert, "image"),
+        (gtfs_realtime_pb2.TranslatedImage, "localized_image"),
+        (gtfs_realtime_pb2.TranslatedImage.LocalizedImage, "media_type"),
         (gtfs_realtime_pb2.Alert, "image_alternative_text"),
         (gtfs_realtime_pb2.EntitySelector, "direction_id"),
     )
@@ -591,7 +593,10 @@ def extract_trip_updates(
                 # A base-record key landing in STOP_TIME_UPDATE_KEYS would be
                 # silently NULLed here while the key-parity test still passes.
                 record = base_record.copy()
-                assert not record.keys() & _STOP_TIME_UPDATE_KEY_SET
+                assert not record.keys() & _STOP_TIME_UPDATE_KEY_SET, (
+                    f"base-record keys collide with STOP_TIME_UPDATE_KEYS: "
+                    f"{record.keys() & _STOP_TIME_UPDATE_KEY_SET}"
+                )
                 record.update(dict.fromkeys(STOP_TIME_UPDATE_KEYS))
                 yield record
 
@@ -662,7 +667,16 @@ def extract_service_alerts(
             )
             image_url = (
                 str(alert.image.localized_image[0].url)
-                if alert.HasField("image") and alert.image.localized_image
+                if alert.HasField("image")
+                and alert.image.localized_image
+                and alert.image.localized_image[0].HasField("url")
+                else None
+            )
+            image_media_type = (
+                str(alert.image.localized_image[0].media_type)
+                if alert.HasField("image")
+                and alert.image.localized_image
+                and alert.image.localized_image[0].HasField("media_type")
                 else None
             )
             image_alternative_text = (
@@ -698,6 +712,7 @@ def extract_service_alerts(
                 "cause_detail": cause_detail,
                 "effect_detail": effect_detail,
                 "image_url": image_url,
+                "image_media_type": image_media_type,
                 "image_alternative_text": image_alternative_text,
             }
 
@@ -729,7 +744,10 @@ def extract_service_alerts(
                 # A base-record key landing in INFORMED_ENTITY_KEYS would be
                 # silently NULLed here while the key-parity test still passes.
                 record = base_record.copy()
-                assert not record.keys() & _INFORMED_ENTITY_KEY_SET
+                assert not record.keys() & _INFORMED_ENTITY_KEY_SET, (
+                    f"base-record keys collide with INFORMED_ENTITY_KEYS: "
+                    f"{record.keys() & _INFORMED_ENTITY_KEY_SET}"
+                )
                 record.update(dict.fromkeys(INFORMED_ENTITY_KEYS))
                 yield record
 
@@ -779,10 +797,11 @@ def compact_single_feed(
     if not pb_files:
         context.log.info(f"No data found for feed {feed_key} on {date}")
         return dg.Output(
-            {"files_processed": 0, "records_written": 0},
+            {"files_processed": 0, "records_written": 0, "files_failed": 0},
             metadata={
                 "files_processed": 0,
                 "records_written": 0,
+                "files_failed": 0,
                 "date": date,
                 "feed": feed_key,
                 "feed_url": feed_url,
@@ -799,6 +818,7 @@ def compact_single_feed(
     buffer = io.BytesIO()
     writer: pq.ParquetWriter | None = None
     records_count = 0
+    files_failed = 0
     loop_completed = False
 
     try:
@@ -819,6 +839,7 @@ def compact_single_feed(
                 records = list(extractor(feed, pb_file, feed_url, fetch_timestamp))
             except (DecodeError, ValueError) as e:
                 context.log.warning(f"Failed to parse {pb_file}: {e}")
+                files_failed += 1
                 continue
             if not records:
                 continue
@@ -869,10 +890,11 @@ def compact_single_feed(
     if writer is None:
         context.log.info(f"No records extracted for feed {feed_key}")
         return dg.Output(
-            {"files_processed": len(pb_files), "records_written": 0},
+            {"files_processed": len(pb_files), "records_written": 0, "files_failed": files_failed},
             metadata={
                 "files_processed": len(pb_files),
                 "records_written": 0,
+                "files_failed": files_failed,
                 "date": date,
                 "feed": feed_key,
                 "feed_url": feed_url,
@@ -888,10 +910,15 @@ def compact_single_feed(
     context.log.info(f"Wrote {records_count} records to gs://{gcs.parquet_bucket}/{output_path}")
 
     return dg.Output(
-        {"files_processed": len(pb_files), "records_written": records_count},
+        {
+            "files_processed": len(pb_files),
+            "records_written": records_count,
+            "files_failed": files_failed,
+        },
         metadata={
             "files_processed": len(pb_files),
             "records_written": records_count,
+            "files_failed": files_failed,
             "date": date,
             "feed": feed_key,
             "feed_url": feed_url,

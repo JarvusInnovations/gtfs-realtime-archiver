@@ -118,8 +118,8 @@ nullable everywhere).
   pre- and post-v0.9.3 partitions in one wildcard scan — the mix the ad-hoc
   test could not exercise), on vehicle_positions and service_alerts.
 - Verification beyond the checklist: three-way schema ↔ extractor ↔ BigQuery
-  parity checked programmatically (31/43/28 columns after the round-7
-  symmetry additions below; originally 27/42/28 incl.
+  parity checked programmatically (31/43/29 columns after the round-7/11
+  amendments below; originally 27/42/28 incl.
   `image_alternative_text`, names AND types machine-checked in CI); proto2 `HasField`
   semantics confirmed empirically on bindings 2.2.0 (explicit enum 0 captured,
   unset → NULL); targeted `tofu plan` shows all three external tables
@@ -136,8 +136,9 @@ nullable everywhere).
   Documented in DESIGN.md; pinned by tests.
 - **`image_alternative_text` added** (accessibility sibling of the `tts_*`
   fields — capturing it was cheaper than justifying its absence);
-  `LocalizedImage.media_type`/`language` stay keep-first-dropped alongside the
-  translation deferral.
+  `LocalizedImage.language` stays keep-first-dropped alongside the
+  translation deferral (`media_type` was initially dropped too — captured in
+  the round-11 amendment below, since a renderer needs it).
 - **Naming decision**: service_alerts' informed-entity `direction_id` keeps the
   bare name, matching the existing SA convention (`agency_id`/`route_id`/
   `stop_id` already carry EntitySelector semantics distinct from the same
@@ -172,6 +173,22 @@ nullable everywhere).
   (4) `MemoryError` passes through the write guard un-wrapped (an OOM is not
   a schema bug), and a `writer.close()` failure can no longer bury the
   in-flight `dg.Failure` that names the offending file.
+- **Post-review amendments (round 11, 2026-08-05)**: (1) `image_media_type`
+  captured (spec-required on `LocalizedImage`, a renderer needs it —
+  service_alerts now 29 columns); (2) **field-coverage manifest test**
+  (`tests/dagster/test_field_coverage.py`) walks the installed bindings'
+  descriptor tree from FeedMessage down and requires every reachable leaf
+  field (105 today, plus 7 dropped subtrees = 112 dispositions) to have an
+  explicit disposition — captured to named
+  columns or dropped for a recorded reason — so a future bindings bump
+  fails CI until each new field gets a decision; the walk immediately
+  surfaced `Alert.communication_period` / `Alert.impact_period`
+  (experimental 2.2.0 repeated TimeRanges) and the informed-entity trip
+  descriptor tail as previously-undispositioned drops, now recorded and
+  deferred to #91; (3) `files_failed` added to `compact_single_feed`
+  output/metadata so wholesale extraction failure (all files unparseable,
+  green run, zero records) is queryable and alertable instead of log-only
+  (#92's recording direction).
 - **Additional deferral**: `FeedHeader.incrementality` stays uncaptured (all
   three extractors implicitly treat feeds as FULL_DATASET). DIFFERENTIAL
   publishers are vanishingly rare and none exist in the fleet; recorded on

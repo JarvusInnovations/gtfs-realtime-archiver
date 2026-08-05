@@ -748,7 +748,7 @@ Each feed type has a defined schema for consistent output:
 **Service Alerts:**
 
 - Base: `source_file`, `feed_url`, `feed_timestamp`, `fetch_timestamp`, `entity_id`
-- Alert: `cause`, `effect`, `severity_level`, `cause_detail`, `effect_detail`, `url`, `header_text`, `description_text`, `tts_header_text`, `tts_description_text`, `image_url`, `image_alternative_text`
+- Alert: `cause`, `effect`, `severity_level`, `cause_detail`, `effect_detail`, `url`, `header_text`, `description_text`, `tts_header_text`, `tts_description_text`, `image_url`, `image_media_type`, `image_alternative_text`
 - Active period: `active_period_start`, `active_period_end` (first period **as published** — the spec doesn't require chronological order, so use `active_periods_json` when ordering matters), `active_periods_json` (full list)
 - Informed entity: `agency_id`, `route_id`, `route_type`, `stop_id`, `direction_id`, `trip_id`, `trip_route_id`, `trip_direction_id`
 
@@ -801,7 +801,9 @@ its raw `.pb` files remain within the 365-day retention window (see above).
 
 Enum-presence semantics: enums added by #91 (`wheelchair_accessible`,
 `pickup_type`, `drop_off_type`, `departure_occupancy_status`) and the
-pre-existing `stop_schedule_relationship` use per-field presence — unset is
+pre-existing per-field enums (`stop_schedule_relationship`, `cause`,
+`effect`, `severity_level`, `current_status`, `congestion_level`,
+`occupancy_status`) — an exhaustive list — use per-field presence — unset is
 NULL, and an explicitly-set 0 is captured as 0. The exception is
 `schedule_relationship` (trip-descriptor level, both feed types): it
 predates the convention and materializes the proto default, so unset reads

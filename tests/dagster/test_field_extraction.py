@@ -9,6 +9,7 @@ import json
 import re
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pyarrow as pa
 import pytest
@@ -246,6 +247,7 @@ def test_service_alert_new_fields_and_multi_active_period() -> None:
     assert r["cause_detail"] == "Water main break"
     assert r["effect_detail"] == "Stops 4-9 skipped"
     assert r["image_url"] == "https://x/img.png"
+    assert r["image_media_type"] == "image/png"
     assert r["direction_id"] == 1
     # compat columns keep the FIRST period
     assert r["active_period_start"] == 1_754_000_000
@@ -289,7 +291,7 @@ def test_record_keys_match_schemas_exactly() -> None:
     """Every extractor's record keys must equal its schema's column names —
     a missing key writes NULL silently, an extra key is dropped silently;
     both are the drift this test exists to catch."""
-    cases: list[tuple[pa.Schema, list[dict]]] = []
+    cases: list[tuple[pa.Schema, list[dict[str, Any]]]] = []
 
     vp_feed = _feed()
     e = vp_feed.entity.add()
