@@ -2,7 +2,7 @@
 
 from dagster_pipeline.defs.assets.compaction import (
     service_alerts_parquet,
-    trip_updates_parquet,
+    trip_updates_tables,
     vehicle_positions_parquet,
 )
 from dagster_pipeline.defs.assets.feeds_metadata import feeds_metadata
@@ -14,7 +14,7 @@ from dagster_pipeline.defs.assets.schedule import (
 
 __all__ = [
     "vehicle_positions_parquet",
-    "trip_updates_parquet",
+    "trip_updates_tables",
     "service_alerts_parquet",
     "feeds_metadata",
     "bucket_inventory",

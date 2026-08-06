@@ -31,13 +31,42 @@ See [DESIGN.md](../DESIGN.md) for detailed technical specifications.
 
 **Rule**: If a commit changes functionality, structure, or configuration, update relevant documentation in the same commit.
 
+## Spec-driven development (specops)
+
+This project uses spec-driven development via the **specops** skill (vendored at
+`.agents/skills/specops/`), which carries the full methodology — invoke it (it
+triggers on "spec", "plan", starting a feature, etc.) before planning or building.
+
+- **`plans/` is the planning system — not your built-in plan mode.** Every chunk of
+  work lands as a file in `plans/` that freezes to `done` as the durable record of
+  what got built. Don't let an ephemeral plan substitute for it, and don't skip it
+  for "small" changes.
+- **`specs/` does not exist yet** — adoption pathway is tracked in issue #87. Until
+  it lands, plans carry intent on their own and DESIGN.md remains the (drift-prone)
+  reference. Once `specs/` exists: specs lead — before changing behavior, change the
+  spec, then bring code into conformance.
+- **A spec change ripples to its plans.** After editing a spec, review the plans that
+  implement it (`grep -l '<spec-path>' plans/*.md`) and offer to update them.
+
+Query the plan DAG: `.agents/skills/specops/scripts/specops next` (what to work on
+next) and `.agents/skills/specops/scripts/specops dag` (graph). The
+`/audit-spec-drift` command is not wired up yet (part of #87).
+
 ## Repository Layout
 
 ```
 gtfs-realtime-archiver/
-├── .github/workflows/      # CI/CD (lint, test, build, push, pages)
+├── .github/workflows/      # CI/CD (lint, test, build, push, pages, agency config deploy)
+├── .agents/skills/         # Vendored agent skills (specops; managed via `npx skills`)
 ├── .claude/                # AI assistant guidelines (this directory)
 ├── .dagster_home/          # Dagster configuration
+├── plans/                  # SpecOps plan protocol: work-in-flight tracking (see plans/README.md)
+├── dashboards/             # Temporary local analysis dashboards (not deployed, outside CI lint/type paths)
+│   └── proto-parquet-reconciliation/  # Evidence dashboard: raw .pb counts vs parquet rows
+│       ├── extract.py      # PEP 723 uv script: GCS → data/reconciliation.duckdb
+│       ├── unpack.py       # PEP 723 uv script: manual proto-vs-parquet inspection to .scratch/
+│       ├── sources/        # Evidence duckdb source queries
+│       └── pages/          # The dashboard page
 ├── site/                   # Static site for gtfsrt.io (GitHub Pages)
 │   ├── index.html          # Single-page site
 │   ├── style.css           # Styles
@@ -64,23 +93,17 @@ gtfs-realtime-archiver/
 │   └── __init__.py
 ├── tf/                     # OpenTofu/Terraform for Cloud Run
 │   ├── main.tf             # Cloud Run service (archiver)
-│   ├── storage.tf          # GCS bucket with lifecycle
-│   ├── iam.tf              # Service account and permissions
-│   ├── cloudsql.tf         # Cloud SQL PostgreSQL instance
-│   ├── dagster.tf          # Dagster module instantiation (project wiring via extra_env/grants)
-│   ├── dagster_moved.tf    # State moves from the module's generalization (delete after applied)
-│   ├── modules/dagster/    # Dagster deployment module (generic — being extracted to a registry module)
-│   │   ├── main.tf         # Module locals and config
-│   │   ├── webserver.tf    # Dagster UI (Cloud Run Service, split mode)
-│   │   ├── daemon.tf       # Dagster daemon (Worker Pool, split mode)
-│   │   ├── code_server.tf  # gRPC code servers (split mode)
-│   │   ├── consolidated.tf # Single-instance web+daemon+code (consolidated mode)
-│   │   ├── run_worker.tf   # Cloud Run Jobs for runs
-│   │   ├── iam.tf          # Service accounts, permissions + generic bucket/secret grants
-│   │   ├── hmac.tf         # Optional per-run-worker GCS HMAC keys (dbt-duckdb httpfs)
-│   │   ├── secrets.tf      # DB password secret
-│   │   ├── database.tf     # Database and user creation
-│   │   └── storage.tf      # Logs bucket
+│   ├── storage.tf          # GCS buckets with lifecycle
+│   ├── iam.tf              # Archiver service account and permissions
+│   ├── dagster.tf          # Dagster module instantiation (project wiring via extra_env/grants);
+│   │                       # the module itself is consumed from the Terraform Registry:
+│   │                       # JarvusInnovations/dagster-cloud-run/google
+│   ├── dagster_iam.tf      # Project-specific IAM grants for Dagster service accounts
+│   ├── artifact_registry.tf # Remote repository proxying GHCR images for Cloud Run
+│   ├── bigquery.tf         # BigQuery datasets and external tables over parquet
+│   ├── dns.tf              # DNS records for gtfsrt.io services
+│   ├── tags.tf             # Secret tag key/value for feed API key access
+│   ├── wif.tf              # Workload Identity Federation for GitHub Actions
 │   ├── variables.tf        # Input variables
 │   ├── outputs.tf          # Output values
 │   └── versions.tf         # Provider versions
@@ -89,6 +112,7 @@ gtfs-realtime-archiver/
 │   └── workspace.yaml      # Workspace config with env var placeholders
 ├── pyproject.toml          # Project config, dependencies, tool settings
 ├── uv.lock                 # Dependency lockfile
+├── skills-lock.json        # Agent skills lockfile (`npx skills` sources + hashes)
 ├── Dockerfile              # Multi-stage container build (archiver)
 ├── Containerfile.dagster   # Multi-target build (webserver, daemon, code-server)
 ├── agencies.example.yaml   # Example agency configuration
@@ -142,6 +166,7 @@ This project uses **Conventional Commits** with components:
 - `ci` - GitHub Actions workflows
 - `docker` - Dockerfile and container
 - `site` - Static site (gtfsrt.io)
+- `dashboards` - Temporary analysis dashboards
 - `claude` - AI assistant documentation
 
 **Format**: `type(component): description`
@@ -251,11 +276,13 @@ uv run dg list defs
 uv run dg check defs
 
 # Launch a run for specific assets with partition
-uv run dg launch --assets vehicle_positions_parquet --partition 2026-01-01
+uv run dg launch --assets vehicle_positions_parquet --partition "2026-01-01|gtfs.example.com/feed"
 
 # Launch all assets for a partition
-uv run dg launch --partition 2026-01-01
+uv run dg launch --partition "2026-01-01|gtfs.example.com/feed"
 ```
+
+Partition keys are `date|feed`, where `feed` is the scheme-stripped feed URL (`~` prefix for `http`); the feed dimension is dynamic, so the key must already be registered.
 
 **Environment Setup**:
 
@@ -302,7 +329,7 @@ Why run worker SA?
 - Config files use environment variable placeholders
 - Values resolved at runtime from Terraform-provided env vars
 
-**Terraform Module**: `tf/modules/dagster/`
+**Terraform Module**: `JarvusInnovations/dagster-cloud-run/google` (registry; instantiated in `tf/dagster.tf`)
 
 - Single code location (gtfsrt) by default
 - Extensible to multi-code-location via `code_locations` variable
@@ -379,8 +406,8 @@ The module supports two topologies, selected via `dagster_deployment_mode`
   the consolidated instance runs ~$55/mo — vs ~$100/mo idle for the split topology
   (always-on daemon + daemon-kept-warm code server). Sized up to 2 vCPU / 2.5Gi it
   is ~$105–110/mo, a wash against split. Consolidation saves money only at roughly
-  ≤1.5 vCPU total; see the note on `consolidated_resources` in
-  `tf/modules/dagster/variables.tf`.
+  ≤1.5 vCPU total; see the note on `consolidated_resources` in the module repo
+  (JarvusInnovations/terraform-google-dagster-cloud-run).
 
 **Terraform image variables move with releases — never apply with stale ones**:
 

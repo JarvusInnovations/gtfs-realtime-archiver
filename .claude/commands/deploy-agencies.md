@@ -4,7 +4,36 @@ Deploy changes from local `agencies.yaml` to the production GTFS-RT archiver ser
 
 **Optional filter:** $ARGUMENTS
 
-## Workflow
+## Preferred Path: CI Deployment
+
+Agency config deploys are automated via
+`.github/workflows/deploy-agencies.yaml`: any push to `develop` that touches
+`agencies.yaml` (i.e. merging an agency PR) validates the config against the
+Pydantic models, checks for drift against the deployed secret, pushes a new
+secret version, restarts the archiver, and verifies health — the same steps
+as the manual workflow below. It can also be run on demand via
+`gh workflow run deploy-agencies.yaml --ref develop`.
+
+So the normal flow is: open a PR changing `agencies.yaml`, merge to
+`develop`, and watch the "Deploy Agencies" run
+(`gh run watch $(gh run list --workflow=deploy-agencies.yaml --limit 1 --json databaseId --jq '.[0].databaseId')`).
+
+**The CI run fails intentionally whenever a deploy would remove agencies**
+that are in the deployed secret but not in git. The guard can't distinguish
+the two causes, so handle by cause:
+
+- **Out-of-band drift** (someone deployed directly to the secret without
+  committing): commit the missing agencies to git, merge, and the next run
+  proceeds.
+- **Intentional removal** (a merged PR deletes an agency): the push-triggered
+  run will fail — that's the acknowledgment gate, not a bug. Complete the
+  removal with:
+  `gh workflow run deploy-agencies.yaml --ref develop -f allow_removals=true`
+
+Use the manual workflow below when CI can't: emergency config pushes that
+can't wait for a PR, rollbacks, or interactive drift reconciliation.
+
+## Manual Workflow
 
 ### Step 1: Fetch Currently Deployed Configuration
 
@@ -199,7 +228,7 @@ gcloud run services update gtfs-rt-archiver \
 ## Reference
 
 | Setting | Value |
-|---------|-------|
+| --------- | ------- |
 | Secret ID | `agencies-config` |
 | Project | `gtfs-archiver` |
 | Service | `gtfs-rt-archiver` |

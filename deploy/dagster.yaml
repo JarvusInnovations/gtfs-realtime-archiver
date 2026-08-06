@@ -17,10 +17,14 @@ run_launcher:
     region:
       env: GCP_REGION
     job_name_by_code_location:
-      # Key must match workspace.yaml's location_name — CloudRunRunLauncher
-      # resolves the job by remote_job_origin.location_name, NOT the module
-      # name. Value is the Cloud Run job name from Terraform.
-      gtfsrt: dagster-run-worker-gtfsrt
+      # Key must match the code location's RUNTIME name. The webserver and
+      # daemon load code IN-PROCESS via pyproject.toml [tool.dagster] (the
+      # baked workspace.yaml is NOT loaded — dagster only discovers it from
+      # the working directory, and the image keeps it in dagster_home/), so
+      # the location is named after the module. If workspace-based loading is
+      # ever wired up for real (issue #78), this key becomes that file's
+      # location_name.
+      dagster_pipeline.definitions: dagster-run-worker-gtfsrt
     run_timeout: 86400
 
 # Queued run coordinator for managing concurrent runs

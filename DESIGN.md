@@ -17,7 +17,7 @@ Existing GTFS-RT archiver implementations suffer from:
 ### Design Goals
 
 | Goal | Description |
-|------|-------------|
+| ------ | ------------- |
 | **Simplicity** | Single container deployment, minimal moving parts |
 | **Resilience** | Graceful handling of network failures, feed outages, and transient errors |
 | **Efficiency** | Handle 500+ feeds with <1GB memory using async I/O |
@@ -59,10 +59,10 @@ Existing GTFS-RT archiver implementations suffer from:
 │  │                          │ • Hive-partitioned paths          │ │ │
 │  │                          └───────────────────────────────────┘ │ │
 │  │                                                                │ │
-│  │  ┌─────────────────┐     ┌───────────────────────────────────┐ │ │
-│  │  │  Health Server  │     │       Metrics Server              │ │ │
-│  │  │  (port 8080)    │     │       (port 9090)                 │ │ │
-│  │  └─────────────────┘     └───────────────────────────────────┘ │ │
+│  │  ┌───────────────────────────────────────────────────────────┐ │ │
+│  │  │       Health + Metrics Server (port 8080)                 │ │ │
+│  │  │       /health  •  /ready  •  /metrics                     │ │ │
+│  │  └───────────────────────────────────────────────────────────┘ │ │
 │  └────────────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────────┘
                                     │
@@ -81,7 +81,7 @@ Existing GTFS-RT archiver implementations suffer from:
 │  │  Feed Discovery │────▶│  Streaming Parquet Writer             │ │
 │  │  (scan GCS)     │     │  • Parse protobuf → PyArrow tables    │ │
 │  └─────────────────┘     │  • Batch writes (memory efficient)    │ │
-│                          │  • Snappy compression                 │ │
+│                          │  • zstd compression                   │ │
 │                          └───────────────────────────────────────┘ │
 └────────────────────────────────────────────────────────────────────┘
                                     │
@@ -115,17 +115,15 @@ Existing GTFS-RT archiver implementations suffer from:
 - Stores raw response bytes (protobuf) without parsing
 - Optional metadata sidecar files (headers, timing)
 
-#### Health Server
+#### Health/Metrics Server
 
-- HTTP endpoint at `/health` for liveness probes
-- Returns scheduler state and active job count
-- Used by Cloud Run and Kubernetes for health checks
+A single aiohttp server on `HEALTH_PORT` (default 8080) serves both concerns:
 
-#### Metrics Server
-
-- Prometheus metrics endpoint at `/metrics`
-- Exposes fetch duration, success/error counts, active feeds
+- `/health` for liveness probes — returns scheduler state and active job count
+- `/ready` for readiness probes
+- `/metrics` for Prometheus scraping — fetch duration, success/error counts, active feeds
 - Per-feed labels for granular observability
+- Used by Cloud Run and Kubernetes for health checks
 
 ---
 
@@ -133,52 +131,69 @@ Existing GTFS-RT archiver implementations suffer from:
 
 ### Feed Configuration
 
+`agencies.yaml` is a nested hierarchy: `agencies` contain either `feeds` directly, or `systems` that contain `feeds` (an agency cannot have both). Feed IDs are not written in the file — they are generated during flattening as `{agency-id}[-{system-id}]-{feed-type}` (e.g., `septa-bus-vehicle-positions`, `bart-trip-updates`).
+
 ```yaml
 # agencies.yaml
 defaults:
-  interval_seconds: 20
   timeout_seconds: 30
   retry:
     max_attempts: 3
     backoff_base: 1.0
     backoff_max: 10.0
+  intervals:                      # Per-feed-type interval defaults
+    vehicle_positions: 20
+    trip_updates: 20
+    service_alerts: 60
 
-feeds:
-  - id: septa-vehicle-positions
-    name: SEPTA Vehicle Positions
-    url: https://www3.septa.org/gtfsrt/septa-pa-us/Vehicle/rtVehiclePosition.pb
-    feed_type: vehicle_positions
-    agency: septa
-    # Uses defaults, no auth required
-
-  - id: mta-vehicles
-    name: MTA Vehicles
-    url: https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs
-    feed_type: vehicle_positions
-    agency: mta
-    auth:
-      type: header                # Auth via HTTP header
-      secret_name: mta-api-key    # Secret name in GCP Secret Manager
-      key: x-api-key              # Header name
-      # value field is optional - uses entire secret directly when omitted
-
-  - id: bart-trip-updates
-    name: BART Trip Updates
-    url: https://api.bart.gov/gtfsrt/tripupdate.aspx
-    feed_type: trip_updates
-    agency: bart
-    interval_seconds: 15
-    auth:
+agencies:
+  # Simple agency with direct feeds
+  - id: bart
+    name: BART
+    auth:                         # Agency-level auth inherited by all feeds
       type: query                 # Auth via query parameter
-      secret_name: bart-api-key
+      secret_name: bart-api-key   # Secret name in GCP Secret Manager
       key: key                    # Query parameter name
+      # value field is optional - uses entire secret directly when omitted
+    feeds:
+      - feed_type: trip_updates
+        url: https://api.bart.gov/gtfsrt/tripupdate.aspx
+        interval_seconds: 15      # Override the feed-type default
+
+  # Agency with multiple systems (e.g., bus vs rail)
+  - id: septa
+    name: SEPTA
+    systems:
+      - id: bus
+        name: Bus
+        schedule_url: https://www3.septa.org/developer/google_bus.zip
+        feeds:
+          - feed_type: vehicle_positions
+            url: https://www3.septa.org/gtfsrt/septa-pa-us/Vehicle/rtVehiclePosition.pb
+          - feed_type: trip_updates
+            url: https://www3.septa.org/gtfsrt/septa-pa-us/Trip/rtTripUpdates.pb
+      - id: rail
+        name: Regional Rail
+        schedule_url: https://www3.septa.org/developer/google_rail.zip
+        feeds:
+          - feed_type: vehicle_positions
+            url: https://www3.septa.org/gtfsrt/septarail-pa-us/Vehicle/rtVehiclePosition.pb
 ```
+
+At startup, `config.flatten_agencies()` flattens the hierarchy into a list of runtime `FeedConfig` objects, resolving inheritance:
+
+- **Auth**: feed > system > agency
+- **Interval**: feed `interval_seconds` > per-feed-type default (`defaults.intervals`)
+- **Timeout / retry**: feed > global default
+- **Schedule URLs**: system > agency
 
 ### Pydantic Models
 
+Defined in `src/gtfs_rt_archiver/models.py`. The file schema (`AgenciesFileConfig` → `AgencyConfig` → `SystemConfig` → `RealtimeFeedConfig`) mirrors the YAML above; `FeedConfig` is the flattened runtime shape produced by `config.flatten_agencies()`.
+
 ```python
-from pydantic import BaseModel, HttpUrl, Field
-from typing import Optional
+from pydantic import BaseModel, Field, HttpUrl
+from typing import Annotated
 from enum import Enum
 
 class FeedType(str, Enum):
@@ -192,32 +207,74 @@ class AuthType(str, Enum):
 
 class AuthConfig(BaseModel):
     type: AuthType
-    secret_name: str = Field(..., pattern=r"^[a-zA-Z0-9_-]+$")
+    secret_name: Annotated[str, Field(pattern=r"^[a-zA-Z0-9_-]+$")]
     key: str
     value: str | None = None  # Optional: template with ${SECRET} placeholder
     resolved_value: str | None = Field(default=None, exclude=True)
 
 class RetryConfig(BaseModel):
-    max_attempts: int = 3
-    backoff_base: float = 1.0
-    backoff_max: float = 10.0
+    max_attempts: int = Field(default=3, ge=1, le=10)
+    backoff_base: float = Field(default=1.0, ge=0.1, le=10.0)
+    backoff_max: float = Field(default=10.0, ge=1.0, le=60.0)
+
+class IntervalDefaults(BaseModel):
+    vehicle_positions: int = Field(default=20, ge=5, le=3600)
+    trip_updates: int = Field(default=20, ge=5, le=3600)
+    service_alerts: int = Field(default=60, ge=5, le=3600)
+
+class DefaultsConfig(BaseModel):
+    intervals: IntervalDefaults = Field(default_factory=IntervalDefaults)
+    timeout_seconds: int = Field(default=30, ge=1, le=120)
+    retry: RetryConfig = Field(default_factory=RetryConfig)
+
+class RealtimeFeedConfig(BaseModel):
+    """A feed as written in agencies.yaml (before flattening)."""
+    feed_type: FeedType
+    url: HttpUrl
+    name: str | None = None
+    interval_seconds: int | None = Field(default=None, ge=5, le=3600)
+    timeout_seconds: int | None = Field(default=None, ge=1, le=120)
+    retry: RetryConfig | None = None
+    auth: AuthConfig | None = None
+
+class SystemConfig(BaseModel):
+    id: Annotated[str, Field(pattern=r"^[a-z0-9-]+$")]
+    name: str
+    schedule_url: HttpUrl | None = None
+    schedule_urls: list[HttpUrl] | None = None
+    auth: AuthConfig | None = None
+    feeds: list[RealtimeFeedConfig]
+
+class AgencyConfig(BaseModel):
+    id: Annotated[str, Field(pattern=r"^[a-z0-9-]+$")]
+    name: str
+    schedule_url: HttpUrl | None = None
+    schedule_urls: list[HttpUrl] | None = None
+    auth: AuthConfig | None = None
+    feeds: list[RealtimeFeedConfig] | None = None   # Either direct feeds...
+    systems: list[SystemConfig] | None = None       # ...or systems (not both)
+
+class AgenciesFileConfig(BaseModel):
+    """Top-level schema for agencies.yaml."""
+    defaults: DefaultsConfig = Field(default_factory=DefaultsConfig)
+    agencies: list[AgencyConfig]
 
 class FeedConfig(BaseModel):
-    id: str = Field(..., pattern=r"^[a-z0-9-]+$")
+    """A single feed, flattened for runtime by config.flatten_agencies()."""
+    id: Annotated[str, Field(pattern=r"^[a-z0-9-]+$")]  # {agency}[-{system}]-{feed-type}
     name: str
     url: HttpUrl
     feed_type: FeedType
-    agency: Optional[str] = None
+    agency_id: str
+    agency_name: str
+    system_id: str | None = None
+    system_name: str | None = None
+    schedule_url: HttpUrl | None = None                 # Primary (first) schedule URL
+    schedule_urls: list[HttpUrl] = Field(default_factory=list)
     interval_seconds: int = Field(default=20, ge=5, le=3600)
     timeout_seconds: int = Field(default=30, ge=1, le=120)
     retry: RetryConfig = Field(default_factory=RetryConfig)
     auth: AuthConfig | None = None
-
-class ArchiverConfig(BaseModel):
-    bucket: str
-    max_concurrent: int = Field(default=100, ge=1, le=500)
-    defaults: FeedConfig  # Partial, used for defaults
-    feeds: list[FeedConfig]
 ```
 
 ### Storage Path Structure
@@ -295,16 +352,17 @@ gs://parquet.gtfsrt.io/
 ### Environment Variables
 
 | Variable | Description | Default |
-|----------|-------------|---------|
+| ---------- | ------------- | --------- |
 | `CONFIG_PATH` | Path to agencies.yaml | `./agencies.yaml` |
 | `GCS_BUCKET_RT_PROTOBUF` | Target GCS bucket for protobuf archives | Required |
 | `GCS_BUCKET_RT_PARQUET` | Target GCS bucket for compacted parquet files | Required (Dagster) |
 | `GCP_PROJECT_ID` | GCP project ID for Secret Manager | Required if auth used |
 | `MAX_CONCURRENT` | Max concurrent fetches | `100` |
-| `HEALTH_PORT` | Health check server port | `8080` |
-| `METRICS_PORT` | Prometheus metrics port | `9090` |
+| `HEALTH_PORT` | Health check and metrics server port | `8080` |
 | `LOG_LEVEL` | Logging level | `INFO` |
 | `LOG_FORMAT` | `json` or `text` | `json` |
+| `SHARD_INDEX` | Index of this shard (0-based) | `0` |
+| `TOTAL_SHARDS` | Total number of shards | `1` |
 | `DAGSTER_HOME` | Dagster home directory (absolute path) | Required (Dagster) |
 | `STORAGE_EMULATOR_HOST` | Fake GCS server URL for local dev | - |
 
@@ -385,7 +443,7 @@ async def fetch_feed(client: httpx.AsyncClient, feed: FeedConfig) -> FetchResult
 ### Failure Categories
 
 | Category | Behavior | Example |
-|----------|----------|---------|
+| ---------- | ---------- | --------- |
 | **Transient network** | Retry with backoff | Connection reset, DNS timeout |
 | **Slow response** | Retry with backoff | Request timeout |
 | **Auth failure** | Log error, skip feed | 401/403 response |
@@ -508,18 +566,16 @@ logger.error(
 GET /health
 
 {
+  "version": "dev",
   "status": "healthy",
+  "uptime_seconds": 3600.0,
   "scheduler": {
     "running": true,
-    "jobs_scheduled": 45,
-    "jobs_pending": 2
+    "jobs_scheduled": 45
   },
   "feeds": {
-    "total": 45,
-    "active": 45,
-    "erroring": 2
-  },
-  "uptime_seconds": 3600
+    "total": 45
+  }
 }
 ```
 
@@ -612,7 +668,7 @@ resource "google_cloud_run_v2_service" "archiver" {
 ### Scaling Strategy
 
 | Feed Count | Instances | Configuration |
-|------------|-----------|---------------|
+| ------------ | ----------- | --------------- |
 | 1-100 | 1 | Single instance, 100 concurrent |
 | 100-300 | 1-2 | Increase max_concurrent or add instance |
 | 300-500 | 2-3 | Shard feeds across instances |
@@ -621,14 +677,15 @@ resource "google_cloud_run_v2_service" "archiver" {
 #### Sharding Implementation
 
 ```python
-# When SHARD_INDEX and TOTAL_SHARDS are set
-shard_index = int(os.environ.get("SHARD_INDEX", 0))
-total_shards = int(os.environ.get("TOTAL_SHARDS", 1))
+# When SHARD_INDEX and TOTAL_SHARDS are set (see scheduler.py)
+def should_handle_feed(feed: FeedConfig, shard_index: int, total_shards: int) -> bool:
+    if total_shards <= 1:
+        return True
+    # MD5 for deterministic hashing across processes (Python's hash() is randomized)
+    feed_hash = int(hashlib.md5(feed.id.encode()).hexdigest(), 16)
+    return feed_hash % total_shards == shard_index
 
-def should_handle_feed(feed: FeedConfig) -> bool:
-    return hash(feed.id) % total_shards == shard_index
-
-active_feeds = [f for f in all_feeds if should_handle_feed(f)]
+active_feeds = [f for f in all_feeds if should_handle_feed(f, shard_index, total_shards)]
 ```
 
 ---
@@ -640,19 +697,48 @@ The Dagster pipeline compacts raw protobuf archives into daily Parquet files for
 ### Design Decisions
 
 | Decision | Rationale |
-|----------|-----------|
+| ---------- | ----------- |
 | **Daily partitions** | Medium feed count (~100s) makes daily batches practical without excessive memory usage |
 | **Runtime feed discovery** | Scan GCS for `base64url=` directories instead of maintaining a feed registry |
 | **Streaming parquet writer** | Process feeds in batches to limit memory usage (vs. accumulating all records) |
 | **Denormalization** | Flatten nested GTFS-RT structures for SQL-friendly analytics |
 
+**On the denormalized grain (recorded 2026-08-05, retroactively):** the
+one-row-per-innermost-repeated-element grain (trip_updates rows are
+stop_time_updates, service_alerts rows are informed_entities) was set in the
+original compaction commit (e4a11e1) **without articulated rationale** — the
+alternative of one row per feed-entity message, with unnesting handled
+downstream in a transform layer, was never weighed. TripModifications
+entities existed in the spec at that time and were seemingly not
+supported or considered by the decision. The tradeoff that choice bought is
+now visible: a producer's single feed message splits across multiple tables
+(a TripUpdate's trip-level fields replicate across its STU rows, and the
+TripModifications family lands in separate tables), and table schemas are
+fixed at compaction time — where changes require re-materialization — rather
+than in a downstream transform layer (dbt) where changes are cheap. The
+grain is **retained as-is** for the original three tables because changing
+it now would be disruptive to every existing consumer and partition; tables
+added later (trip_modifications, shapes, stops) use the entity/message grain
+with repeated structures JSON-encoded instead.
+
 ### Assets
 
-| Asset | Description | Denormalization |
-|-------|-------------|-----------------|
+| Asset | Description | Grain |
+| ------- | ------------- | ------- |
 | `vehicle_positions_parquet` | Vehicle positions for a day | One row per vehicle position update |
 | `trip_updates_parquet` | Trip updates for a day | One row per stop_time_update (or base record if none) |
 | `service_alerts_parquet` | Service alerts for a day | One row per informed_entity (or base record if none) |
+| `trip_modifications_parquet` | TripModifications (detour) entities for a day (#95) | One row per entity; repeated structures JSON-encoded |
+| `shapes_parquet` | Shape (detour geometry) entities for a day (#96) | One row per entity |
+| `stops_parquet` | Ad-hoc/replacement Stop entities for a day (#97) | One row per entity |
+
+`trip_updates_parquet`, `trip_modifications_parquet`, `shapes_parquet`, and
+`stops_parquet` are the four outputs of ONE non-subsettable `@multi_asset`:
+Madison Metro and Big Blue Bus publish trip_modifications/shape/stop entities
+inside their trip_updates feed URLs (2026-08-04 census), so all four tables
+are extracted from a single download+parse pass of the trip_updates raw
+files. Re-materializing the partition rewrites all four outputs (same source
+bytes); an output with zero records uploads nothing.
 
 ### Data Flow
 
@@ -671,26 +757,222 @@ Each feed type has a defined schema for consistent output:
 
 **Vehicle Positions:**
 
-- `source_file`, `feed_url`, `feed_timestamp`, `entity_id`
+- `source_file`, `feed_url`, `feed_timestamp`, `fetch_timestamp`, `entity_id`
 - `trip_id`, `route_id`, `direction_id`, `start_date`, `start_time`, `schedule_relationship`
-- `vehicle_id`, `vehicle_label`, `license_plate`
+- `vehicle_id`, `vehicle_label`, `license_plate`, `wheelchair_accessible`
 - `latitude`, `longitude`, `bearing`, `odometer`, `speed`
-- `current_stop_sequence`, `stop_id`, `current_status`, `timestamp`, `congestion_level`, `occupancy_status`
+- `current_stop_sequence`, `stop_id`, `current_status`, `timestamp`, `congestion_level`, `occupancy_status`, `occupancy_percentage`
+- Modified trip: `modified_trip_modifications_id`, `modified_trip_affected_trip_id`, `modified_trip_start_date`, `modified_trip_start_time`
+- Carriages: `multi_carriage_details_json` (repeated CarriageDetails, JSON-encoded)
+- Header/entity: `feed_version`, `incrementality`, `is_deleted`
 
 **Trip Updates:**
 
-- Base: `source_file`, `feed_url`, `feed_timestamp`, `entity_id`
+- Base: `source_file`, `feed_url`, `feed_timestamp`, `fetch_timestamp`, `entity_id`
 - Trip: `trip_id`, `route_id`, `direction_id`, `start_date`, `start_time`, `schedule_relationship`
-- Vehicle: `vehicle_id`, `vehicle_label`
+- Vehicle: `vehicle_id`, `vehicle_label`, `license_plate`, `wheelchair_accessible`
 - Update: `trip_delay`, `trip_timestamp`
-- Stop time: `stop_sequence`, `stop_id`, `arrival_delay`, `arrival_time`, `arrival_uncertainty`, `departure_delay`, `departure_time`, `departure_uncertainty`, `schedule_relationship`
+- Trip properties: `trip_properties_trip_id`, `trip_properties_start_date`, `trip_properties_start_time`, `trip_properties_shape_id`, `trip_properties_trip_headsign`, `trip_properties_trip_short_name`
+- Modified trip: `modified_trip_modifications_id`, `modified_trip_affected_trip_id`, `modified_trip_start_date`, `modified_trip_start_time`
+- Stop time: `stop_sequence`, `stop_id`, `arrival_delay`, `arrival_time`, `arrival_uncertainty`, `arrival_scheduled_time`, `departure_delay`, `departure_time`, `departure_uncertainty`, `departure_scheduled_time`, `departure_occupancy_status`, `stop_schedule_relationship`, `assigned_stop_id`, `stop_headsign`, `pickup_type`, `drop_off_type`
+- Header/entity: `feed_version`, `incrementality`, `is_deleted`
 
 **Service Alerts:**
 
-- Base: `source_file`, `feed_url`, `feed_timestamp`, `entity_id`
-- Alert: `cause`, `effect`, `url`, `header_text`, `description_text`
-- Active period: `active_period_start`, `active_period_end`
-- Informed entity: `agency_id`, `route_id`, `route_type`, `stop_id`, `trip_id`, `direction_id`
+- Base: `source_file`, `feed_url`, `feed_timestamp`, `fetch_timestamp`, `entity_id`
+- Alert: `cause`, `effect`, `severity_level`, `cause_detail`, `effect_detail`, `url`, `header_text`, `description_text`, `tts_header_text`, `tts_description_text`, `image_url`, `image_media_type`, `image_alternative_text`
+- Active period: `active_period_start`, `active_period_end` (first period **as published** — the spec doesn't require chronological order, so use `active_periods_json` when ordering matters), `active_periods_json` (full list)
+- Informed entity: `agency_id`, `route_id`, `route_type`, `stop_id`, `direction_id`, `trip_id`, `trip_route_id`, `trip_direction_id`, `trip_start_time`, `trip_start_date`, `trip_schedule_relationship`, `trip_modified_trip_modifications_id`, `trip_modified_trip_affected_trip_id`, `trip_modified_trip_start_date`, `trip_modified_trip_start_time`
+- Communication/impact periods: `communication_periods_json`, `impact_periods_json` (same encoding and NULL semantics as `active_periods_json`)
+- Translations (#98): `header_text_translations_json`, `description_text_translations_json`, `url_translations_json`, `tts_header_text_translations_json`, `tts_description_text_translations_json`, `cause_detail_translations_json`, `effect_detail_translations_json`, `image_alternative_text_translations_json` (each `[{"text","language"},…]` in publisher order, NULL when unset), `image_localized_images_json` (`[{"url","media_type","language"},…]`)
+- Header/entity: `feed_version`, `incrementality`, `is_deleted`
+
+**Trip Modifications** (#95):
+
+- Base: `source_file`, `feed_url`, `feed_timestamp`, `fetch_timestamp`, `entity_id`
+- Payload: `selected_trips_json`, `start_times_json`, `service_dates_json`, `modifications_json`
+- Header/entity: `feed_version`, `incrementality`, `is_deleted`
+
+**Shapes** (#96):
+
+- Base: `source_file`, `feed_url`, `feed_timestamp`, `fetch_timestamp`, `entity_id`
+- Payload: `shape_id`, `encoded_polyline` (Google encoded polyline)
+- Header/entity: `feed_version`, `incrementality`, `is_deleted`
+
+**Stops** (#97):
+
+- Base: `source_file`, `feed_url`, `feed_timestamp`, `fetch_timestamp`, `entity_id`
+- Payload: `stop_id`, `stop_code_translations_json`, `stop_name_translations_json`, `tts_stop_name_translations_json`, `stop_desc_translations_json`, `stop_lat`, `stop_lon`, `zone_id`, `stop_url_translations_json`, `parent_station`, `stop_timezone`, `wheelchair_boarding`, `level_id`, `platform_code_translations_json`
+- Header/entity: `feed_version`, `incrementality`, `is_deleted`
+
+The three entity-grain tables (trip_modifications, shapes, stops — the
+TripModifications detour family, experimental in the spec) follow different
+conventions than the original three, deliberately (see the grain-decision
+entry above): one row per FeedEntity per snapshot, with every repeated
+structure JSON-encoded whole so unnesting is a downstream transform concern.
+JSON columns are NULL when the repeated field is empty (never `"[]"`), use
+per-field presence inside objects (unset → JSON null), and keep nested empty
+lists as `[]` (the parent exists, its list is empty). Join keys:
+`trip_modifications.entity_id` is what `modified_trip_modifications_id`
+(trip_updates/vehicle_positions rows) points at;
+`Modification.service_alert_id` inside `modifications_json` references
+service_alerts entity ids; `selected_trips.shape_id` and
+`trip_properties_shape_id` reference `shapes.shape_id`. The stops table's
+`*_translations_json` columns capture ALL translations as
+`[{"text": …, "language": …}, …]` in publisher order — full fidelity from
+day one, unlike the service_alerts keep-first columns (#98); any display
+selection rule is derivable downstream. Duplication is accepted by design:
+polylines and stop definitions repeat identically in every ~20s snapshot
+for a detour's lifetime (the VP/TU every-snapshot model; zstd + dictionary
+encoding collapse repeats on disk) — dedup at query time, e.g.
+`QUALIFY ROW_NUMBER() OVER (PARTITION BY shape_id ORDER BY feed_timestamp DESC) = 1`.
+
+Service_alerts scalar translated columns (`header_text` et al.) store the
+**first translation as published** — which is producer whim, not guaranteed
+English (AC Transit lists Spanish first; MTA publishes `en` and `en-html`
+variants). From #98 they sit alongside full-fidelity
+`*_translations_json` companions capturing every translation with its
+language tag, so nothing is lost and any display-selection rule
+(prefer-`en`, skip `-html`) is a downstream transform concern, not a
+compaction decision. The stops table's translated fields ship as
+`*_translations_json` only. All columns added by #91 (including the
+gtfs-realtime-bindings-2.2.0-gated `*_scheduled_time`, `cause_detail`,
+`effect_detail`, `image_url`, `modified_trip_*`) populate only from the
+release that shipped them onward; earlier partitions lack the columns and
+read as NULL from the BigQuery external tables (DuckDB consumers should use
+`union_by_name`). Note that **re-materializing any old partition whose raw
+`.pb` files are still within the 365-day retention window backfills its new
+columns** (compaction rewrites partitions wholesale from raw), so column
+presence varies partition-to-partition with re-run history — another reason
+for `union_by_name`. Past that window the remedy silently no-ops: a re-run
+over expired raw data returns success with zero records and leaves the
+existing parquet untouched (deliberate — a lifecycle expiry must not destroy
+derived data). Within service_alerts, bare
+informed-entity column names (`agency_id`, `route_id`, `stop_id`,
+`direction_id`) carry EntitySelector semantics — distinct from the
+trip-descriptor meanings the same names have in vehicle_positions/
+trip_updates. Similarly, in trip_updates the `StopTimeProperties` fields
+(`assigned_stop_id`, `stop_headsign`, `pickup_type`, `drop_off_type`) are
+deliberately bare — each denormalized row already *is* a stop_time_update, so
+STU-level fields take row-level names, and only fields hoisted from
+trip-level nested messages (`trip_properties_*`, `modified_trip_*`) carry a
+provenance prefix. Note `pickup_type`/`drop_off_type`/`stop_headsign` also
+name GTFS **static** `stop_times.txt` columns; qualify columns when joining
+static and RT tables. The proto messages shared by vehicle_positions and
+trip_updates (`VehicleDescriptor`, `TripDescriptor`) are captured
+symmetrically — `license_plate`, `wheelchair_accessible`, and
+`modified_trip_*` appear in both tables — so columnset differences between
+the two reflect feed-type-specific messages only.
+
+String-presence semantics: fields of sparse-by-design nested messages
+(`trip_properties_*`, `modified_trip_*`, `assigned_stop_id`, `stop_headsign`)
+use per-field presence — unset is NULL, never `""`. Strings on
+routinely-populated parents (`vehicle_id`, `vehicle_label`, trip-descriptor
+strings) keep the long-standing parent-presence convention, where an unset
+field on a present parent reads as `""`. One migrated
+convention: `license_plate` uses per-field presence (unset → NULL, never `""`)
+in **both** feed types from v0.9.3 onward — plates are rarely published, and
+the old parent-presence convention read `""` on nearly every row. The
+vehicle_positions column predates the switch, so **partitions materialized
+before v0.9.3 contain `""`** for a present-descriptor/unset-plate row; this
+historical inconsistency is deliberate (accepted on PR #94 in preference to
+carrying a permanent cross-table asymmetry). Reads spanning the boundary
+should normalize with `NULLIF(license_plate, '')`; re-materializing an old
+partition (or a #91 backfill) rewrites it under the new convention — while
+its raw `.pb` files remain within the 365-day retention window (see above).
+`feed_timestamp` (all three tables) made the same v0.9.3 migration in the
+other value domain: it moved from truthiness to per-field presence, so an
+explicitly-published `header.timestamp = 0` now records `0` where it
+previously recorded NULL — pathological in practice (a 1970 timestamp),
+noted for completeness, same per-partition re-run boundary as
+`license_plate`.
+
+Enum-presence semantics: enums added by #91/#94 (`wheelchair_accessible`,
+`pickup_type`, `drop_off_type`, `departure_occupancy_status`,
+`incrementality`, `service_alerts.trip_schedule_relationship`) and the
+pre-existing per-field enums (`stop_schedule_relationship`, `cause`,
+`effect`, `severity_level`, `current_status`, `congestion_level`,
+`occupancy_status`) — an exhaustive list — use per-field presence — unset is
+NULL, and an explicitly-set 0 is captured as 0. The exception is exactly two
+columns: `vehicle_positions.schedule_relationship` and
+`trip_updates.schedule_relationship`. They predate the convention and
+materialize the proto default, so unset reads `0` (= SCHEDULED, which is
+what the spec says unset means) rather than NULL. Note the resulting split
+on the *same proto field*: `service_alerts.trip_schedule_relationship` is
+the identical `TripDescriptor.schedule_relationship`, captured later under
+the per-field convention — unset reads NULL there but `0` in VP/TU.
+Normalize with `COALESCE(trip_schedule_relationship, 0)` when unioning trip
+descriptors across tables. `pickup_type IS NULL` and
+`schedule_relationship = 0` therefore both encode "the producer did not
+say" — in adjacent columns of the same row.
+
+Complete-capture policy (PR #94): every leaf field of the three archived
+entity types maps to a column or carries a recorded drop reason, enforced by
+a descriptor-walk manifest test — so adding a feed never requires a field
+audit, and a bindings bump that adds fields fails CI until dispositioned.
+Scope caveat: this covers the **base schema** only. Every GTFS-RT message
+also declares proto2 extension ranges, and producer extensions (e.g.
+MTA-NYCT's `nyct_subway.proto` train/track fields) arrive as unknown fields
+that compaction drops — they survive only in the raw `.pb` archive within
+its 365-day retention (#101).
+Header/entity columns: `feed_version` (free-form producer version;
+unpopulated fleet-wide as of the 2026-08-04 census), `incrementality`
+(per-field presence — explicit FULL_DATASET reads 0, unset NULL; the
+extractors assume FULL_DATASET semantics, so a non-zero value here is the
+signal that a DIFFERENTIAL feed appeared), and `is_deleted` (captured on
+payload-bearing entities — MTA sets it explicitly false; bare deletion
+tombstones carry no payload and yield no row, which only matters for
+DIFFERENTIAL feeds). Repeated messages ride as JSON columns:
+`multi_carriage_details_json`, `communication_periods_json`,
+`impact_periods_json` (both period columns share `active_periods_json`'s
+encoding, NULL semantics, and query recipe). Feeds can also carry entity
+types outside these three tables entirely — the 2026-08-04 census found
+Madison Metro and Big Blue Bus publishing `shape`, `stop`, and
+`trip_modifications` entities, which compaction skips; capturing them means
+new tables (tracked on #91).
+
+`active_periods_json` is NULL when an alert declares no active periods
+(spec: always active); `"[]"` is never emitted. It is a STRING column
+(BigQuery's native JSON type is unavailable for Parquet external tables).
+The "active at time T" recipe has **two** load-bearing NULL rules: a NULL
+*column* means always active (a plain `UNNEST`/comma join yields zero rows
+for it, silently reporting the alert inactive — wrap the period check in
+`EXISTS`), and a JSON-null *start/end* means unbounded on that side
+(`JSON_VALUE` returns SQL NULL for it, and NULL comparisons filter the
+row). Both recipes use `EXISTS` so each alert row is returned **at most
+once** — a `LEFT JOIN UNNEST ... ON TRUE` form fans out one row per
+matching period (overlapping periods are legal and observed), silently
+inflating any aggregation over the result. BigQuery:
+
+```sql
+FROM gtfs_rt.service_alerts a
+WHERE a.active_periods_json IS NULL
+   OR EXISTS (
+        SELECT 1
+        FROM UNNEST(JSON_QUERY_ARRAY(a.active_periods_json)) AS p
+        WHERE (JSON_VALUE(p, '$.start') IS NULL OR CAST(JSON_VALUE(p, '$.start') AS INT64) <= @t)
+          AND (JSON_VALUE(p, '$.end')   IS NULL OR CAST(JSON_VALUE(p, '$.end')   AS INT64) >  @t)
+      )
+```
+
+(`JSON_VALUE` returns STRING, so the casts are required.) DuckDB:
+
+```sql
+FROM service_alerts a
+WHERE a.active_periods_json IS NULL
+   OR EXISTS (
+        SELECT 1
+        FROM unnest(json_transform(a.active_periods_json,
+             '[{"start":"UBIGINT","end":"UBIGINT"}]')) AS u(p)
+        WHERE (p.start IS NULL OR p.start <= $t)
+          AND (p."end" IS NULL OR p."end" > $t)
+      )
+```
+
+Producer-supplied text columns (`header_text`, `description_text`, `tts_*`,
+`cause_detail`, `effect_detail`, `image_url`, headsigns, etc.) are unvalidated
+third-party content passed through verbatim — the pipeline never interprets or
+fetches them, but downstream renderers must treat them as untrusted input.
 
 ### Schedule
 
@@ -708,9 +990,11 @@ uv run dg list defs
 # Validate definitions load correctly
 uv run dg check defs
 
-# Manually materialize an asset for a specific date
-uv run dg launch --assets vehicle_positions_parquet --partition 2026-01-01
+# Manually materialize an asset for a specific date and feed
+uv run dg launch --assets vehicle_positions_parquet --partition "2026-01-01|gtfs.example.com/feed"
 ```
+
+Partition keys are `date|feed`, where `feed` is the scheme-stripped feed URL (`~` prefix for `http`); the feed dimension is dynamic, so the key must already be registered.
 
 ---
 
@@ -719,54 +1003,77 @@ uv run dg launch --assets vehicle_positions_parquet --partition 2026-01-01
 ```
 gtfs-realtime-archiver/
 ├── .github/
-│   └── workflows/
-│       ├── ci.yaml                 # Lint, test, typecheck, Dagster validation
-│       └── deploy.yaml             # Container build + push
-├── .dagster_home/                  # Dagster configuration
-│   └── dagster.yaml
+│   └── workflows/                  # CI/CD (lint, test, build, push, pages)
+├── .dagster_home/                  # Local Dagster configuration
 ├── .tool-versions                  # asdf version pinning
 ├── tf/
-│   ├── main.tf                     # Cloud Run service
+│   ├── main.tf                     # Cloud Run service (archiver)
 │   ├── storage.tf                  # GCS buckets (protobuf + parquet)
-│   ├── dns.tf                      # DNS records for custom bucket domains
-│   ├── iam.tf                      # Service account
-│   ├── secrets.tf                  # Secret Manager
+│   ├── iam.tf                      # Archiver service account
+│   ├── dagster.tf                  # Dagster module instantiation (registry module)
+│   ├── dagster_iam.tf              # Project-specific Dagster IAM grants
+│   ├── artifact_registry.tf        # GHCR remote repository proxy
+│   ├── bigquery.tf                 # BigQuery datasets and external tables
+│   ├── dns.tf                      # DNS records for gtfsrt.io services
+│   ├── tags.tf                     # Secret tags for feed API key access
+│   ├── wif.tf                      # Workload Identity Federation (GitHub Actions)
 │   ├── variables.tf                # Input variables
 │   ├── outputs.tf                  # Output values
 │   └── versions.tf                 # Provider versions
+├── deploy/                         # Dagster deployment configs (baked into images)
+│   ├── dagster.yaml
+│   └── workspace.yaml
+├── site/                           # Static site for gtfsrt.io (GitHub Pages)
 ├── src/
 │   ├── gtfs_rt_archiver/           # Archiver service
 │   │   ├── __init__.py
 │   │   ├── __main__.py             # Entry point
-│   │   ├── config.py               # Settings and feed loading
+│   │   ├── config.py               # Settings, feed loading and flattening
 │   │   ├── models.py               # Pydantic models
-│   │   ├── scheduler.py            # APScheduler setup
+│   │   ├── scheduler.py            # APScheduler setup (+ sharding)
 │   │   ├── fetcher.py              # HTTP fetch logic
 │   │   ├── storage.py              # GCS upload
+│   │   ├── secrets.py              # Secret Manager integration
 │   │   ├── metrics.py              # Prometheus metrics
-│   │   └── health.py               # Health check server
+│   │   ├── logging.py              # Structlog configuration
+│   │   └── health.py               # Health/metrics HTTP server
 │   └── dagster_pipeline/           # Data processing pipeline
 │       ├── __init__.py
 │       ├── definitions.py          # Dagster definitions entry point
 │       └── defs/
 │           ├── __init__.py
+│           ├── partitions.py       # Partition definitions
+│           ├── schedules.py        # Compaction schedules
+│           ├── sensors.py          # Sensors
+│           ├── resources/          # GCS and Secret Manager resources
 │           └── assets/
 │               ├── __init__.py
-│               └── compaction.py   # Protobuf → Parquet compaction assets
+│               ├── compaction.py   # Protobuf → Parquet compaction assets
+│               ├── schemas.py      # PyArrow schemas for feed types
+│               ├── feeds_metadata.py  # Agency/feed config → Parquet
+│               ├── inventory.py    # Bucket inventory for gtfsrt.io site
+│               └── schedule.py     # GTFS Schedule ingestion assets
 ├── tests/
 │   ├── __init__.py
 │   ├── conftest.py                 # Pytest fixtures (archiver)
 │   ├── test_config.py
 │   ├── test_fetcher.py
+│   ├── test_health.py
+│   ├── test_main.py
+│   ├── test_models.py
+│   ├── test_scheduler.py
+│   ├── test_secrets.py
 │   ├── test_storage.py
-│   ├── test_integration.py
 │   └── dagster/                    # Dagster pipeline tests
 │       ├── __init__.py
 │       ├── conftest.py             # Dagster test fixtures
-│       └── test_compaction.py      # Tests for extraction functions
-├── agencies.yaml                   # Agency configuration
+│       ├── test_compaction.py      # Tests for extraction functions
+│       └── test_partitions.py      # Partition helper tests
+├── agencies.example.yaml           # Example agency configuration
 ├── .env.example                    # Environment variables template
-├── Dockerfile
+├── Dockerfile                      # Archiver container build
+├── Containerfile.dagster           # Dagster images (webserver, daemon, code-server)
+├── docker-compose.yml              # Local dev stack
 ├── pyproject.toml                  # Project metadata (uv-managed)
 ├── uv.lock                         # Dependency lockfile
 ├── DESIGN.md                       # This document
@@ -778,12 +1085,13 @@ gtfs-realtime-archiver/
 The project uses component-specific dependency groups in `pyproject.toml`:
 
 | Group | Purpose |
-|-------|---------|
+| ------- | --------- |
 | `archiver` | Runtime deps for gtfs_rt_archiver |
 | `dev-archiver` | Test deps for gtfs_rt_archiver |
 | `dagster` | Runtime deps for dagster_pipeline |
 | `dev-dagster` | Dev tools for dagster_pipeline |
-| `dev` | Aggregate group (all of the above + mypy, ruff) |
+| `dagster-deploy` | Deps for Dagster Cloud Run deployment |
+| `dev` | Aggregate group (archiver, dev-archiver, dagster, dev-dagster + mypy, ruff) |
 
 Install specific groups with `uv sync --only-group <name>` or all dev deps with `uv sync`.
 
@@ -905,7 +1213,7 @@ uv add --dev ruff mypy
 uv add --dev respx  # For mocking httpx
 
 # Run locally
-uv run python -m archiver
+uv run python -m gtfs_rt_archiver
 
 # Run tests
 uv run pytest
@@ -930,7 +1238,6 @@ docker run \
   -e GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json \
   -e GCS_BUCKET_RT_PROTOBUF=my-test-bucket \
   -p 8080:8080 \
-  -p 9090:9090 \
   gtfs-rt-archiver
 ```
 
@@ -962,20 +1269,20 @@ Note that releases deploy by running `tofu apply` with image `-var`s derived fro
 the release tag (see `.github/workflows/deploy.yaml`) — local applies must supply
 current image versions or they will roll deployed images back.
 
-The `tf/modules/dagster/` module is deliberately generic (no GTFS-specific
-variables): this project's buckets, secrets, and env are wired through the
-module's `extra_env`, `bucket_grants`, `secret_grants`, and `run_worker_secret_env`
-maps in `tf/dagster.tf`. The module also supports private-ingress + reverse-proxy
-exposure (`public_ingress`, `path_prefix`) and optional per-run-worker GCS HMAC
-keys (`enable_dbt_hmac_keys`) used by sibling deployments; it is being extracted
-to a standalone Terraform Registry module.
+The Dagster deployment module is consumed from the Terraform Registry
+(`JarvusInnovations/dagster-cloud-run/google`, extracted from this repo): this
+project's buckets, secrets, and env are wired through the module's `extra_env`,
+`bucket_grants`, `secret_grants`, and `run_worker_secret_env` maps in
+`tf/dagster.tf`. Topology modes, ingress postures, and the deployment kit are
+documented in the module repo
+(JarvusInnovations/terraform-google-dagster-cloud-run).
 
 ---
 
 ## Appendix A: Dependency Justification
 
 | Dependency | Purpose | Alternatives Considered |
-|------------|---------|------------------------|
+| ------------ | --------- | ------------------------ |
 | **httpx** | Async HTTP client | aiohttp (less ergonomic), requests (sync only) |
 | **apscheduler** | In-process job scheduling | schedule (no async), celery (overkill) |
 | **pydantic** | Data validation & settings | attrs (less features), dataclasses (no validation) |

@@ -37,6 +37,25 @@ VEHICLE_POSITIONS_SCHEMA = pa.schema(
         pa.field("congestion_level", pa.int32()),
         pa.field("occupancy_status", pa.int32()),
         pa.field("occupancy_percentage", pa.uint32()),
+        # Added per #91: unpopulated fleet-wide as of the census, captured
+        # from day one (VehicleDescriptor.wheelchair_accessible)
+        pa.field("wheelchair_accessible", pa.int32()),
+        # ModifiedTripSelector (trip-modifications linkage) — same
+        # TripDescriptor field captured in trip_updates; kept symmetric so a
+        # vehicle's live position can join to the modification that created
+        # its trip (PR #94 review round 7)
+        pa.field("modified_trip_modifications_id", pa.string()),
+        pa.field("modified_trip_affected_trip_id", pa.string()),
+        pa.field("modified_trip_start_date", pa.string()),
+        pa.field("modified_trip_start_time", pa.string()),
+        # Complete-capture fields (PR #94 round 12 — nothing deferred).
+        # Repeated CarriageDetails JSON-encoded; unpopulated fleet-wide
+        # (2026-08-04 census)
+        pa.field("multi_carriage_details_json", pa.string()),
+        # Header / entity-level (all three feed types)
+        pa.field("feed_version", pa.string()),
+        pa.field("incrementality", pa.int32()),
+        pa.field("is_deleted", pa.bool_()),
     ]
 )
 
@@ -73,6 +92,124 @@ TRIP_UPDATES_SCHEMA = pa.schema(
         pa.field("departure_time", pa.int64()),
         pa.field("departure_uncertainty", pa.int32()),
         pa.field("stop_schedule_relationship", pa.int32()),
+        # Fields added per the #91 census (scheduled_time additionally
+        # requires bindings >= 2.2.0 to be visible at parse time)
+        pa.field("license_plate", pa.string()),
+        pa.field("arrival_scheduled_time", pa.int64()),
+        pa.field("departure_scheduled_time", pa.int64()),
+        pa.field("departure_occupancy_status", pa.int32()),
+        # StopTimeProperties
+        pa.field("assigned_stop_id", pa.string()),
+        pa.field("stop_headsign", pa.string()),
+        pa.field("pickup_type", pa.int32()),
+        pa.field("drop_off_type", pa.int32()),
+        # TripProperties (added-trip metadata)
+        pa.field("trip_properties_trip_id", pa.string()),
+        pa.field("trip_properties_start_date", pa.string()),
+        pa.field("trip_properties_start_time", pa.string()),
+        pa.field("trip_properties_shape_id", pa.string()),
+        pa.field("trip_properties_trip_headsign", pa.string()),
+        pa.field("trip_properties_trip_short_name", pa.string()),
+        # ModifiedTripSelector (trip-modifications linkage)
+        pa.field("modified_trip_modifications_id", pa.string()),
+        pa.field("modified_trip_affected_trip_id", pa.string()),
+        pa.field("modified_trip_start_date", pa.string()),
+        pa.field("modified_trip_start_time", pa.string()),
+        # VehicleDescriptor.wheelchair_accessible — same field captured in
+        # vehicle_positions; kept symmetric (PR #94 review round 7)
+        pa.field("wheelchair_accessible", pa.int32()),
+        # Header / entity-level (all three feed types; PR #94 round 12)
+        pa.field("feed_version", pa.string()),
+        pa.field("incrementality", pa.int32()),
+        pa.field("is_deleted", pa.bool_()),
+    ]
+)
+
+# Trip Modifications Schema (#95)
+# Entity/message grain: one row per trip_modifications entity per snapshot.
+# Repeated structures are JSON-encoded whole — unnesting is a downstream
+# transform concern (see the DESIGN.md grain-decision entry). entity_id is
+# the join target of trip_updates/vehicle_positions
+# modified_trip_modifications_id; Modification.service_alert_id (inside
+# modifications_json) points into service_alerts.
+TRIP_MODIFICATIONS_SCHEMA = pa.schema(
+    [
+        # Source metadata
+        pa.field("source_file", pa.string(), nullable=False),
+        pa.field("feed_url", pa.string(), nullable=False),
+        pa.field("feed_timestamp", pa.uint64()),
+        pa.field("fetch_timestamp", pa.timestamp("us", tz="UTC")),
+        pa.field("entity_id", pa.string(), nullable=False),
+        # TripModifications payload, JSON-encoded per repeated field
+        # (NULL when empty, never "[]")
+        pa.field("selected_trips_json", pa.string()),
+        pa.field("start_times_json", pa.string()),
+        pa.field("service_dates_json", pa.string()),
+        pa.field("modifications_json", pa.string()),
+        # Header / entity-level (all tables)
+        pa.field("feed_version", pa.string()),
+        pa.field("incrementality", pa.int32()),
+        pa.field("is_deleted", pa.bool_()),
+    ]
+)
+
+# Shapes Schema (#96)
+# One row per shape entity per snapshot — detour replacement geometry
+# referenced by TripModifications.selected_trips.shape_id and
+# trip_updates.trip_properties_shape_id. Polylines repeat identically
+# across snapshots for a detour's lifetime; dedup at query time.
+SHAPES_SCHEMA = pa.schema(
+    [
+        # Source metadata
+        pa.field("source_file", pa.string(), nullable=False),
+        pa.field("feed_url", pa.string(), nullable=False),
+        pa.field("feed_timestamp", pa.uint64()),
+        pa.field("fetch_timestamp", pa.timestamp("us", tz="UTC")),
+        pa.field("entity_id", pa.string(), nullable=False),
+        # Shape payload
+        pa.field("shape_id", pa.string()),
+        pa.field("encoded_polyline", pa.string()),
+        # Header / entity-level (all tables)
+        pa.field("feed_version", pa.string()),
+        pa.field("incrementality", pa.int32()),
+        pa.field("is_deleted", pa.bool_()),
+    ]
+)
+
+# Stops Schema (#97)
+# One row per stop entity per snapshot — ad-hoc/replacement stop
+# definitions for detours (may exist nowhere in static GTFS). The six
+# TranslatedString fields are captured full-fidelity as
+# [{"text": ..., "language": ...}, ...] JSON from day one (#98-neutral:
+# no keep-first selection rule is baked in; display text is derivable
+# downstream).
+STOPS_SCHEMA = pa.schema(
+    [
+        # Source metadata
+        pa.field("source_file", pa.string(), nullable=False),
+        pa.field("feed_url", pa.string(), nullable=False),
+        pa.field("feed_timestamp", pa.uint64()),
+        pa.field("fetch_timestamp", pa.timestamp("us", tz="UTC")),
+        pa.field("entity_id", pa.string(), nullable=False),
+        # Stop payload (proto field order)
+        pa.field("stop_id", pa.string()),
+        pa.field("stop_code_translations_json", pa.string()),
+        pa.field("stop_name_translations_json", pa.string()),
+        pa.field("tts_stop_name_translations_json", pa.string()),
+        pa.field("stop_desc_translations_json", pa.string()),
+        pa.field("stop_lat", pa.float32()),
+        pa.field("stop_lon", pa.float32()),
+        pa.field("zone_id", pa.string()),
+        pa.field("stop_url_translations_json", pa.string()),
+        pa.field("parent_station", pa.string()),
+        pa.field("stop_timezone", pa.string()),
+        pa.field("wheelchair_boarding", pa.int32()),
+        pa.field("level_id", pa.string()),
+        pa.field("platform_code_translations_json", pa.string()),
+        # Header / entity-level (all tables)
+        pa.field("feed_version", pa.string()),
+        pa.field("incrementality", pa.int32()),
+        pa.field("is_deleted", pa.bool_()),
     ]
 )
 
@@ -105,5 +242,53 @@ SERVICE_ALERTS_SCHEMA = pa.schema(
         pa.field("trip_id", pa.string()),
         pa.field("trip_route_id", pa.string()),
         pa.field("trip_direction_id", pa.uint32()),
+        pa.field("direction_id", pa.uint32()),
+        # Fields added per the #91 census (cause_detail/effect_detail/image
+        # require bindings >= 2.2.0). Translated fields keep the
+        # first-translation convention.
+        pa.field("cause_detail", pa.string()),
+        pa.field("effect_detail", pa.string()),
+        pa.field("tts_header_text", pa.string()),
+        pa.field("tts_description_text", pa.string()),
+        pa.field("image_url", pa.string()),
+        pa.field("image_media_type", pa.string()),
+        pa.field("image_alternative_text", pa.string()),
+        # Full active-period list, JSON-encoded [{"start":…,"end":…},…] —
+        # 172 fleet alerts carry >1 period (max 251); active_period_start/end
+        # remain the first period for compatibility (#91 granularity decision)
+        pa.field("active_periods_json", pa.string()),
+        # Complete-capture fields (PR #94 round 12 — nothing deferred).
+        # communication/impact periods: 2.2.0 experimental, unpopulated
+        # fleet-wide (2026-08-04 census); same JSON encoding as active_periods
+        pa.field("communication_periods_json", pa.string()),
+        pa.field("impact_periods_json", pa.string()),
+        # Full-fidelity translation capture (#98 option c): every
+        # TranslatedString field's complete list as
+        # [{"text": ..., "language": ...}, ...] in publisher order, alongside
+        # the keep-first compat columns above (whose semantics stay "first
+        # translation AS PUBLISHED" — producer whim, not guaranteed English).
+        # Display selection (prefer-en etc.) is derivable downstream.
+        pa.field("header_text_translations_json", pa.string()),
+        pa.field("description_text_translations_json", pa.string()),
+        pa.field("url_translations_json", pa.string()),
+        pa.field("tts_header_text_translations_json", pa.string()),
+        pa.field("tts_description_text_translations_json", pa.string()),
+        pa.field("cause_detail_translations_json", pa.string()),
+        pa.field("effect_detail_translations_json", pa.string()),
+        pa.field("image_alternative_text_translations_json", pa.string()),
+        # Full TranslatedImage: [{"url","media_type","language"},...]
+        pa.field("image_localized_images_json", pa.string()),
+        # Informed-entity trip descriptor tail (MTA populates trip_start_date)
+        pa.field("trip_start_time", pa.string()),
+        pa.field("trip_start_date", pa.string()),
+        pa.field("trip_schedule_relationship", pa.int32()),
+        pa.field("trip_modified_trip_modifications_id", pa.string()),
+        pa.field("trip_modified_trip_affected_trip_id", pa.string()),
+        pa.field("trip_modified_trip_start_date", pa.string()),
+        pa.field("trip_modified_trip_start_time", pa.string()),
+        # Header / entity-level (all three feed types)
+        pa.field("feed_version", pa.string()),
+        pa.field("incrementality", pa.int32()),
+        pa.field("is_deleted", pa.bool_()),
     ]
 )

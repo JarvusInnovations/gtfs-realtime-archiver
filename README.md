@@ -44,7 +44,7 @@ GTFS-RT Archiver is a single-container Python service designed to:
 │        ↓                                │
 │  Parse protobuf → PyArrow tables        │
 │        ↓                                │
-│  Write Parquet (Snappy compression)     │
+│  Write Parquet (zstd compression)       │
 └─────────────────────────────────────────┘
            ↓
     GCS: parquet.gtfsrt.io
@@ -177,7 +177,7 @@ data/
 ### Environment Variables
 
 | Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
+| ---------- | ---------- | --------- | ------------- |
 | `GCS_BUCKET_RT_PROTOBUF` | Yes | - | GCS bucket for raw protobuf archives |
 | `GCS_BUCKET_RT_PARQUET` | Dagster | - | GCS bucket for compacted parquet files |
 | `GCP_PROJECT_ID` | If auth used | - | GCP project ID for Secret Manager |
@@ -301,10 +301,18 @@ The Dagster pipeline compacts raw protobuf archives into daily Parquet files for
 ### Assets
 
 | Asset | Description |
-|-------|-------------|
+| ------- | ------------- |
 | `vehicle_positions_parquet` | Vehicle position records for a day |
 | `trip_updates_parquet` | Trip update records (denormalized by stop_time_update) |
 | `service_alerts_parquet` | Service alert records (denormalized by informed_entity) |
+| `trip_modifications_parquet` | TripModifications (detour) entities, one row per entity |
+| `shapes_parquet` | Shape (detour geometry) entities, one row per entity |
+| `stops_parquet` | Ad-hoc/replacement Stop entities, one row per entity |
+
+The last three ride the trip_updates parse: some agencies publish
+TripModifications/Shape/Stop entities inside their trip_updates feed URLs,
+so one `@multi_asset` extracts all four tables from a single pass over the
+raw files (materializing any of the four materializes all four).
 
 ### Schedule
 
@@ -322,9 +330,11 @@ uv run dg list defs
 # Validate definitions load correctly
 uv run dg check defs
 
-# Manually materialize an asset for a specific date
-uv run dg launch --assets vehicle_positions_parquet --partition 2026-01-01
+# Manually materialize an asset for a specific date and feed
+uv run dg launch --assets vehicle_positions_parquet --partition "2026-01-01|gtfs.example.com/feed"
 ```
+
+Partition keys are `date|feed`, where `feed` is the scheme-stripped feed URL (`~` prefix for `http`); the feed dimension is dynamic, so the key must already be registered.
 
 ### Environment
 
@@ -342,6 +352,17 @@ separate Cloud Run resources) and `consolidated` (all three as containers in one
 always-on instance, for the lowest cost floor with a single code location). See
 "Deployment Topologies" in `.claude/CLAUDE.md` for constraints and cost
 break-even details.
+
+## Dashboards
+
+`dashboards/` holds temporary local analysis dashboards. Currently:
+
+- **`proto-parquet-reconciliation/`** — an [Evidence](https://evidence.dev)
+  dashboard validating the protobuf → parquet compaction pipeline (raw `.pb`
+  counts vs parquet row counts, missing partitions, dropped-file classification).
+  See its [README](dashboards/proto-parquet-reconciliation/README.md) for the
+  two-command extract-and-serve flow. Requires ADC with read access to the raw
+  protobuf bucket.
 
 ## License
 
