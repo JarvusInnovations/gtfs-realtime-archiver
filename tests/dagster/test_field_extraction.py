@@ -95,7 +95,9 @@ def test_every_hasfield_target_is_dispositioned_for_bindings_drift() -> None:
     direction, and FeedHeader.feed_version drifted through it (PR #94
     round 14). Matching is by field NAME: a name shared by a guarded and
     an unguarded message is conflated — acceptable for a tripwire whose
-    job is to force the decision, not adjudicate it."""
+    job is to force the decision, not adjudicate it. Scope is source
+    text: a HasField literal inside a comment or docstring counts as a
+    call site (over-counting is safe here)."""
     from dagster_pipeline.defs.assets import compaction
 
     source = Path(compaction.__file__).read_text()
@@ -625,6 +627,60 @@ def _populated_sa_entity(entity: gtfs_realtime_pb2.FeedEntity, with_ie: bool) ->
     ie.trip.modified_trip.start_time = "08:00:00"
 
 
+def test_base_record_keys_disjoint_from_child_key_tuples() -> None:
+    """A base-record key colliding with a child-key tuple would be silently
+    NULLed on fallback rows while EVERY set-based parity check still passes:
+    the fallback-nones equality holds (the colliding key is a tuple member),
+    with-child rows get overwritten with real values, and key-set parity is
+    unchanged — a collision also removes one schema column, so even counting
+    stays balanced (PR #94 round 16 analysis). The round-15 runtime asserts
+    were dropped as static; pin the static invariant statically instead:
+    extract the base_record dict-literal keys from the extractor source via
+    AST and assert disjointness against the child tuples."""
+    import ast
+
+    from dagster_pipeline.defs.assets import compaction
+
+    module = ast.parse(Path(compaction.__file__).read_text())
+
+    def base_record_literal_keys(func_name: str) -> set[str]:
+        for node in ast.walk(module):
+            if isinstance(node, ast.FunctionDef) and node.name == func_name:
+                for sub in ast.walk(node):
+                    if (
+                        isinstance(sub, ast.Assign)
+                        and any(
+                            isinstance(t, ast.Name) and t.id == "base_record" for t in sub.targets
+                        )
+                        and isinstance(sub.value, ast.Dict)
+                    ):
+                        keys = {
+                            k.value
+                            for k in sub.value.keys
+                            if isinstance(k, ast.Constant) and isinstance(k.value, str)
+                        }
+                        assert keys, f"no literal keys parsed from {func_name}.base_record"
+                        return keys
+        raise AssertionError(f"base_record dict literal not found in {func_name}")
+
+    # The **header_fields spread contributes these non-literal keys
+    header_keys = {"feed_version", "incrementality"}
+
+    tu_base = base_record_literal_keys("extract_trip_updates") | header_keys
+    collisions = tu_base & set(STOP_TIME_UPDATE_KEYS)
+    assert not collisions, (
+        f"trip_updates base-record keys collide with STOP_TIME_UPDATE_KEYS "
+        f"(silently NULLed on fallback rows): {sorted(collisions)}"
+    )
+
+    sa_base = base_record_literal_keys("extract_service_alerts") | header_keys
+    collisions = sa_base & set(INFORMED_ENTITY_KEYS)
+    assert not collisions, (
+        f"service_alerts base-record keys collide with INFORMED_ENTITY_KEYS "
+        f"(silently NULLed on fallback rows): {sorted(collisions)}"
+    )
+
+
 def test_populated_records_have_no_nulls_and_round_trip() -> None:
     """Feed every schema column a real value and round-trip through Arrow.
 
@@ -637,8 +693,8 @@ def test_populated_records_have_no_nulls_and_round_trip() -> None:
     The fallback-row assertions pin that every populated BASE field survives
     onto no-STU / no-informed-entity rows (a presence-guard bug NULLing one
     would surface as an extra None). A base-record/tuple key collision
-    itself is caught by the extractors' runtime disjointness asserts, which
-    the fallback entities here exercise."""
+    itself is invisible to these set-based checks — it is pinned statically
+    by test_base_record_keys_disjoint_from_child_key_tuples."""
     ts = datetime(2026, 7, 1, 12, 0, 0, tzinfo=UTC)
 
     vp_records = list(extract_vehicle_positions(_populated_vp_feed(), "f", "u", ts))

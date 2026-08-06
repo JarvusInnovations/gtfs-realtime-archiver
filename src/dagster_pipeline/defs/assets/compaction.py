@@ -621,10 +621,10 @@ def extract_trip_updates(
             else:
                 # Trip update with no stop time updates - still yield the base record.
                 # A base-record key colliding with STOP_TIME_UPDATE_KEYS would
-                # be silently NULLed here while key-parity still passes — that
-                # static invariant is pinned by the fallback-row assertions in
-                # test_populated_records_have_no_nulls_and_round_trip (which,
-                # unlike an inline assert, survive python -O).
+                # be silently NULLed here while every set-based parity check
+                # still passes — the static invariant is pinned statically by
+                # test_base_record_keys_disjoint_from_child_key_tuples (AST
+                # over this dict literal; survives python -O).
                 record = base_record.copy()
                 record.update(dict.fromkeys(STOP_TIME_UPDATE_KEYS))
                 yield record
@@ -862,10 +862,10 @@ def extract_service_alerts(
             else:
                 # Alert with no informed entities - still yield the base record.
                 # A base-record key colliding with INFORMED_ENTITY_KEYS would
-                # be silently NULLed here while key-parity still passes — that
-                # static invariant is pinned by the fallback-row assertions in
-                # test_populated_records_have_no_nulls_and_round_trip (which,
-                # unlike an inline assert, survive python -O).
+                # be silently NULLed here while every set-based parity check
+                # still passes — the static invariant is pinned statically by
+                # test_base_record_keys_disjoint_from_child_key_tuples (AST
+                # over this dict literal; survives python -O).
                 record = base_record.copy()
                 record.update(dict.fromkeys(INFORMED_ENTITY_KEYS))
                 yield record

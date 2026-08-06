@@ -803,6 +803,12 @@ carrying a permanent cross-table asymmetry). Reads spanning the boundary
 should normalize with `NULLIF(license_plate, '')`; re-materializing an old
 partition (or a #91 backfill) rewrites it under the new convention — while
 its raw `.pb` files remain within the 365-day retention window (see above).
+`feed_timestamp` (all three tables) made the same v0.9.3 migration in the
+other value domain: it moved from truthiness to per-field presence, so an
+explicitly-published `header.timestamp = 0` now records `0` where it
+previously recorded NULL — pathological in practice (a 1970 timestamp),
+noted for completeness, same per-partition re-run boundary as
+`license_plate`.
 
 Enum-presence semantics: enums added by #91/#94 (`wheelchair_accessible`,
 `pickup_type`, `drop_off_type`, `departure_occupancy_status`,
