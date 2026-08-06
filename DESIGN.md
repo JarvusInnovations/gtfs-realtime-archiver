@@ -728,26 +728,174 @@ Each feed type has a defined schema for consistent output:
 
 **Vehicle Positions:**
 
-- `source_file`, `feed_url`, `feed_timestamp`, `entity_id`
+- `source_file`, `feed_url`, `feed_timestamp`, `fetch_timestamp`, `entity_id`
 - `trip_id`, `route_id`, `direction_id`, `start_date`, `start_time`, `schedule_relationship`
-- `vehicle_id`, `vehicle_label`, `license_plate`
+- `vehicle_id`, `vehicle_label`, `license_plate`, `wheelchair_accessible`
 - `latitude`, `longitude`, `bearing`, `odometer`, `speed`
-- `current_stop_sequence`, `stop_id`, `current_status`, `timestamp`, `congestion_level`, `occupancy_status`
+- `current_stop_sequence`, `stop_id`, `current_status`, `timestamp`, `congestion_level`, `occupancy_status`, `occupancy_percentage`
+- Modified trip: `modified_trip_modifications_id`, `modified_trip_affected_trip_id`, `modified_trip_start_date`, `modified_trip_start_time`
+- Carriages: `multi_carriage_details_json` (repeated CarriageDetails, JSON-encoded)
+- Header/entity: `feed_version`, `incrementality`, `is_deleted`
 
 **Trip Updates:**
 
-- Base: `source_file`, `feed_url`, `feed_timestamp`, `entity_id`
+- Base: `source_file`, `feed_url`, `feed_timestamp`, `fetch_timestamp`, `entity_id`
 - Trip: `trip_id`, `route_id`, `direction_id`, `start_date`, `start_time`, `schedule_relationship`
-- Vehicle: `vehicle_id`, `vehicle_label`
+- Vehicle: `vehicle_id`, `vehicle_label`, `license_plate`, `wheelchair_accessible`
 - Update: `trip_delay`, `trip_timestamp`
-- Stop time: `stop_sequence`, `stop_id`, `arrival_delay`, `arrival_time`, `arrival_uncertainty`, `departure_delay`, `departure_time`, `departure_uncertainty`, `schedule_relationship`
+- Trip properties: `trip_properties_trip_id`, `trip_properties_start_date`, `trip_properties_start_time`, `trip_properties_shape_id`, `trip_properties_trip_headsign`, `trip_properties_trip_short_name`
+- Modified trip: `modified_trip_modifications_id`, `modified_trip_affected_trip_id`, `modified_trip_start_date`, `modified_trip_start_time`
+- Stop time: `stop_sequence`, `stop_id`, `arrival_delay`, `arrival_time`, `arrival_uncertainty`, `arrival_scheduled_time`, `departure_delay`, `departure_time`, `departure_uncertainty`, `departure_scheduled_time`, `departure_occupancy_status`, `stop_schedule_relationship`, `assigned_stop_id`, `stop_headsign`, `pickup_type`, `drop_off_type`
+- Header/entity: `feed_version`, `incrementality`, `is_deleted`
 
 **Service Alerts:**
 
-- Base: `source_file`, `feed_url`, `feed_timestamp`, `entity_id`
-- Alert: `cause`, `effect`, `url`, `header_text`, `description_text`
-- Active period: `active_period_start`, `active_period_end`
-- Informed entity: `agency_id`, `route_id`, `route_type`, `stop_id`, `trip_id`, `direction_id`
+- Base: `source_file`, `feed_url`, `feed_timestamp`, `fetch_timestamp`, `entity_id`
+- Alert: `cause`, `effect`, `severity_level`, `cause_detail`, `effect_detail`, `url`, `header_text`, `description_text`, `tts_header_text`, `tts_description_text`, `image_url`, `image_media_type`, `image_alternative_text`
+- Active period: `active_period_start`, `active_period_end` (first period **as published** — the spec doesn't require chronological order, so use `active_periods_json` when ordering matters), `active_periods_json` (full list)
+- Informed entity: `agency_id`, `route_id`, `route_type`, `stop_id`, `direction_id`, `trip_id`, `trip_route_id`, `trip_direction_id`, `trip_start_time`, `trip_start_date`, `trip_schedule_relationship`, `trip_modified_trip_modifications_id`, `trip_modified_trip_affected_trip_id`, `trip_modified_trip_start_date`, `trip_modified_trip_start_time`
+- Communication/impact periods: `communication_periods_json`, `impact_periods_json` (same encoding and NULL semantics as `active_periods_json`)
+- Header/entity: `feed_version`, `incrementality`, `is_deleted`
+
+Translated fields store the first translation only (typically English) — a
+deliberate keep-first decision (#91). All columns added by #91 (including the
+gtfs-realtime-bindings-2.2.0-gated `*_scheduled_time`, `cause_detail`,
+`effect_detail`, `image_url`, `modified_trip_*`) populate only from the
+release that shipped them onward; earlier partitions lack the columns and
+read as NULL from the BigQuery external tables (DuckDB consumers should use
+`union_by_name`). Note that **re-materializing any old partition whose raw
+`.pb` files are still within the 365-day retention window backfills its new
+columns** (compaction rewrites partitions wholesale from raw), so column
+presence varies partition-to-partition with re-run history — another reason
+for `union_by_name`. Past that window the remedy silently no-ops: a re-run
+over expired raw data returns success with zero records and leaves the
+existing parquet untouched (deliberate — a lifecycle expiry must not destroy
+derived data). Within service_alerts, bare
+informed-entity column names (`agency_id`, `route_id`, `stop_id`,
+`direction_id`) carry EntitySelector semantics — distinct from the
+trip-descriptor meanings the same names have in vehicle_positions/
+trip_updates. Similarly, in trip_updates the `StopTimeProperties` fields
+(`assigned_stop_id`, `stop_headsign`, `pickup_type`, `drop_off_type`) are
+deliberately bare — each denormalized row already *is* a stop_time_update, so
+STU-level fields take row-level names, and only fields hoisted from
+trip-level nested messages (`trip_properties_*`, `modified_trip_*`) carry a
+provenance prefix. Note `pickup_type`/`drop_off_type`/`stop_headsign` also
+name GTFS **static** `stop_times.txt` columns; qualify columns when joining
+static and RT tables. The proto messages shared by vehicle_positions and
+trip_updates (`VehicleDescriptor`, `TripDescriptor`) are captured
+symmetrically — `license_plate`, `wheelchair_accessible`, and
+`modified_trip_*` appear in both tables — so columnset differences between
+the two reflect feed-type-specific messages only.
+
+String-presence semantics: fields of sparse-by-design nested messages
+(`trip_properties_*`, `modified_trip_*`, `assigned_stop_id`, `stop_headsign`)
+use per-field presence — unset is NULL, never `""`. Strings on
+routinely-populated parents (`vehicle_id`, `vehicle_label`, trip-descriptor
+strings) keep the long-standing parent-presence convention, where an unset
+field on a present parent reads as `""`. One migrated
+convention: `license_plate` uses per-field presence (unset → NULL, never `""`)
+in **both** feed types from v0.9.3 onward — plates are rarely published, and
+the old parent-presence convention read `""` on nearly every row. The
+vehicle_positions column predates the switch, so **partitions materialized
+before v0.9.3 contain `""`** for a present-descriptor/unset-plate row; this
+historical inconsistency is deliberate (accepted on PR #94 in preference to
+carrying a permanent cross-table asymmetry). Reads spanning the boundary
+should normalize with `NULLIF(license_plate, '')`; re-materializing an old
+partition (or a #91 backfill) rewrites it under the new convention — while
+its raw `.pb` files remain within the 365-day retention window (see above).
+`feed_timestamp` (all three tables) made the same v0.9.3 migration in the
+other value domain: it moved from truthiness to per-field presence, so an
+explicitly-published `header.timestamp = 0` now records `0` where it
+previously recorded NULL — pathological in practice (a 1970 timestamp),
+noted for completeness, same per-partition re-run boundary as
+`license_plate`.
+
+Enum-presence semantics: enums added by #91/#94 (`wheelchair_accessible`,
+`pickup_type`, `drop_off_type`, `departure_occupancy_status`,
+`incrementality`, `service_alerts.trip_schedule_relationship`) and the
+pre-existing per-field enums (`stop_schedule_relationship`, `cause`,
+`effect`, `severity_level`, `current_status`, `congestion_level`,
+`occupancy_status`) — an exhaustive list — use per-field presence — unset is
+NULL, and an explicitly-set 0 is captured as 0. The exception is exactly two
+columns: `vehicle_positions.schedule_relationship` and
+`trip_updates.schedule_relationship`. They predate the convention and
+materialize the proto default, so unset reads `0` (= SCHEDULED, which is
+what the spec says unset means) rather than NULL. Note the resulting split
+on the *same proto field*: `service_alerts.trip_schedule_relationship` is
+the identical `TripDescriptor.schedule_relationship`, captured later under
+the per-field convention — unset reads NULL there but `0` in VP/TU.
+Normalize with `COALESCE(trip_schedule_relationship, 0)` when unioning trip
+descriptors across tables. `pickup_type IS NULL` and
+`schedule_relationship = 0` therefore both encode "the producer did not
+say" — in adjacent columns of the same row.
+
+Complete-capture policy (PR #94): every leaf field of the three archived
+entity types maps to a column or carries a recorded drop reason, enforced by
+a descriptor-walk manifest test — so adding a feed never requires a field
+audit, and a bindings bump that adds fields fails CI until dispositioned.
+Scope caveat: this covers the **base schema** only. Every GTFS-RT message
+also declares proto2 extension ranges, and producer extensions (e.g.
+MTA-NYCT's `nyct_subway.proto` train/track fields) arrive as unknown fields
+that compaction drops — they survive only in the raw `.pb` archive within
+its 365-day retention (#101).
+Header/entity columns: `feed_version` (free-form producer version;
+unpopulated fleet-wide as of the 2026-08-04 census), `incrementality`
+(per-field presence — explicit FULL_DATASET reads 0, unset NULL; the
+extractors assume FULL_DATASET semantics, so a non-zero value here is the
+signal that a DIFFERENTIAL feed appeared), and `is_deleted` (captured on
+payload-bearing entities — MTA sets it explicitly false; bare deletion
+tombstones carry no payload and yield no row, which only matters for
+DIFFERENTIAL feeds). Repeated messages ride as JSON columns:
+`multi_carriage_details_json`, `communication_periods_json`,
+`impact_periods_json` (both period columns share `active_periods_json`'s
+encoding, NULL semantics, and query recipe). Feeds can also carry entity
+types outside these three tables entirely — the 2026-08-04 census found
+Madison Metro and Big Blue Bus publishing `shape`, `stop`, and
+`trip_modifications` entities, which compaction skips; capturing them means
+new tables (tracked on #91).
+
+`active_periods_json` is NULL when an alert declares no active periods
+(spec: always active); `"[]"` is never emitted. It is a STRING column
+(BigQuery's native JSON type is unavailable for Parquet external tables).
+The "active at time T" recipe has **two** load-bearing NULL rules: a NULL
+*column* means always active (a plain `UNNEST`/comma join yields zero rows
+for it, silently reporting the alert inactive — wrap the period check in
+`EXISTS`), and a JSON-null *start/end* means unbounded on that side
+(`JSON_VALUE` returns SQL NULL for it, and NULL comparisons filter the
+row). Both recipes use `EXISTS` so each alert row is returned **at most
+once** — a `LEFT JOIN UNNEST ... ON TRUE` form fans out one row per
+matching period (overlapping periods are legal and observed), silently
+inflating any aggregation over the result. BigQuery:
+
+```sql
+FROM gtfs_rt.service_alerts a
+WHERE a.active_periods_json IS NULL
+   OR EXISTS (
+        SELECT 1
+        FROM UNNEST(JSON_QUERY_ARRAY(a.active_periods_json)) AS p
+        WHERE (JSON_VALUE(p, '$.start') IS NULL OR CAST(JSON_VALUE(p, '$.start') AS INT64) <= @t)
+          AND (JSON_VALUE(p, '$.end')   IS NULL OR CAST(JSON_VALUE(p, '$.end')   AS INT64) >  @t)
+      )
+```
+
+(`JSON_VALUE` returns STRING, so the casts are required.) DuckDB:
+
+```sql
+FROM service_alerts a
+WHERE a.active_periods_json IS NULL
+   OR EXISTS (
+        SELECT 1
+        FROM unnest(json_transform(a.active_periods_json,
+             '[{"start":"UBIGINT","end":"UBIGINT"}]')) AS u(p)
+        WHERE (p.start IS NULL OR p.start <= $t)
+          AND (p."end" IS NULL OR p."end" > $t)
+      )
+```
+
+Producer-supplied text columns (`header_text`, `description_text`, `tts_*`,
+`cause_detail`, `effect_detail`, `image_url`, headsigns, etc.) are unvalidated
+third-party content passed through verbatim — the pipeline never interprets or
+fetches them, but downstream renderers must treat them as untrusted input.
 
 ### Schedule
 
