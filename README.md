@@ -305,6 +305,14 @@ The Dagster pipeline compacts raw protobuf archives into daily Parquet files for
 | `vehicle_positions_parquet` | Vehicle position records for a day |
 | `trip_updates_parquet` | Trip update records (denormalized by stop_time_update) |
 | `service_alerts_parquet` | Service alert records (denormalized by informed_entity) |
+| `trip_modifications_parquet` | TripModifications (detour) entities, one row per entity |
+| `shapes_parquet` | Shape (detour geometry) entities, one row per entity |
+| `stops_parquet` | Ad-hoc/replacement Stop entities, one row per entity |
+
+The last three ride the trip_updates parse: some agencies publish
+TripModifications/Shape/Stop entities inside their trip_updates feed URLs,
+so one `@multi_asset` extracts all four tables from a single pass over the
+raw files (materializing any of the four materializes all four).
 
 ### Schedule
 

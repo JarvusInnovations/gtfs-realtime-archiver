@@ -10,7 +10,7 @@ from dagster_pipeline.defs.assets import (
     gtfs_schedule_check,
     gtfs_schedule_ingest,
     service_alerts_parquet,
-    trip_updates_parquet,
+    trip_updates_tables,
     vehicle_positions_parquet,
 )
 from dagster_pipeline.defs.assets.schedule import schedule_feed_partitions
@@ -36,7 +36,7 @@ FEED_TYPE_CONFIGS = [
         "trip_updates",
         "trip_updates_feeds",
         trip_updates_feeds,
-        trip_updates_parquet,
+        trip_updates_tables,
     ),
     FeedTypeConfig(
         "service_alerts",
@@ -53,9 +53,10 @@ vehicle_positions_compaction_job = dg.define_asset_job(
     partitions_def=vehicle_positions_partitions,
 )
 
+# Selects the whole multi_asset (all four tables) — it is not subsettable
 trip_updates_compaction_job = dg.define_asset_job(
     name="trip_updates_compaction_job",
-    selection=[trip_updates_parquet],
+    selection=[trip_updates_tables],
     partitions_def=trip_updates_partitions,
 )
 

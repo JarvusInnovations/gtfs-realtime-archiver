@@ -125,6 +125,94 @@ TRIP_UPDATES_SCHEMA = pa.schema(
     ]
 )
 
+# Trip Modifications Schema (#95)
+# Entity/message grain: one row per trip_modifications entity per snapshot.
+# Repeated structures are JSON-encoded whole — unnesting is a downstream
+# transform concern (see the DESIGN.md grain-decision entry). entity_id is
+# the join target of trip_updates/vehicle_positions
+# modified_trip_modifications_id; Modification.service_alert_id (inside
+# modifications_json) points into service_alerts.
+TRIP_MODIFICATIONS_SCHEMA = pa.schema(
+    [
+        # Source metadata
+        pa.field("source_file", pa.string(), nullable=False),
+        pa.field("feed_url", pa.string(), nullable=False),
+        pa.field("feed_timestamp", pa.uint64()),
+        pa.field("fetch_timestamp", pa.timestamp("us", tz="UTC")),
+        pa.field("entity_id", pa.string(), nullable=False),
+        # TripModifications payload, JSON-encoded per repeated field
+        # (NULL when empty, never "[]")
+        pa.field("selected_trips_json", pa.string()),
+        pa.field("start_times_json", pa.string()),
+        pa.field("service_dates_json", pa.string()),
+        pa.field("modifications_json", pa.string()),
+        # Header / entity-level (all tables)
+        pa.field("feed_version", pa.string()),
+        pa.field("incrementality", pa.int32()),
+        pa.field("is_deleted", pa.bool_()),
+    ]
+)
+
+# Shapes Schema (#96)
+# One row per shape entity per snapshot — detour replacement geometry
+# referenced by TripModifications.selected_trips.shape_id and
+# trip_updates.trip_properties_shape_id. Polylines repeat identically
+# across snapshots for a detour's lifetime; dedup at query time.
+SHAPES_SCHEMA = pa.schema(
+    [
+        # Source metadata
+        pa.field("source_file", pa.string(), nullable=False),
+        pa.field("feed_url", pa.string(), nullable=False),
+        pa.field("feed_timestamp", pa.uint64()),
+        pa.field("fetch_timestamp", pa.timestamp("us", tz="UTC")),
+        pa.field("entity_id", pa.string(), nullable=False),
+        # Shape payload
+        pa.field("shape_id", pa.string()),
+        pa.field("encoded_polyline", pa.string()),
+        # Header / entity-level (all tables)
+        pa.field("feed_version", pa.string()),
+        pa.field("incrementality", pa.int32()),
+        pa.field("is_deleted", pa.bool_()),
+    ]
+)
+
+# Stops Schema (#97)
+# One row per stop entity per snapshot — ad-hoc/replacement stop
+# definitions for detours (may exist nowhere in static GTFS). The six
+# TranslatedString fields are captured full-fidelity as
+# [{"text": ..., "language": ...}, ...] JSON from day one (#98-neutral:
+# no keep-first selection rule is baked in; display text is derivable
+# downstream).
+STOPS_SCHEMA = pa.schema(
+    [
+        # Source metadata
+        pa.field("source_file", pa.string(), nullable=False),
+        pa.field("feed_url", pa.string(), nullable=False),
+        pa.field("feed_timestamp", pa.uint64()),
+        pa.field("fetch_timestamp", pa.timestamp("us", tz="UTC")),
+        pa.field("entity_id", pa.string(), nullable=False),
+        # Stop payload (proto field order)
+        pa.field("stop_id", pa.string()),
+        pa.field("stop_code_translations_json", pa.string()),
+        pa.field("stop_name_translations_json", pa.string()),
+        pa.field("tts_stop_name_translations_json", pa.string()),
+        pa.field("stop_desc_translations_json", pa.string()),
+        pa.field("stop_lat", pa.float32()),
+        pa.field("stop_lon", pa.float32()),
+        pa.field("zone_id", pa.string()),
+        pa.field("stop_url_translations_json", pa.string()),
+        pa.field("parent_station", pa.string()),
+        pa.field("stop_timezone", pa.string()),
+        pa.field("wheelchair_boarding", pa.int32()),
+        pa.field("level_id", pa.string()),
+        pa.field("platform_code_translations_json", pa.string()),
+        # Header / entity-level (all tables)
+        pa.field("feed_version", pa.string()),
+        pa.field("incrementality", pa.int32()),
+        pa.field("is_deleted", pa.bool_()),
+    ]
+)
+
 # Service Alerts Schema
 # Denormalized: one row per informed_entity within each alert
 SERVICE_ALERTS_SCHEMA = pa.schema(

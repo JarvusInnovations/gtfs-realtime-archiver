@@ -19,11 +19,17 @@ from dagster_pipeline.defs.assets.compaction import (
     INFORMED_ENTITY_KEYS,
     STOP_TIME_UPDATE_KEYS,
     extract_service_alerts,
+    extract_shapes,
+    extract_stops,
+    extract_trip_modifications,
     extract_trip_updates,
     extract_vehicle_positions,
 )
 from dagster_pipeline.defs.assets.schemas import (
     SERVICE_ALERTS_SCHEMA,
+    SHAPES_SCHEMA,
+    STOPS_SCHEMA,
+    TRIP_MODIFICATIONS_SCHEMA,
     TRIP_UPDATES_SCHEMA,
     VEHICLE_POSITIONS_SCHEMA,
 )
@@ -47,6 +53,9 @@ def test_bindings_expose_required_fields() -> None:
 # plausibly meet (spec-1.0/2.0-era fields) — deliberately NOT in
 # REQUIRED_BINDINGS_FIELDS, per its "long-stable fields" exclusion.
 # Kept disjoint from the guard: promote an entry there when in doubt.
+# Name-level conflation cuts both ways: once ANY message promotes a name
+# into the guard (e.g. Stop.stop_id, 2.2-gated), the name leaves this list
+# even though ancient same-named fields (VehiclePosition.stop_id) exist.
 STABLE_HASFIELD_TARGETS = frozenset(
     {
         "agency_id",
@@ -65,6 +74,7 @@ STABLE_HASFIELD_TARGETS = frozenset(
         "header_text",
         "incrementality",
         "is_deleted",
+        "language",
         "license_plate",
         "odometer",
         "position",
@@ -74,8 +84,6 @@ STABLE_HASFIELD_TARGETS = frozenset(
         "severity_level",
         "speed",
         "start",
-        "stop_id",
-        "stop_sequence",
         "time",
         "timestamp",
         "trip",
@@ -480,6 +488,22 @@ def test_record_keys_match_schemas_exactly() -> None:
         (SERVICE_ALERTS_SCHEMA, list(extract_service_alerts(sa_no_ie_feed, "f", "u", None)))
     )
 
+    entity_feed = _feed()
+    e = entity_feed.entity.add()
+    e.id = "tm"
+    e.trip_modifications.selected_trips.add().shape_id = "sh"
+    e = entity_feed.entity.add()
+    e.id = "sh"
+    e.shape.shape_id = "sh"
+    e = entity_feed.entity.add()
+    e.id = "st"
+    e.stop.stop_id = "s1"
+    cases.append(
+        (TRIP_MODIFICATIONS_SCHEMA, list(extract_trip_modifications(entity_feed, "f", "u", None)))
+    )
+    cases.append((SHAPES_SCHEMA, list(extract_shapes(entity_feed, "f", "u", None))))
+    cases.append((STOPS_SCHEMA, list(extract_stops(entity_feed, "f", "u", None))))
+
     for schema, records in cases:
         assert records, "each case must yield at least one record"
         for record in records:
@@ -681,6 +705,54 @@ def test_base_record_keys_disjoint_from_child_key_tuples() -> None:
     )
 
 
+def _populated_tm_entity(entity: gtfs_realtime_pb2.FeedEntity) -> None:
+    entity.is_deleted = False
+    tm = entity.trip_modifications
+    st = tm.selected_trips.add()
+    st.trip_ids.append("trip-1")
+    st.trip_ids.append("trip-2")
+    st.shape_id = "shape-detour-1"
+    tm.start_times.append("08:00:00")
+    tm.service_dates.append("20260701")
+    m = tm.modifications.add()
+    m.start_stop_selector.stop_sequence = 5
+    m.start_stop_selector.stop_id = "stop-a"
+    m.end_stop_selector.stop_sequence = 9
+    m.end_stop_selector.stop_id = "stop-b"
+    m.propagated_modification_delay = 120
+    rs = m.replacement_stops.add()
+    rs.travel_time_to_stop = 60
+    rs.stop_id = "stop-new"
+    m.service_alert_id = "alert-1"
+    m.last_modified_time = 1_754_000_060
+
+
+def _populated_shape_entity(entity: gtfs_realtime_pb2.FeedEntity) -> None:
+    entity.is_deleted = False
+    entity.shape.shape_id = "shape-detour-1"
+    entity.shape.encoded_polyline = "_p~iF~ps|U_ulLnnqC_mqNvxq`@"
+
+
+def _populated_stop_entity(entity: gtfs_realtime_pb2.FeedEntity) -> None:
+    entity.is_deleted = False
+    stop = entity.stop
+    stop.stop_id = "stop-new"
+    stop.stop_code.translation.add(text="1234", language="en")
+    stop.stop_name.translation.add(text="Detour Stop", language="en")
+    stop.tts_stop_name.translation.add(text="Detour Stop", language="en")
+    stop.stop_desc.translation.add(text="Temporary detour stop", language="en")
+    # Non-integral floats on purpose (see _populated_vp_feed)
+    stop.stop_lat = 43.1
+    stop.stop_lon = -89.4
+    stop.zone_id = "zone-1"
+    stop.stop_url.translation.add(text="https://example.com/stop", language="en")
+    stop.parent_station = "station-1"
+    stop.stop_timezone = "America/Chicago"
+    stop.wheelchair_boarding = gtfs_realtime_pb2.Stop.AVAILABLE
+    stop.level_id = "level-1"
+    stop.platform_code.translation.add(text="A", language="en")
+
+
 def test_populated_records_have_no_nulls_and_round_trip() -> None:
     """Feed every schema column a real value and round-trip through Arrow.
 
@@ -721,10 +793,29 @@ def test_populated_records_have_no_nulls_and_round_trip() -> None:
     _populated_sa_entity(e, with_ie=False)
     sa_records = list(extract_service_alerts(sa_feed, "f", "u", ts))
 
+    entity_feed = _feed()
+    entity_feed.header.feed_version = "producer-v1"
+    entity_feed.header.incrementality = gtfs_realtime_pb2.FeedHeader.FULL_DATASET
+    e = entity_feed.entity.add()
+    e.id = "tm-full"
+    _populated_tm_entity(e)
+    e = entity_feed.entity.add()
+    e.id = "shape-full"
+    _populated_shape_entity(e)
+    e = entity_feed.entity.add()
+    e.id = "stop-full"
+    _populated_stop_entity(e)
+    tm_records = list(extract_trip_modifications(entity_feed, "f", "u", ts))
+    shape_records = list(extract_shapes(entity_feed, "f", "u", ts))
+    stop_records = list(extract_stops(entity_feed, "f", "u", ts))
+
     for table_name, full_record in (
         ("vehicle_positions", vp_records[0]),
         ("trip_updates", tu_records[0]),
         ("service_alerts", sa_records[0]),
+        ("trip_modifications", tm_records[0]),
+        ("shapes", shape_records[0]),
+        ("stops", stop_records[0]),
     ):
         nones = {k for k, v in full_record.items() if v is None}
         assert not nones, f"{table_name} populated record has NULLs: {nones}"
@@ -740,6 +831,9 @@ def test_populated_records_have_no_nulls_and_round_trip() -> None:
         (VEHICLE_POSITIONS_SCHEMA, vp_records),
         (TRIP_UPDATES_SCHEMA, tu_records),
         (SERVICE_ALERTS_SCHEMA, sa_records),
+        (TRIP_MODIFICATIONS_SCHEMA, tm_records),
+        (SHAPES_SCHEMA, shape_records),
+        (STOPS_SCHEMA, stop_records),
     ):
         table = pa.Table.from_pylist(records, schema=schema)
         assert table.num_rows == len(records)
@@ -763,6 +857,9 @@ def test_bigquery_ddl_matches_schemas() -> None:
         ("vehicle_positions", VEHICLE_POSITIONS_SCHEMA),
         ("trip_updates", TRIP_UPDATES_SCHEMA),
         ("service_alerts", SERVICE_ALERTS_SCHEMA),
+        ("trip_modifications", TRIP_MODIFICATIONS_SCHEMA),
+        ("shapes", SHAPES_SCHEMA),
+        ("stops", STOPS_SCHEMA),
     ):
         block = re.search(
             rf'resource "google_bigquery_table" "{table_id}".*?schema = jsonencode\(\[(.*?)\]\)',

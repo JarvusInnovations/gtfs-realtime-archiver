@@ -211,6 +211,123 @@ resource "google_bigquery_table" "service_alerts" {
   ])
 }
 
+# Trip Modifications - entity/message grain, repeated structures as JSON (#95)
+# Extracted from trip_updates raw feeds in the same compaction pass;
+# entity_id is the join target of {trip_updates,vehicle_positions}
+# .modified_trip_modifications_id
+resource "google_bigquery_table" "trip_modifications" {
+  dataset_id                   = google_bigquery_dataset.gtfs_rt.dataset_id
+  table_id                     = "trip_modifications"
+  deletion_protection          = false
+  ignore_auto_generated_schema = true
+
+  external_data_configuration {
+    source_format = "PARQUET"
+    autodetect    = false
+    source_uris   = ["gs://${google_storage_bucket.parquet.name}/trip_modifications/*"]
+
+    hive_partitioning_options {
+      mode                     = "CUSTOM"
+      source_uri_prefix        = "gs://${google_storage_bucket.parquet.name}/trip_modifications/{date:DATE}/{base64url:STRING}"
+      require_partition_filter = false
+    }
+  }
+
+  schema = jsonencode([
+    { name = "source_file", type = "STRING", mode = "REQUIRED" },
+    { name = "feed_url", type = "STRING", mode = "REQUIRED" },
+    { name = "feed_timestamp", type = "INT64", mode = "NULLABLE" },
+    { name = "fetch_timestamp", type = "TIMESTAMP", mode = "NULLABLE" },
+    { name = "entity_id", type = "STRING", mode = "REQUIRED" },
+    { name = "selected_trips_json", type = "STRING", mode = "NULLABLE" },
+    { name = "start_times_json", type = "STRING", mode = "NULLABLE" },
+    { name = "service_dates_json", type = "STRING", mode = "NULLABLE" },
+    { name = "modifications_json", type = "STRING", mode = "NULLABLE" },
+    { name = "feed_version", type = "STRING", mode = "NULLABLE" },
+    { name = "incrementality", type = "INT64", mode = "NULLABLE" },
+    { name = "is_deleted", type = "BOOL", mode = "NULLABLE" },
+  ])
+}
+
+# Shapes - detour replacement geometry entities (#96)
+resource "google_bigquery_table" "shapes" {
+  dataset_id                   = google_bigquery_dataset.gtfs_rt.dataset_id
+  table_id                     = "shapes"
+  deletion_protection          = false
+  ignore_auto_generated_schema = true
+
+  external_data_configuration {
+    source_format = "PARQUET"
+    autodetect    = false
+    source_uris   = ["gs://${google_storage_bucket.parquet.name}/shapes/*"]
+
+    hive_partitioning_options {
+      mode                     = "CUSTOM"
+      source_uri_prefix        = "gs://${google_storage_bucket.parquet.name}/shapes/{date:DATE}/{base64url:STRING}"
+      require_partition_filter = false
+    }
+  }
+
+  schema = jsonencode([
+    { name = "source_file", type = "STRING", mode = "REQUIRED" },
+    { name = "feed_url", type = "STRING", mode = "REQUIRED" },
+    { name = "feed_timestamp", type = "INT64", mode = "NULLABLE" },
+    { name = "fetch_timestamp", type = "TIMESTAMP", mode = "NULLABLE" },
+    { name = "entity_id", type = "STRING", mode = "REQUIRED" },
+    { name = "shape_id", type = "STRING", mode = "NULLABLE" },
+    { name = "encoded_polyline", type = "STRING", mode = "NULLABLE" },
+    { name = "feed_version", type = "STRING", mode = "NULLABLE" },
+    { name = "incrementality", type = "INT64", mode = "NULLABLE" },
+    { name = "is_deleted", type = "BOOL", mode = "NULLABLE" },
+  ])
+}
+
+# Stops - ad-hoc/replacement stop definition entities (#97); TranslatedString
+# fields captured full-fidelity as [{"text","language"},...] JSON (#98)
+resource "google_bigquery_table" "stops" {
+  dataset_id                   = google_bigquery_dataset.gtfs_rt.dataset_id
+  table_id                     = "stops"
+  deletion_protection          = false
+  ignore_auto_generated_schema = true
+
+  external_data_configuration {
+    source_format = "PARQUET"
+    autodetect    = false
+    source_uris   = ["gs://${google_storage_bucket.parquet.name}/stops/*"]
+
+    hive_partitioning_options {
+      mode                     = "CUSTOM"
+      source_uri_prefix        = "gs://${google_storage_bucket.parquet.name}/stops/{date:DATE}/{base64url:STRING}"
+      require_partition_filter = false
+    }
+  }
+
+  schema = jsonencode([
+    { name = "source_file", type = "STRING", mode = "REQUIRED" },
+    { name = "feed_url", type = "STRING", mode = "REQUIRED" },
+    { name = "feed_timestamp", type = "INT64", mode = "NULLABLE" },
+    { name = "fetch_timestamp", type = "TIMESTAMP", mode = "NULLABLE" },
+    { name = "entity_id", type = "STRING", mode = "REQUIRED" },
+    { name = "stop_id", type = "STRING", mode = "NULLABLE" },
+    { name = "stop_code_translations_json", type = "STRING", mode = "NULLABLE" },
+    { name = "stop_name_translations_json", type = "STRING", mode = "NULLABLE" },
+    { name = "tts_stop_name_translations_json", type = "STRING", mode = "NULLABLE" },
+    { name = "stop_desc_translations_json", type = "STRING", mode = "NULLABLE" },
+    { name = "stop_lat", type = "FLOAT64", mode = "NULLABLE" },
+    { name = "stop_lon", type = "FLOAT64", mode = "NULLABLE" },
+    { name = "zone_id", type = "STRING", mode = "NULLABLE" },
+    { name = "stop_url_translations_json", type = "STRING", mode = "NULLABLE" },
+    { name = "parent_station", type = "STRING", mode = "NULLABLE" },
+    { name = "stop_timezone", type = "STRING", mode = "NULLABLE" },
+    { name = "wheelchair_boarding", type = "INT64", mode = "NULLABLE" },
+    { name = "level_id", type = "STRING", mode = "NULLABLE" },
+    { name = "platform_code_translations_json", type = "STRING", mode = "NULLABLE" },
+    { name = "feed_version", type = "STRING", mode = "NULLABLE" },
+    { name = "incrementality", type = "INT64", mode = "NULLABLE" },
+    { name = "is_deleted", type = "BOOL", mode = "NULLABLE" },
+  ])
+}
+
 # --- GTFS Schedule tables ---
 # Schedule data is stored as exploded parquet per feed version.
 # Each table uses autodetect since GTFS columns are all strings.

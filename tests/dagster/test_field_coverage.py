@@ -24,6 +24,9 @@ from google.transit import gtfs_realtime_pb2
 
 from dagster_pipeline.defs.assets.schemas import (
     SERVICE_ALERTS_SCHEMA,
+    SHAPES_SCHEMA,
+    STOPS_SCHEMA,
+    TRIP_MODIFICATIONS_SCHEMA,
     TRIP_UPDATES_SCHEMA,
     VEHICLE_POSITIONS_SCHEMA,
 )
@@ -32,6 +35,9 @@ SCHEMAS = {
     "vehicle_positions": VEHICLE_POSITIONS_SCHEMA,
     "trip_updates": TRIP_UPDATES_SCHEMA,
     "service_alerts": SERVICE_ALERTS_SCHEMA,
+    "trip_modifications": TRIP_MODIFICATIONS_SCHEMA,
+    "shapes": SHAPES_SCHEMA,
+    "stops": STOPS_SCHEMA,
 }
 
 # Columns not produced from any proto field: pipeline provenance metadata.
@@ -39,17 +45,9 @@ SYNTHESIZED_COLUMNS = {"source_file", "feed_url", "fetch_timestamp"}
 
 # Whole subtrees dropped as a unit; the walk does not descend into them.
 # Every entry must name a reason (and an issue where a decision is pending).
-DROPPED_SUBTREES: dict[str, str] = {
-    # NOT field drops — whole entity types outside the three archived tables.
-    # The 2026-08-04 census found Madison Metro and Big Blue Bus already
-    # publishing these (shape 316 / trip_modifications 312 / stop 90 entities
-    # in a 568-file sample); capturing each means a new table.
-    "entity.shape": "entity type outside the three archived tables (census: PUBLISHED; #96)",
-    "entity.stop": "entity type outside the three archived tables (census: PUBLISHED; #97)",
-    "entity.trip_modifications": (
-        "entity type outside the three archived tables (census: PUBLISHED; #95)"
-    ),
-}
+# Empty since #95/#96/#97 landed the shape/stop/trip_modifications tables —
+# every entity type the bindings know is captured.
+DROPPED_SUBTREES: dict[str, str] = {}
 
 # Leaf dispositions: path -> list of "table.column" targets, or a
 # "DROP: reason" string. A path may feed multiple columns.
@@ -62,22 +60,34 @@ MANIFEST: dict[str, Disposition] = {
         "vehicle_positions.incrementality",
         "trip_updates.incrementality",
         "service_alerts.incrementality",
+        "trip_modifications.incrementality",
+        "shapes.incrementality",
+        "stops.incrementality",
     ],
     "header.timestamp": [
         "vehicle_positions.feed_timestamp",
         "trip_updates.feed_timestamp",
         "service_alerts.feed_timestamp",
+        "trip_modifications.feed_timestamp",
+        "shapes.feed_timestamp",
+        "stops.feed_timestamp",
     ],
     "header.feed_version": [
         "vehicle_positions.feed_version",
         "trip_updates.feed_version",
         "service_alerts.feed_version",
+        "trip_modifications.feed_version",
+        "shapes.feed_version",
+        "stops.feed_version",
     ],
     # ---- FeedEntity ----
     "entity.id": [
         "vehicle_positions.entity_id",
         "trip_updates.entity_id",
         "service_alerts.entity_id",
+        "trip_modifications.entity_id",
+        "shapes.entity_id",
+        "stops.entity_id",
     ],
     # Captured on payload-bearing entities (MTA sets it explicitly, census
     # 2026-08-04); bare deletion tombstones (id + is_deleted, no payload) are
@@ -87,6 +97,9 @@ MANIFEST: dict[str, Disposition] = {
         "vehicle_positions.is_deleted",
         "trip_updates.is_deleted",
         "service_alerts.is_deleted",
+        "trip_modifications.is_deleted",
+        "shapes.is_deleted",
+        "stops.is_deleted",
     ],
     # ---- VehiclePosition ----
     "entity.vehicle.trip.trip_id": ["vehicle_positions.trip_id"],
@@ -275,6 +288,65 @@ MANIFEST: dict[str, Disposition] = {
     "entity.alert.image_alternative_text.translation.language": (
         "DROP: keep-first translation (#91 decision; multi-language capture: #98)"
     ),
+    # ---- TripModifications (#95) ----
+    # Entity/message grain: repeated structures JSON-encoded whole
+    "entity.trip_modifications.selected_trips.trip_ids": ["trip_modifications.selected_trips_json"],
+    "entity.trip_modifications.selected_trips.shape_id": ["trip_modifications.selected_trips_json"],
+    "entity.trip_modifications.start_times": ["trip_modifications.start_times_json"],
+    "entity.trip_modifications.service_dates": ["trip_modifications.service_dates_json"],
+    "entity.trip_modifications.modifications.start_stop_selector.stop_sequence": [
+        "trip_modifications.modifications_json"
+    ],
+    "entity.trip_modifications.modifications.start_stop_selector.stop_id": [
+        "trip_modifications.modifications_json"
+    ],
+    "entity.trip_modifications.modifications.end_stop_selector.stop_sequence": [
+        "trip_modifications.modifications_json"
+    ],
+    "entity.trip_modifications.modifications.end_stop_selector.stop_id": [
+        "trip_modifications.modifications_json"
+    ],
+    "entity.trip_modifications.modifications.propagated_modification_delay": [
+        "trip_modifications.modifications_json"
+    ],
+    "entity.trip_modifications.modifications.replacement_stops.travel_time_to_stop": [
+        "trip_modifications.modifications_json"
+    ],
+    "entity.trip_modifications.modifications.replacement_stops.stop_id": [
+        "trip_modifications.modifications_json"
+    ],
+    "entity.trip_modifications.modifications.service_alert_id": [
+        "trip_modifications.modifications_json"
+    ],
+    "entity.trip_modifications.modifications.last_modified_time": [
+        "trip_modifications.modifications_json"
+    ],
+    # ---- Shape (#96) ----
+    "entity.shape.shape_id": ["shapes.shape_id"],
+    "entity.shape.encoded_polyline": ["shapes.encoded_polyline"],
+    # ---- Stop (#97) ----
+    # TranslatedStrings captured full-fidelity as [{"text","language"},...]
+    # JSON — including .language, unlike the service_alerts keep-first drops
+    "entity.stop.stop_id": ["stops.stop_id"],
+    "entity.stop.stop_code.translation.text": ["stops.stop_code_translations_json"],
+    "entity.stop.stop_code.translation.language": ["stops.stop_code_translations_json"],
+    "entity.stop.stop_name.translation.text": ["stops.stop_name_translations_json"],
+    "entity.stop.stop_name.translation.language": ["stops.stop_name_translations_json"],
+    "entity.stop.tts_stop_name.translation.text": ["stops.tts_stop_name_translations_json"],
+    "entity.stop.tts_stop_name.translation.language": ["stops.tts_stop_name_translations_json"],
+    "entity.stop.stop_desc.translation.text": ["stops.stop_desc_translations_json"],
+    "entity.stop.stop_desc.translation.language": ["stops.stop_desc_translations_json"],
+    "entity.stop.stop_lat": ["stops.stop_lat"],
+    "entity.stop.stop_lon": ["stops.stop_lon"],
+    "entity.stop.zone_id": ["stops.zone_id"],
+    "entity.stop.stop_url.translation.text": ["stops.stop_url_translations_json"],
+    "entity.stop.stop_url.translation.language": ["stops.stop_url_translations_json"],
+    "entity.stop.parent_station": ["stops.parent_station"],
+    "entity.stop.stop_timezone": ["stops.stop_timezone"],
+    "entity.stop.wheelchair_boarding": ["stops.wheelchair_boarding"],
+    "entity.stop.level_id": ["stops.level_id"],
+    "entity.stop.platform_code.translation.text": ["stops.platform_code_translations_json"],
+    "entity.stop.platform_code.translation.language": ["stops.platform_code_translations_json"],
 }
 
 

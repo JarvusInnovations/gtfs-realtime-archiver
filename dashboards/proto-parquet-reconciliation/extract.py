@@ -70,10 +70,13 @@ ENTITY_FIELDS = {
 HEADER_ONLY_MAX = 20
 
 # Ported from inventory.py's _RT_PATTERN so the two definitions of a valid RT
-# parquet path can't drift (this script can't import from src/).
+# parquet path can't drift (this script can't import from src/). The prefix
+# allowlist deliberately excludes the entity-grain tables (#95-#97): their
+# rows come from trip_updates protos and must not be reconciled against
+# trip_updates rows-per-proto expectations.
 _RT_PATTERN = re.compile(
-    r"^(?P<feed_type>[^/]+)/date=(?P<date>\d{4}-\d{2}-\d{2})"
-    r"/base64url=(?P<base64url>[A-Za-z0-9_-]+)/data\.parquet$"
+    r"^(?P<feed_type>vehicle_positions|trip_updates|service_alerts)"
+    r"/date=(?P<date>\d{4}-\d{2}-\d{2})/base64url=(?P<base64url>[A-Za-z0-9_-]+)/data\.parquet$"
 )
 
 # The reconcilable window, buffered at both edges (see the plan): older than
