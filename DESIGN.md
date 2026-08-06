@@ -784,6 +784,7 @@ Each feed type has a defined schema for consistent output:
 - Active period: `active_period_start`, `active_period_end` (first period **as published** — the spec doesn't require chronological order, so use `active_periods_json` when ordering matters), `active_periods_json` (full list)
 - Informed entity: `agency_id`, `route_id`, `route_type`, `stop_id`, `direction_id`, `trip_id`, `trip_route_id`, `trip_direction_id`, `trip_start_time`, `trip_start_date`, `trip_schedule_relationship`, `trip_modified_trip_modifications_id`, `trip_modified_trip_affected_trip_id`, `trip_modified_trip_start_date`, `trip_modified_trip_start_time`
 - Communication/impact periods: `communication_periods_json`, `impact_periods_json` (same encoding and NULL semantics as `active_periods_json`)
+- Translations (#98): `header_text_translations_json`, `description_text_translations_json`, `url_translations_json`, `tts_header_text_translations_json`, `tts_description_text_translations_json`, `cause_detail_translations_json`, `effect_detail_translations_json`, `image_alternative_text_translations_json` (each `[{"text","language"},…]` in publisher order, NULL when unset), `image_localized_images_json` (`[{"url","media_type","language"},…]`)
 - Header/entity: `feed_version`, `incrementality`, `is_deleted`
 
 **Trip Modifications** (#95):
@@ -826,9 +827,15 @@ for a detour's lifetime (the VP/TU every-snapshot model; zstd + dictionary
 encoding collapse repeats on disk) — dedup at query time, e.g.
 `QUALIFY ROW_NUMBER() OVER (PARTITION BY shape_id ORDER BY feed_timestamp DESC) = 1`.
 
-Service_alerts translated fields store the first translation only (typically
-English) — a deliberate keep-first decision (#91; the stops table's
-`*_translations_json` columns are exempt, see above). All columns added by #91 (including the
+Service_alerts scalar translated columns (`header_text` et al.) store the
+**first translation as published** — which is producer whim, not guaranteed
+English (AC Transit lists Spanish first; MTA publishes `en` and `en-html`
+variants). From #98 they sit alongside full-fidelity
+`*_translations_json` companions capturing every translation with its
+language tag, so nothing is lost and any display-selection rule
+(prefer-`en`, skip `-html`) is a downstream transform concern, not a
+compaction decision. The stops table's translated fields ship as
+`*_translations_json` only. All columns added by #91 (including the
 gtfs-realtime-bindings-2.2.0-gated `*_scheduled_time`, `cause_detail`,
 `effect_detail`, `image_url`, `modified_trip_*`) populate only from the
 release that shipped them onward; earlier partitions lack the columns and

@@ -74,7 +74,6 @@ STABLE_HASFIELD_TARGETS = frozenset(
         "header_text",
         "incrementality",
         "is_deleted",
-        "language",
         "license_plate",
         "odometer",
         "position",
@@ -446,6 +445,63 @@ def test_image_columns_come_from_same_first_localized_image() -> None:
     (r,) = extract_service_alerts(feed, "f.pb", "u", None)
     assert r["image_url"] == "https://example.com/first.png"
     assert r["image_media_type"] is None
+
+
+def test_alert_translations_json_full_fidelity() -> None:
+    """#98 option c: every translation survives with its language, in
+    publisher order, next to the unchanged keep-first compat column. The
+    AC Transit case — Spanish first, English second — keeps BOTH: the
+    compat column honestly stores first-as-published (Spanish), the JSON
+    makes the English recoverable downstream."""
+    feed = _feed()
+    entity = feed.entity.add()
+    entity.id = "a-multilang"
+    alert = entity.alert
+    alert.header_text.translation.add(text="Desvío en la Línea 1", language="es")
+    alert.header_text.translation.add(text="Detour on Line 1", language="en")
+    # MTA case: format variants published as languages
+    alert.description_text.translation.add(text="plain text", language="en")
+    alert.description_text.translation.add(text="<p>html</p>", language="en-html")
+    # No language tag at all
+    alert.url.translation.add(text="https://example.com/alerts")
+    li = alert.image.localized_image.add()
+    li.url = "https://example.com/detour.png"
+    li.media_type = "image/png"
+    li.language = "es"
+    li = alert.image.localized_image.add()
+    li.url = "https://example.com/detour-en.png"
+    li.media_type = "image/png"
+
+    (r,) = extract_service_alerts(feed, "f.pb", "https://x", None)
+
+    # Keep-first compat columns unchanged: first AS PUBLISHED
+    assert r["header_text"] == "Desvío en la Línea 1"
+    assert r["image_url"] == "https://example.com/detour.png"
+    # Full fidelity in the JSON
+    assert json.loads(r["header_text_translations_json"]) == [
+        {"text": "Desvío en la Línea 1", "language": "es"},
+        {"text": "Detour on Line 1", "language": "en"},
+    ]
+    assert json.loads(r["description_text_translations_json"]) == [
+        {"text": "plain text", "language": "en"},
+        {"text": "<p>html</p>", "language": "en-html"},
+    ]
+    assert json.loads(r["url_translations_json"]) == [
+        {"text": "https://example.com/alerts", "language": None}
+    ]
+    assert json.loads(r["image_localized_images_json"]) == [
+        {"url": "https://example.com/detour.png", "media_type": "image/png", "language": "es"},
+        {
+            "url": "https://example.com/detour-en.png",
+            "media_type": "image/png",
+            "language": None,
+        },
+    ]
+    # Unset translated fields -> NULL, never "[]"
+    assert r["tts_header_text_translations_json"] is None
+    assert r["cause_detail_translations_json"] is None
+    assert r["effect_detail_translations_json"] is None
+    assert r["image_alternative_text_translations_json"] is None
 
 
 def test_record_keys_match_schemas_exactly() -> None:

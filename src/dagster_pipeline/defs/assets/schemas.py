@@ -262,6 +262,22 @@ SERVICE_ALERTS_SCHEMA = pa.schema(
         # fleet-wide (2026-08-04 census); same JSON encoding as active_periods
         pa.field("communication_periods_json", pa.string()),
         pa.field("impact_periods_json", pa.string()),
+        # Full-fidelity translation capture (#98 option c): every
+        # TranslatedString field's complete list as
+        # [{"text": ..., "language": ...}, ...] in publisher order, alongside
+        # the keep-first compat columns above (whose semantics stay "first
+        # translation AS PUBLISHED" — producer whim, not guaranteed English).
+        # Display selection (prefer-en etc.) is derivable downstream.
+        pa.field("header_text_translations_json", pa.string()),
+        pa.field("description_text_translations_json", pa.string()),
+        pa.field("url_translations_json", pa.string()),
+        pa.field("tts_header_text_translations_json", pa.string()),
+        pa.field("tts_description_text_translations_json", pa.string()),
+        pa.field("cause_detail_translations_json", pa.string()),
+        pa.field("effect_detail_translations_json", pa.string()),
+        pa.field("image_alternative_text_translations_json", pa.string()),
+        # Full TranslatedImage: [{"url","media_type","language"},...]
+        pa.field("image_localized_images_json", pa.string()),
         # Informed-entity trip descriptor tail (MTA populates trip_start_date)
         pa.field("trip_start_time", pa.string()),
         pa.field("trip_start_date", pa.string()),
