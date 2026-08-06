@@ -1,8 +1,9 @@
 ---
-status: in-progress
+status: done
 depends: [rt-field-extraction]
 specs: []
 issues: [95, 96, 97]
+pr: 99
 ---
 
 # Entity-type capture: trip_modifications, shapes, stops

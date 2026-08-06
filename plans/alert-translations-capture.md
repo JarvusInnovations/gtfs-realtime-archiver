@@ -1,8 +1,9 @@
 ---
-status: in-progress
+status: done
 depends: [entity-type-capture]
 specs: []
 issues: [98]
+pr: 100
 ---
 
 # Alert translations: full-fidelity JSON capture (#98 option c)
