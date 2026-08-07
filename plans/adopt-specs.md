@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 depends: []
 specs:
   - specs/README.md
@@ -9,6 +9,7 @@ specs:
   - specs/behaviors/compaction.md
   - specs/behaviors/published-artifacts.md
 issues: [87, 86]
+pr: 102
 ---
 
 # Plan: Adopt specs/ (spec-driven development pathway)
@@ -84,21 +85,21 @@ Out of scope:
 
 ## Validation
 
-- [ ] `specs/` skeleton exists (README, principles, architecture) following the
+- [x] `specs/` skeleton exists (README, principles, architecture) following the
   specops layout and template conventions
-- [ ] Every contract surface in #86's table appears in
+- [x] Every contract surface in #86's table appears in
   `specs/behaviors/published-artifacts.md` with path, shape, cadence,
   retention, stability rule, and known consumers
-- [ ] The normative semantics formerly in DESIGN.md (grain, presence
+- [x] The normative semantics formerly in DESIGN.md (grain, presence
   conventions, JSON encoding, complete-capture policy, failure and overwrite
   rules) appear in `specs/behaviors/compaction.md`; DESIGN.md retains no
   normative contract content
-- [ ] `/audit-spec-drift` command and `spec-drift-auditor` agent are wired and
+- [x] `/audit-spec-drift` command and `spec-drift-auditor` agent are wired and
   reference this repo's actual directories
-- [ ] `.claude/CLAUDE.md` documentation-maintenance rules name `specs/` as
+- [x] `.claude/CLAUDE.md` documentation-maintenance rules name `specs/` as
   normative and the specops section no longer says "specs/ does not exist yet"
-- [ ] `uv run ruff check src/ tests/`, `uv run mypy src/`, and
-  `uv run pytest tests/` pass (no code changes expected)
+- [x] `uv run ruff check src/ tests/`, `uv run mypy src/`, and
+  `uv run pytest tests/` pass (245 passed; no code changes)
 
 ## Risks / unknowns
 
@@ -114,8 +115,33 @@ Out of scope:
 
 ## Notes
 
-(Populated at closeout.)
+- Added `specs/behaviors/archiving.md` beyond the issue's enumerated minimum:
+  shrinking DESIGN.md would otherwise have orphaned its normative fetch/retry/
+  storage-write content with no spec to receive it.
+- One convention nearly lost to prose: the parquet/protobuf **base64url path
+  encoding** (base URL, auth params excluded, padding stripped) and the Dagster
+  **partition-key encoding** (scheme-stripped, `~` for http) are two different
+  encodings of the same URL. Now stated side by side in
+  published-artifacts.md.
+- DESIGN.md's known drift confirmed during extraction and fixed in the specs:
+  compaction "Data Flow" described runtime feed discovery (actual: sensor +
+  per-type dynamic partitions with schedules as the completeness backstop), and
+  "Schedule" named a single `daily_compaction_schedule` (actual: three per-type
+  schedules at 02:00 UTC, inventory at 04:00, schedule check at 05:00).
+- The `feed_discovery_sensor` ships `default_status=STOPPED` (safe-rollout
+  choice); the spec describes the sensor's role without pinning the default
+  status, since the operational toggle lives in the Dagster instance.
 
 ## Follow-ups
 
-(Populated at closeout.)
+- Issue [#86](https://github.com/JarvusInnovations/gtfs-realtime-archiver/issues/86)
+  — remains open for reciprocal contract docs in transit-lake/gtfsrt-sandbox
+  and inline load-bearing-contract comments at producing code sites; the
+  contracts document itself lands here as
+  `specs/behaviors/published-artifacts.md`.
+- Tracked as: optional `specops hook install` (pathway step 6, SessionStart
+  plans dashboard) left to a team decision — it touches every contributor
+  session.
+- Tracked as: behavior specs for in-flight investigation areas (#91/#92
+  reconciliation hardening, #101 extensions) follow the spec-first flow as that
+  work lands.
