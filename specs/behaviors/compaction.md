@@ -36,7 +36,11 @@ field-coverage manifest tests (`tests/dagster/test_field_coverage.py`).
   genuinely empty input
   ([principle](../principles.md#fail-loud-on-total-failure-tolerate-partial-failure)).
 - **Parquet conversion/write failure**: fail the partition loudly, naming the
-  offending output; never upload a partial buffer.
+  offending output; never upload a partial buffer. One deliberate carve-out:
+  `MemoryError` re-raises unwrapped (no file/table naming) — OOM is a
+  resource condition, not a schema bug, and must not send the operator
+  chasing an innocent input file (#92 watch item; the no-partial-upload
+  guarantee still holds).
 - **Zero-record table**: uploads nothing — no file, never an empty file.
 
 ## Re-materialization and overwrite semantics

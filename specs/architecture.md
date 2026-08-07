@@ -46,7 +46,9 @@ agencies.yaml (Secret Manager) ──▶ feeds_metadata ──▶ feeds.parquet 
   yesterday's raw prefixes per feed type, registers unseen feeds as dynamic
   partitions, and requests runs for discovered feed+date combinations. There
   is no static feed registry in the pipeline; the raw bucket is the source of
-  feed existence.
+  feed existence. The sensor ships `default_status=STOPPED` (safe-rollout
+  choice); whether it is running is an operational fact of the live Dagster
+  instance, not derivable from code.
 - **Daily compaction**: three per-type schedules (`vehicle_positions_schedule`,
   `trip_updates_schedule`, `service_alerts_schedule`) fire at 02:00 UTC and
   request one run per *known* (already-registered) feed partition for
