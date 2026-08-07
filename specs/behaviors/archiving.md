@@ -16,6 +16,10 @@ writer, health/metrics server.
 
 - One in-memory job per feed at `interval_seconds` (feed override → per-type
   default from `defaults.intervals`). No job store persistence.
+- Feed start times are staggered by a deterministic offset
+  (`md5(feed.id) % interval_seconds`) so feeds don't all fire simultaneously
+  at startup, and the offset survives restarts. (Hash-based spread is
+  approximate; rank-based even spacing is tracked as #60.)
 - A tick that can't run within its misfire grace (default 5s) is dropped, and
   missed ticks coalesce to the latest — never queued or backfilled
   ([principle](../principles.md#missed-data-has-no-value-late)).
