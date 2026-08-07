@@ -55,6 +55,11 @@ writer, health/metrics server.
   etag / last-modified / content-type / content-length headers).
 - Compaction depends on `fetch_timestamp` in the sidecar; a missing or invalid
   sidecar degrades that column to NULL downstream, it does not block capture.
+- Uploads retry transient I/O errors only (GCS client errors, timeouts,
+  connection errors) — up to 3 attempts with exponential backoff (1s base,
+  10s cap). Exhaustion is logged as `upload_error` and the snapshot is
+  dropped like any other missed tick
+  ([principle](../principles.md#missed-data-has-no-value-late)).
 
 ## Observability surface
 
@@ -64,9 +69,9 @@ The service exposes, on one port (`HEALTH_PORT`, default 8080):
   feed counts
 - `GET /health/feeds` — per-feed status detail
 - `GET /ready` — readiness
-- `GET /metrics` — Prometheus: fetch/upload counters (success/error, per feed,
-  type, and agency), duration and size histograms, active-feed and job gauges,
-  last-fetch timestamps
+- `GET /metrics` — Prometheus scrape target (OpenMetrics exposition format):
+  fetch/upload counters (success/error, per feed, type, and agency), duration
+  and size histograms, active-feed and job gauges, last-fetch timestamps
 
 Structured logs (structlog; JSON in production) record every fetch success and
 failure with feed identity, timing, and error context.
