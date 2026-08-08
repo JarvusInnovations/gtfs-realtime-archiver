@@ -51,7 +51,8 @@ GTFS-RT Archiver is a single-container Python service designed to:
     (Hive-partitioned parquet files)
 ```
 
-See [DESIGN.md](DESIGN.md) for detailed architecture and implementation notes.
+See [specs/](specs/README.md) for the normative architecture and behavior
+specifications, and [DESIGN.md](DESIGN.md) for background and rationale.
 
 ### Storage Layout
 

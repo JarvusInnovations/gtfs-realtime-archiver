@@ -9,7 +9,9 @@ See [README.md](../README.md) for complete project documentation including:
 - Configuration reference
 - Deployment instructions
 
-See [DESIGN.md](../DESIGN.md) for detailed technical specifications.
+See [specs/](../specs/README.md) for the normative technical specification
+(architecture, behaviors, principles). [DESIGN.md](../DESIGN.md) holds
+background and rationale only — it is not normative.
 
 ## Documentation Maintenance
 
@@ -25,9 +27,14 @@ See [DESIGN.md](../DESIGN.md) for detailed technical specifications.
   - Keep commit practices current
   - Reflect any new conventions or patterns
 
-- **DESIGN.md**: Technical specification
-  - Update when architecture changes
-  - Document deviations from original design
+- **specs/**: Normative technical specification (spec-first — see below)
+  - Behavior changes update the relevant spec *before* (or with) the code
+  - Contract surfaces (`specs/behaviors/published-artifacts.md`) evolve
+    additively only; check known consumers before any breaking change
+
+- **DESIGN.md**: Background and rationale only (NOT normative)
+  - Add rationale/history when a significant decision is made
+  - Never add normative "what must be true" content here — that goes in specs/
 
 **Rule**: If a commit changes functionality, structure, or configuration, update relevant documentation in the same commit.
 
@@ -41,16 +48,17 @@ triggers on "spec", "plan", starting a feature, etc.) before planning or buildin
   work lands as a file in `plans/` that freezes to `done` as the durable record of
   what got built. Don't let an ephemeral plan substitute for it, and don't skip it
   for "small" changes.
-- **`specs/` does not exist yet** — adoption pathway is tracked in issue #87. Until
-  it lands, plans carry intent on their own and DESIGN.md remains the (drift-prone)
-  reference. Once `specs/` exists: specs lead — before changing behavior, change the
-  spec, then bring code into conformance.
+- **Specs lead.** `specs/` is the source of truth for what *should be true*. Before
+  changing behavior, change the spec; bring code into conformance after. Spec↔code
+  drift is a bug, not debt. Specs merge implemented-or-planned; a spec still being
+  designed rides a draft planning PR, not the main branch. DESIGN.md is background/
+  rationale only.
 - **A spec change ripples to its plans.** After editing a spec, review the plans that
   implement it (`grep -l '<spec-path>' plans/*.md`) and offer to update them.
 
 Query the plan DAG: `.agents/skills/specops/scripts/specops next` (what to work on
-next) and `.agents/skills/specops/scripts/specops dag` (graph). The
-`/audit-spec-drift` command is not wired up yet (part of #87).
+next) and `.agents/skills/specops/scripts/specops dag` (graph). Run
+`/audit-spec-drift` to compare specs against the implementation.
 
 ## Repository Layout
 
@@ -59,7 +67,10 @@ gtfs-realtime-archiver/
 ├── .github/workflows/      # CI/CD (lint, test, build, push, pages, agency config deploy)
 ├── .agents/skills/         # Vendored agent skills (specops; managed via `npx skills`)
 ├── .claude/                # AI assistant guidelines (this directory)
+│   ├── agents/             # spec-drift-auditor agent
+│   └── commands/           # /audit-spec-drift, /add-agency, /deploy-agencies
 ├── .dagster_home/          # Dagster configuration
+├── specs/                  # Normative specs (SpecOps): architecture, behaviors, principles
 ├── plans/                  # SpecOps plan protocol: work-in-flight tracking (see plans/README.md)
 ├── dashboards/             # Temporary local analysis dashboards (not deployed, outside CI lint/type paths)
 │   └── proto-parquet-reconciliation/  # Evidence dashboard: raw .pb counts vs parquet rows
