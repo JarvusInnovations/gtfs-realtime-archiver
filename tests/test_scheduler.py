@@ -231,6 +231,54 @@ class TestFeedScheduler:
         assert len(calls) == 1
         assert calls[0] == feeds[0]
 
+    async def test_feeds_fetch_concurrently(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Regression test for #104: fetches must run concurrently across feeds.
+
+        Before the per-feed task fix, every feed's schedule shared one
+        APScheduler Task (identity derived from the shared callable) whose
+        max_running_jobs=1 default serialized all fetches fleet-wide, pinning
+        peak concurrency at exactly 1.
+        """
+        import asyncio
+        import contextlib
+
+        from gtfs_rt_archiver import scheduler as scheduler_module
+
+        # Fire all schedules at the same instant instead of staggered
+        monkeypatch.setattr(scheduler_module, "compute_start_offset", lambda *_: 0.0)
+
+        feeds = [make_feed(f"feed-{i}") for i in range(3)]
+        running = 0
+        peak = 0
+        all_overlapped = asyncio.Event()
+
+        async def fetch_job(_feed: FeedConfig, _scheduled_time: datetime) -> None:
+            nonlocal running, peak
+            running += 1
+            peak = max(peak, running)
+            if peak >= len(feeds):
+                all_overlapped.set()
+            await asyncio.sleep(1.0)
+            running -= 1
+
+        scheduler = FeedScheduler(
+            feeds=feeds,
+            fetch_job=fetch_job,
+            misfire_grace_time=10.0,  # Generous grace so slow CI can't drop ticks
+        )
+        await scheduler.start()
+        try:
+            # On timeout, fall through to the peak assertion for a precise message
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(all_overlapped.wait(), timeout=5.0)
+        finally:
+            await scheduler.stop(wait=True)
+
+        assert peak >= 2, (
+            f"Fetches serialized (peak concurrency {peak}); feeds must fetch "
+            "concurrently per specs/behaviors/archiving.md (#104)"
+        )
+
     async def test_is_running_reflects_scheduler_state(self, feeds: list[FeedConfig]) -> None:
         """Test is_running property reflects actual scheduler state."""
 

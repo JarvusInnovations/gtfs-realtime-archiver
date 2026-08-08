@@ -149,8 +149,21 @@ class FeedScheduler:
             start_time = now + timedelta(seconds=offset)
             trigger = IntervalTrigger(seconds=feed.interval_seconds, start_time=start_time)
 
+            # Each feed needs its own Task: APScheduler derives Task identity
+            # from the callable, so registering _execute_scheduled_fetch
+            # directly would put every feed on ONE task whose
+            # max_running_jobs=1 default serializes fetches fleet-wide (#104).
+            # A per-feed task scopes that cap to the feed: no overlapping runs
+            # of the same feed, while cross-feed concurrency is bounded only
+            # by the fetch pool's MAX_CONCURRENT semaphore.
+            task_id = f"fetch-{feed.id}"
+            await self._scheduler.configure_task(
+                task_id,
+                func=_execute_scheduled_fetch,
+                max_running_jobs=1,
+            )
             await self._scheduler.add_schedule(
-                _execute_scheduled_fetch,
+                task_id,
                 trigger=trigger,
                 id=f"feed-{feed.id}",
                 kwargs={"scheduler_id": self._id, "feed_id": feed.id},
