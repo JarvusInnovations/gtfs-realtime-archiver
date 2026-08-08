@@ -1,9 +1,10 @@
 ---
-status: in-progress
+status: done
 depends: []
 specs:
   - specs/behaviors/archiving.md
 issues: [104]
+pr: 106
 ---
 
 # Plan: Fix system-wide fetch serialization (per-feed APScheduler tasks)
@@ -47,11 +48,12 @@ sleeping; assert peak ≥ 2 (pre-fix behavior pins it at exactly 1).
 
 ## Validation
 
-- [ ] Regression test demonstrates cross-feed concurrency > 1 under
-  simultaneous triggers (and fails against the pre-fix scheduler)
-- [ ] Per-feed no-overlap is still enforced (max_running_jobs=1 per feed task)
-- [ ] `uv run ruff check src/ tests/`, `uv run mypy src/`,
-  `uv run pytest tests/` all pass
+- [x] Regression test demonstrates cross-feed concurrency > 1 under
+  simultaneous triggers (and fails against the pre-fix scheduler — verified
+  via `git stash`: peak pinned at 1 until timeout)
+- [x] Per-feed no-overlap is still enforced (max_running_jobs=1 per feed task)
+- [x] `uv run ruff check src/ tests/`, `uv run mypy src/`,
+  `uv run pytest tests/` all pass (246 passed)
 - [ ] Post-deploy (next release): fetch-latency/misfire metrics reviewed and
   #51 (Big Blue Bus) re-checked for recovered vehicle positions
 
@@ -68,8 +70,25 @@ sleeping; assert peak ≥ 2 (pre-fix behavior pins it at exactly 1).
 
 ## Notes
 
-(Populated at closeout.)
+- The post-deploy validation criterion is intentionally unchecked at merge:
+  it can only close after the next release ships this fix to Cloud Run. It
+  closes out via #51 (re-check Big Blue Bus) and the #59 dashboard work.
+- APScheduler subtlety worth remembering: `add_schedule(callable, id=...)`'s
+  `id` names the *schedule*; Task identity (which `max_running_jobs` scopes
+  to) comes from `callable_to_ref(callable)` unless a task is configured
+  explicitly. `configure_task(task_id, func=...)` + `add_schedule(task_id,
+  ...)` is the pattern for distinct tasks sharing one callable.
+- The bug made the md5 stagger non-load-bearing (serialization was the real
+  spacing); post-fix, stagger is what actually spreads load — raising #60's
+  priority.
 
 ## Follow-ups
 
-(Populated at closeout.)
+- Issue [#51](https://github.com/JarvusInnovations/gtfs-realtime-archiver/issues/51)
+  — re-check for recovered vehicle positions after the next release deploys
+  this fix.
+- Issue [#60](https://github.com/JarvusInnovations/gtfs-realtime-archiver/issues/60)
+  — rank-based staggering is now genuinely load-bearing (see Notes).
+- Issue [#59](https://github.com/JarvusInnovations/gtfs-realtime-archiver/issues/59)
+  — scheduler-health dashboard is where the post-deploy criterion gets
+  verified.
