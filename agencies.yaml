@@ -159,11 +159,14 @@ agencies:
       - feed_type: service_alerts
         url: https://api.pugetsound.onebusaway.org/api/gtfs_realtime/alerts-for-agency/40.pb
 
-  # RT is KCM's own first-party S3 bucket (unauthenticated); schedule is the
-  # OneBusAway Puget Sound regional bundle keyed on agency 1 (Metro Transit).
+  # RT is KCM's own first-party S3 bucket (unauthenticated). Schedule is KCM's
+  # own combined bundle, which also covers Seattle streetcar (23), Sound Transit
+  # (40), and Solid Ground EZ Loop (6289). Preferred over the OneBusAway rebuild
+  # at gtfs.sound.obaweb.org/prod/1_gtfs.zip, which lags a service signup behind
+  # (only ~98% of RT trip IDs resolve against it, vs 100% here).
   - id: king-county-metro
     name: King County Metro
-    schedule_url: https://gtfs.sound.obaweb.org/prod/1_gtfs.zip
+    schedule_url: https://metro.kingcounty.gov/GTFS/google_transit.zip
     feeds:
       - feed_type: vehicle_positions
         url: https://s3.amazonaws.com/kcm-alerts-realtime-prod/vehiclepositions.pb
