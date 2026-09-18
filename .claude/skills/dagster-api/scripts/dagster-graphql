@@ -92,21 +92,28 @@ cmd_add_partition() {
           __typename ... on AddDynamicPartitionSuccess { partitionsDefName partitionKey }
           ... on PythonError { message } } }' \
       "$(jq -nc --arg d "$def" --arg k "$key" --argjson r "$(selector)" '{d:$d,k:$k,r:$r}')" \
-  | jq -r '.data.addDynamicPartition | "\(.__typename) \(.partitionsDefName // "")\(.partitionKey // "") \(.message // "")"'
+  | jq -r '.data.addDynamicPartition | "\(.__typename) \(.partitionsDefName // "") \(.partitionKey // "") \(.message // "")"'
 }
 
 cmd_backfill() {
-  local asset="${1:?usage: dagster-graphql backfill <asset> <partition-key> [more keys...]}"
+  local assets="${1:?usage: dagster-graphql backfill <asset[,asset2,...]> <partition-key> [more keys...]}"
   shift
   [ $# -ge 1 ] || die "need at least one partition key"
-  local keys; keys=$(printf '%s\n' "$@" | jq -R . | jq -sc .)
+  local keys selection
+  keys=$(printf '%s\n' "$@" | jq -R . | jq -sc .)
+  # Several assets can share one non-subsettable @multi_asset, and Dagster
+  # rejects a backfill naming only some of them ("Backfill must include every
+  # key in a non-subsettable multi-asset"). Accept a comma-separated list so
+  # the whole group can be selected; the error names the missing member if the
+  # list is short.
+  selection=$(printf '%s' "$assets" | tr ',' '\n' | jq -R '{path:[.]}' | jq -sc .)
   # Asset backfills select by asset key; partitionSetName is for the older
   # job-based path and does not apply to these assets.
   gql 'mutation($p:LaunchBackfillParams!){ launchPartitionBackfill(backfillParams:$p){
         __typename ... on LaunchBackfillSuccess { backfillId }
         ... on PythonError { message } } }' \
-      "$(jq -nc --arg a "$asset" --argjson k "$keys" \
-         '{p:{assetSelection:[{path:[$a]}], partitionNames:$k,
+      "$(jq -nc --argjson a "$selection" --argjson k "$keys" \
+         '{p:{assetSelection:$a, partitionNames:$k,
               fromFailure:false, allPartitions:false}}')" \
   | jq -r '.data.launchPartitionBackfill | "\(.__typename) \(.backfillId // .message // "")"'
 }
@@ -137,7 +144,8 @@ Commands:
   ticks <sensor> [limit]             recent ticks with first line of any error
   partitions <asset>                 registered partition keys, per dimension
   add-partition <def-name> <key>     register one dynamic partition
-  backfill <asset> <key> [key...]    launch a backfill over partition keys
+  backfill <asset[,asset2]> <key>... launch a backfill over partition keys
+                                     (comma-separate co-members of a multi_asset)
   runs [limit]                       recent runs
   query '<graphql>' [vars-json]      raw GraphQL, pretty-printed
 
