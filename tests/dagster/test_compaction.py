@@ -1,11 +1,14 @@
 """Tests for Dagster compaction functions."""
 
+from unittest.mock import MagicMock
+
 import pytest
 from google.protobuf.message import DecodeError
 from google.transit import gtfs_realtime_pb2
 
 from dagster_pipeline.defs.assets.compaction import (
     decode_base64url,
+    discover_feed_urls,
     encode_base64url,
     extract_service_alerts,
     extract_trip_updates,
@@ -358,3 +361,76 @@ class TestExtractServiceAlerts:
         """Test extracting from empty feed."""
         records = list(extract_service_alerts(empty_feed, "test.pb", "http://test", None))
         assert records == []
+
+
+class TestDiscoverFeedUrls:
+    """Tests for feed discovery from the raw bucket's prefix layout."""
+
+    @staticmethod
+    def _bucket(layout: dict[str, list[str]]) -> MagicMock:
+        """Build a bucket whose list_blobs serves `layout` as prefix listings.
+
+        `layout` maps a prefix to its immediate child prefixes. Any object-level
+        listing (no delimiter) raises, pinning the contract that discovery must
+        never page individual blobs.
+        """
+
+        def list_blobs(prefix: str, delimiter: str | None = None) -> MagicMock:
+            if delimiter is None:
+                raise AssertionError(
+                    f"discovery paged objects under {prefix!r}; it must list prefixes"
+                )
+            iterator = MagicMock()
+            iterator.__iter__ = lambda _: iter(())
+            iterator.prefixes = set(layout.get(prefix, []))
+            return iterator
+
+        bucket = MagicMock()
+        bucket.list_blobs.side_effect = list_blobs
+        return bucket
+
+    def _client(self, layout: dict[str, list[str]]) -> MagicMock:
+        client = MagicMock()
+        client.bucket.return_value = self._bucket(layout)
+        return client
+
+    def test_collects_feeds_across_hours(self) -> None:
+        """Feeds are unioned across every hour prefix of the date."""
+        date_prefix = "vehicle_positions/date=2026-09-17/"
+        hour_a = f"{date_prefix}hour=2026-09-17T00:00:00Z/"
+        hour_b = f"{date_prefix}hour=2026-09-17T01:00:00Z/"
+        client = self._client(
+            {
+                date_prefix: [hour_a, hour_b],
+                # feed_b appears only in the later hour (e.g. newly added)
+                hour_a: [f"{hour_a}base64url=aaa/"],
+                hour_b: [f"{hour_b}base64url=aaa/", f"{hour_b}base64url=bbb/"],
+            }
+        )
+
+        assert discover_feed_urls(client, "bucket", "vehicle_positions", "2026-09-17") == {
+            "aaa",
+            "bbb",
+        }
+
+    def test_never_lists_objects(self) -> None:
+        """Discovery uses delimiter listings only — never a full object scan.
+
+        This is the regression: paging every object for a day of
+        vehicle_positions overran the sensor's 60s tick budget, so new feeds
+        were never registered as dynamic partitions.
+        """
+        date_prefix = "trip_updates/date=2026-09-17/"
+        hour = f"{date_prefix}hour=2026-09-17T00:00:00Z/"
+        client = self._client({date_prefix: [hour], hour: [f"{hour}base64url=zzz/"]})
+
+        # The bucket raises if called without a delimiter.
+        assert discover_feed_urls(client, "bucket", "trip_updates", "2026-09-17") == {"zzz"}
+        for call in client.bucket.return_value.list_blobs.call_args_list:
+            assert call.kwargs["delimiter"] == "/"
+
+    def test_empty_date_returns_empty_set(self) -> None:
+        """A date with no archived hours yields no feeds."""
+        client = self._client({})
+
+        assert discover_feed_urls(client, "bucket", "service_alerts", "2026-09-17") == set()
