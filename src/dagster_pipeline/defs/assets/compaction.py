@@ -199,6 +199,18 @@ def partition_key_to_url(key: str) -> str:
     return "https://" + key
 
 
+def _list_prefixes(bucket: storage.Bucket, prefix: str) -> list[str]:
+    """List the immediate child prefixes of a GCS prefix.
+
+    The client only populates ``prefixes`` once the underlying pages have been
+    consumed, so the iterator is exhausted before it is read.
+    """
+    iterator = bucket.list_blobs(prefix=prefix, delimiter="/")
+    for _ in iterator:
+        pass
+    return sorted(iterator.prefixes)
+
+
 def discover_feed_urls(
     client: storage.Client,
     bucket_name: str,
@@ -215,17 +227,26 @@ def discover_feed_urls(
 
     Returns:
         Set of base64url-encoded feed URLs found for this date
+
+    Walks the layout's two prefix levels (date -> hour -> base64url) using
+    delimiter listings, which return only the directory-like prefixes rather
+    than paging every object underneath. Feed existence is a property of the
+    prefixes, so enumerating the day's objects is wasted work: a single hour
+    of vehicle_positions holds thousands of .pb files, and the full-day scan
+    it implies overruns the sensor's tick budget once enough feeds are
+    archived. Cost here is ~1 + 24 requests per feed type regardless of how
+    much data each feed wrote.
     """
     bucket = client.bucket(bucket_name)
-    prefix = f"{feed_type}/date={date}/"
+    date_prefix = f"{feed_type}/date={date}/"
 
     feed_urls: set[str] = set()
-    for blob in bucket.list_blobs(prefix=prefix):
-        # Extract base64url from path
-        # Pattern: {feed_type}/date=YYYY-MM-DD/hour=.../base64url={encoded}/...
-        match = re.search(r"base64url=([A-Za-z0-9_-]+)/", blob.name)
-        if match:
-            feed_urls.add(match.group(1))
+    for hour_prefix in _list_prefixes(bucket, date_prefix):
+        for feed_prefix in _list_prefixes(bucket, hour_prefix):
+            # Pattern: {feed_type}/date=YYYY-MM-DD/hour=.../base64url={encoded}/
+            match = re.search(r"base64url=([A-Za-z0-9_-]+)/$", feed_prefix)
+            if match:
+                feed_urls.add(match.group(1))
 
     return feed_urls
 

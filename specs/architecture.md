@@ -49,6 +49,15 @@ agencies.yaml (Secret Manager) ──▶ feeds_metadata ──▶ feeds.parquet 
   feed existence. The sensor ships `default_status=STOPPED` (safe-rollout
   choice); whether it is running is an operational fact of the live Dagster
   instance, not derivable from code.
+  - Discovery reads the **prefix hierarchy only** (`date=` -> `hour=` ->
+    `base64url=`), never the objects beneath it. Its cost is a function of how
+    many feeds exist, not how much data they wrote, so it stays within the
+    daemon's per-tick budget as the archive grows.
+  - A sensor that cannot finish within that budget is **indistinguishable from
+    one that is switched off**: every tick fails, no partition is ever
+    registered, and newly-configured agencies archive raw protobufs that never
+    become parquet. Feed registration has no other path, so discovery must
+    degrade in latency, never in completeness.
 - **Daily compaction**: three per-type schedules (`vehicle_positions_schedule`,
   `trip_updates_schedule`, `service_alerts_schedule`) fire at 02:00 UTC and
   request one run per *known* (already-registered) feed partition for
