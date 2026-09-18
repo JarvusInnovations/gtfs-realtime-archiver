@@ -68,7 +68,8 @@ gtfs-realtime-archiver/
 ├── .agents/skills/         # Vendored agent skills (specops; managed via `npx skills`)
 ├── .claude/                # AI assistant guidelines (this directory)
 │   ├── agents/             # spec-drift-auditor agent
-│   └── commands/           # /audit-spec-drift, /add-agency, /deploy-agencies
+│   ├── commands/           # /audit-spec-drift, /add-agency, /deploy-agencies
+│   └── skills/             # dagster-api (live pipeline access), release, specops
 ├── .dagster_home/          # Dagster configuration
 ├── specs/                  # Normative specs (SpecOps): architecture, behaviors, principles
 ├── plans/                  # SpecOps plan protocol: work-in-flight tracking (see plans/README.md)
@@ -294,6 +295,15 @@ uv run dg launch --partition "2026-01-01|gtfs.example.com/feed"
 ```
 
 Partition keys are `date|feed`, where `feed` is the scheme-stripped feed URL (`~` prefix for `http`); the feed dimension is dynamic, so the key must already be registered.
+
+**Inspecting the live instance**: the deployed pipeline's real state — sensor
+status and tick errors, registered dynamic partitions, run history — is only
+visible through its IAP-gated GraphQL API. Use the **`dagster-api`** skill
+(`.claude/skills/dagster-api/`) rather than inferring pipeline state from code,
+logs, or GCS. Reach for it whenever a feed archives raw protobufs but produces
+no parquet, an agency is missing from `inventory.json`/gtfsrt.io, or a sensor
+or schedule may not be firing. Note that a sensor failing every tick reports
+`RUNNING` exactly like a healthy one, so status alone is never the answer.
 
 **Environment Setup**:
 
