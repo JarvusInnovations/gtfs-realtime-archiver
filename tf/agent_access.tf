@@ -1,12 +1,22 @@
 # Agent/operator programmatic access to the IAP-gated Dagster webserver.
 #
-# User credentials cannot mint the audience-bound ID tokens Cloud Run IAP
-# requires, so agents (Claude sessions, scripts) impersonate this dedicated
-# service account, which can ONLY pass IAP — it holds no data or infra roles.
+# User credentials cannot mint the audience-bound tokens Cloud Run IAP requires,
+# so agents (Claude sessions, scripts) impersonate this dedicated service
+# account, which can ONLY pass IAP — it holds no data or infra roles.
 #
-#   gcloud auth print-identity-token \
-#     --impersonate-service-account=agent-graphql@gtfs-archiver.iam.gserviceaccount.com \
-#     --audiences=<webserver URL>
+# This IAP uses a Google-managed OAuth client, which does NOT support the
+# impersonated-ID-token flow: `gcloud auth print-identity-token
+# --impersonate-service-account=... --audiences=...` fails with "Invalid JWT
+# audience" for every audience value. Use a self-signed JWT instead, signed via
+# iamcredentials so no key file is needed, with the audience carrying a path
+# wildcard:
+#
+#   aud = "https://dagster.gtfsrt.io/*"   (the trailing /* is required)
+#   POST .../serviceAccounts/agent-graphql@...:signJwt
+#   Authorization: Bearer <signedJwt>
+#
+# The `dagster-api` skill (.claude/skills/dagster-api/) implements this and is
+# the supported way in; see its SKILL.md for the full rationale.
 
 resource "google_service_account" "agent_graphql" {
   account_id   = "agent-graphql"
