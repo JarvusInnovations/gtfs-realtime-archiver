@@ -53,7 +53,7 @@ What works is a **service-account self-signed JWT**, signed through the
 | `ticks <sensor> [limit]` | Recent ticks with the first line of any error |
 | `partitions <asset>` | Which partition keys are registered, per dimension |
 | `add-partition <def> <key>` | Register one dynamic partition |
-| `backfill <asset> <key> [key...]` | Launch a backfill over partition keys |
+| `backfill <asset[,asset2]> <key>...` | Launch a backfill over partition keys |
 | `runs [limit]` | Recent run history |
 | `query '<graphql>' [vars]` | Anything the above doesn't cover |
 
@@ -88,6 +88,13 @@ rescuing, but they are not exploratory. Know which partition keys you intend
 to create, and prefer registering a partition and letting the existing daily
 schedule pick it up over launching a wide backfill, which costs real compute
 per partition.
+
+Several assets can share one non-subsettable `@multi_asset`, and Dagster
+refuses a backfill that names only part of the group. `trip_updates_parquet`
+is one of these: backfilling it also requires `trip_modifications_parquet`,
+`shapes_parquet`, and `stops_parquet`. Pass them comma-separated; the error
+message names whichever member is still missing, so it converges in a couple
+of tries.
 
 Partition keys are scheme-stripped feed URLs — `https://` dropped, `~` marking
 `http://` — so `https://s3.amazonaws.com/kcm/vp.pb` becomes
