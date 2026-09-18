@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+# Talk to the gtfs-archiver Dagster GraphQL API through IAP.
+#
+# IAP here uses a Google-managed OAuth client, which does NOT support the
+# impersonated-ID-token flow. The only thing that works is a service-account
+# self-signed JWT whose audience carries a path wildcard. See SKILL.md.
+#
+# Requires: gcloud (authenticated), curl, jq. No SA key file — signing goes
+# through iamcredentials, so nothing secret ever lands on disk.
+set -euo pipefail
+
+SA="${DAGSTER_AGENT_SA:-agent-graphql@gtfs-archiver.iam.gserviceaccount.com}"
+HOST="${DAGSTER_HOST:-https://dagster.gtfsrt.io}"
+AUD="${DAGSTER_IAP_AUDIENCE:-${HOST}/*}"
+LOC="${DAGSTER_CODE_LOCATION:-dagster_pipeline.definitions}"
+REPO="${DAGSTER_REPOSITORY:-__repository__}"
+
+die() { echo "error: $*" >&2; exit 1; }
+
+# Mints a short-lived JWT and POSTs one GraphQL document. The token lives only
+# in this function's locals so it never reaches the filesystem or the log.
+gql() {
+  local query="$1" vars="${2:-null}" now payload jwt resp
+  now=$(date +%s)
+  payload=$(jq -nc --arg sa "$SA" --arg aud "$AUD" \
+    --argjson iat "$now" --argjson exp "$((now + 300))" \
+    '{iss:$sa, sub:$sa, aud:$aud, iat:$iat, exp:$exp}')
+  jwt=$(curl -sS -X POST \
+    -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+    -H "Content-Type: application/json" \
+    "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${SA}:signJwt" \
+    -d "$(jq -nc --arg p "$payload" '{payload:$p}')" | jq -r '.signedJwt // empty')
+  [ -n "$jwt" ] && [ "$jwt" != "null" ] || die "could not sign JWT as $SA (need roles/iam.serviceAccountTokenCreator)"
+
+  resp=$(curl -sS -H "Authorization: Bearer $jwt" -H "Content-Type: application/json" \
+    -X POST "${HOST}/graphql" \
+    -d "$(jq -nc --arg q "$query" --argjson v "$vars" '{query:$q, variables:$v}')")
+
+  # IAP rejections come back as plain text, not JSON — surface them clearly
+  # rather than letting jq fail on a parse error.
+  if ! echo "$resp" | jq -e . >/dev/null 2>&1; then
+    die "non-JSON response (usually IAP): $(echo "$resp" | head -c 200)"
+  fi
+  if echo "$resp" | jq -e '.errors' >/dev/null 2>&1; then
+    echo "$resp" | jq -r '.errors[].message' >&2
+    die "GraphQL returned errors"
+  fi
+  echo "$resp"
+}
+
+selector() { jq -nc --arg l "$LOC" --arg r "$REPO" '{repositoryLocationName:$l, repositoryName:$r}'; }
+
+cmd_query() {
+  [ $# -ge 1 ] || die "usage: dagster-graphql query '<graphql>' [variables-json]"
+  gql "$1" "${2:-null}" | jq
+}
+
+cmd_sensors() {
+  gql 'query($s:RepositorySelector!){ sensorsOrError(repositorySelector:$s){
+        ... on Sensors { results { name sensorState { status
+          ticks(limit:1){ timestamp status } } } } } }' \
+      "$(jq -nc --argjson s "$(selector)" '{s:$s}')" \
+  | jq -r '.data.sensorsOrError.results[]
+      | "\(.name)\t\(.sensorState.status)\tlast=\(.sensorState.ticks[0].status // "none")"' \
+  | column -t -s$'\t'
+}
+
+cmd_ticks() {
+  local sensor="${1:?usage: dagster-graphql ticks <sensor-name> [limit]}" limit="${2:-10}"
+  gql 'query($s:SensorSelector!,$n:Int!){ sensorOrError(sensorSelector:$s){
+        ... on Sensor { sensorState { ticks(limit:$n){
+          timestamp status skipReason error { message } } } } } }' \
+      "$(jq -nc --arg l "$LOC" --arg r "$REPO" --arg n "$sensor" --argjson lim "$limit" \
+         '{s:{repositoryLocationName:$l, repositoryName:$r, sensorName:$n}, n:$lim}')" \
+  | jq -r '.data.sensorOrError.sensorState.ticks[]
+      | "\(.timestamp|floor|todate) \(.status) \(.error.message // .skipReason // "" | split("\n")[0])"'
+}
+
+cmd_partitions() {
+  local asset="${1:?usage: dagster-graphql partitions <asset-name>}"
+  gql 'query($k:[AssetKeyInput!]){ assetNodes(assetKeys:$k){
+        partitionKeysByDimension { name partitionKeys } } }' \
+      "$(jq -nc --arg a "$asset" '{k:[{path:[$a]}]}')" \
+  | jq -r '.data.assetNodes[0].partitionKeysByDimension[]
+      | "== \(.name) (\(.partitionKeys|length))", (.partitionKeys[] | "   \(.)")'
+}
+
+cmd_add_partition() {
+  local def="${1:?usage: dagster-graphql add-partition <partitions-def-name> <key>}" key="${2:?missing key}"
+  gql 'mutation($d:String!,$k:String!,$r:RepositorySelector!){
+        addDynamicPartition(partitionsDefName:$d, partitionKey:$k, repositorySelector:$r){
+          __typename ... on AddDynamicPartitionSuccess { partitionsDefName partitionKey }
+          ... on PythonError { message } } }' \
+      "$(jq -nc --arg d "$def" --arg k "$key" --argjson r "$(selector)" '{d:$d,k:$k,r:$r}')" \
+  | jq -r '.data.addDynamicPartition | "\(.__typename) \(.partitionsDefName // "") \(.partitionKey // "") \(.message // "")"'
+}
+
+cmd_backfill() {
+  local assets="${1:?usage: dagster-graphql backfill <asset[,asset2,...]> <partition-key> [more keys...]}"
+  shift
+  [ $# -ge 1 ] || die "need at least one partition key"
+  local keys selection
+  keys=$(printf '%s\n' "$@" | jq -R . | jq -sc .)
+  # Several assets can share one non-subsettable @multi_asset, and Dagster
+  # rejects a backfill naming only some of them ("Backfill must include every
+  # key in a non-subsettable multi-asset"). Accept a comma-separated list so
+  # the whole group can be selected; the error names the missing member if the
+  # list is short.
+  selection=$(printf '%s' "$assets" | tr ',' '\n' | jq -R '{path:[.]}' | jq -sc .)
+  # Asset backfills select by asset key; partitionSetName is for the older
+  # job-based path and does not apply to these assets.
+  gql 'mutation($p:LaunchBackfillParams!){ launchPartitionBackfill(backfillParams:$p){
+        __typename ... on LaunchBackfillSuccess { backfillId }
+        ... on PythonError { message } } }' \
+      "$(jq -nc --argjson a "$selection" --argjson k "$keys" \
+         '{p:{assetSelection:$a, partitionNames:$k,
+              fromFailure:false, allPartitions:false}}')" \
+  | jq -r '.data.launchPartitionBackfill | "\(.__typename) \(.backfillId // .message // "")"'
+}
+
+cmd_runs() {
+  local limit="${1:-10}"
+  gql 'query($n:Int!){ runsOrError(limit:$n){ ... on Runs { results {
+        runId status jobName startTime } } } }' \
+      "$(jq -nc --argjson n "$limit" '{n:$n}')" \
+  | jq -r '.data.runsOrError.results[]
+      | "\(.runId[0:8]) \(.status) \(.jobName) \(if .startTime then (.startTime|floor|todate) else "-" end)"'
+}
+
+case "${1:-}" in
+  query)         shift; cmd_query "$@" ;;
+  sensors)       shift; cmd_sensors "$@" ;;
+  ticks)         shift; cmd_ticks "$@" ;;
+  partitions)    shift; cmd_partitions "$@" ;;
+  add-partition) shift; cmd_add_partition "$@" ;;
+  backfill)      shift; cmd_backfill "$@" ;;
+  runs)          shift; cmd_runs "$@" ;;
+  ""|-h|--help)
+    sed -n '2,8p' "$0"
+    cat <<'USAGE'
+
+Commands:
+  sensors                            sensor names, status, last tick outcome
+  ticks <sensor> [limit]             recent ticks with first line of any error
+  partitions <asset>                 registered partition keys, per dimension
+  add-partition <def-name> <key>     register one dynamic partition
+  backfill <asset[,asset2]> <key>... launch a backfill over partition keys
+                                     (comma-separate co-members of a multi_asset)
+  runs [limit]                       recent runs
+  query '<graphql>' [vars-json]      raw GraphQL, pretty-printed
+
+Env overrides: DAGSTER_HOST, DAGSTER_IAP_AUDIENCE, DAGSTER_AGENT_SA,
+DAGSTER_CODE_LOCATION, DAGSTER_REPOSITORY
+USAGE
+    ;;
+  *) die "unknown command: $1 (try --help)" ;;
+esac
