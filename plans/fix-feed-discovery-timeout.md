@@ -1,9 +1,10 @@
 ---
-status: in-progress
+status: done
 depends: []
 specs:
   - specs/architecture.md
 issues: [110]
+pr: 111
 ---
 
 # Plan: Fix feed discovery timeout (prefix listing, not object scan)
@@ -62,7 +63,9 @@ pages objects.
   (verified via `git stash`: all 3 fail with "discovery paged objects")
 - [x] `uv run ruff check src/ tests/`, `uv run mypy src/`,
   `uv run pytest tests/` all pass
-- [ ] Post-deploy: `feed_discovery_sensor` ticks return to SUCCESS
+- [x] Post-deploy: `feed_discovery_sensor` ticks return to SUCCESS — v0.11.0
+  deployed 2026-09-18; last FAILURE at 18:53:39 UTC, and every tick from
+  18:58:40 onward is SUCCESS (1) or SKIPPED (20) across ~1h45m
 - [ ] Post-deploy: a newly-added agency reaches `inventory.json` without
   manual partition registration
 - [ ] KCM partitions registered and 2026-09-09..2026-09-17 backfilled; the
@@ -82,8 +85,53 @@ pages objects.
 
 ## Notes
 
-To be populated at closeout.
+- **Two validation criteria stay unchecked, deliberately.** The
+  newly-added-agency criterion cannot be verified until the next agency is
+  actually added — that is the whole point of it, and checking it off against
+  KCM (whose partitions were registered by hand) would be circular. The KCM
+  criterion is two-thirds done: all three partitions registered and all 27
+  partitions (9 days x 3 feed types) materialized to parquet, verified by
+  direct object checks. Only "appear on gtfsrt.io" is outstanding, because
+  `bucket_inventory_schedule` regenerates `inventory.json` at 04:00 UTC daily;
+  it closes on the next run with no further work.
+- **SKIPPED, not SUCCESS, is this sensor's healthy steady state.** The first
+  post-deploy tick returned SUCCESS (enqueueing run requests); every tick
+  after returns SKIPPED, because run-key dedup means there is nothing new to
+  request. A future reader checking sensor health should treat SKIPPED as
+  good and FAILURE as the only alarm — "no SUCCESS ticks" is not a symptom.
+- **The first successful tick causes a thundering herd.** Recovery enqueued
+  ~50 runs at once — the sensor requests runs for every discovered feed for
+  yesterday, and after a long outage every one of those run keys is new to
+  it. Idempotent and it drains on its own (SUCCESS went 18 -> 118 within the
+  hour), but a recovery after a *longer* outage would enqueue proportionally
+  more. Worth knowing before restarting this sensor after a lengthy stop.
+- **The error message points at the wrong component.** The daemon reports
+  `DagsterUserCodeUnreachableError: Unable to reach the user code server`,
+  which reads as a dead code server. The code server was healthy the entire
+  time; the real cause was the sensor function exceeding its 60s budget, and
+  that only appeared in a second, inner traceback. Check code-server health
+  before believing the outer message.
+- **Timing of the discovery, for the record**: the raw->parquet gap was
+  visible for nine days in `inventory.json` (70 entries vs 74 configured
+  feeds) before anyone looked. The four-feed diff was the fastest route to
+  the bug and cost one command.
+- **Two zombie runs** have sat in STARTED since 2026-05-10 and 2026-06-28.
+  Unrelated to this work, but they will skew any "currently running" alarm
+  built for #114.
 
 ## Follow-ups
 
-To be populated at closeout.
+- Issue [#114](https://github.com/JarvusInnovations/gtfs-realtime-archiver/issues/114)
+  — alert on chronic sensor/schedule tick failure, and on configured-but-
+  missing feeds. This is the half of the bug that actually cost nine days:
+  the timeout was an afternoon's fix, the silence is what made it expensive.
+  Scoped out of this plan deliberately; see its Scope section.
+- Issue [#92](https://github.com/JarvusInnovations/gtfs-realtime-archiver/issues/92)
+  — related but distinct layer. #92 reconciles raw `.pb` against parquet rows
+  for *known* partitions; it would not have caught KCM, which had no
+  partitions at all. Worth settling the boundary between the two when #114 is
+  designed.
+- None (tracked elsewhere): the Big Blue Bus `service_alerts` gap noted in
+  Scope remains unresolved and unexplained. That feed returns valid protobuf
+  with 0 entities, so its absence from `inventory.json` may be correct
+  behaviour rather than a symptom. Left alone rather than guessed at.
