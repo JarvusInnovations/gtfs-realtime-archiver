@@ -391,3 +391,18 @@ agencies:
         url: https://ridetime.greaterdaytonrta.org/gtfsrt/trips
       - feed_type: service_alerts
         url: https://ridetime.greaterdaytonrta.org/gtfsrt/alerts
+
+  # id is disambiguated: "DDOT" is also Washington DC's District Department of
+  # Transportation. This is Detroit (agency_id 20 in the schedule zip).
+  # RT endpoints are undocumented first-party (Clever Devices BusTime paths on
+  # the myddotbus.com rider tracker, unauthenticated)
+  - id: ddot-detroit
+    name: Detroit Department of Transportation
+    schedule_url: https://www.detroitmi.gov/Portals/0/docs/deptoftransportation/pdfs/ddot_gtfs.zip
+    feeds:
+      - feed_type: vehicle_positions
+        url: https://www.myddotbus.com/gtfsrt/vehicles
+      - feed_type: trip_updates
+        url: https://www.myddotbus.com/gtfsrt/trips
+      - feed_type: service_alerts
+        url: https://www.myddotbus.com/gtfsrt/alerts
